@@ -1367,7 +1367,7 @@ describe("appearance settings", () => {
     const bodySize = () => page.evaluate(() => getComputedStyle(document.body).fontSize);
 
     // Defaults: Kitty, titles in the text face, Standard text size (16px in Kitty), full motion, a Brain home, 2D section graphs, nebula.
-    for (const name of ["Kitty", "Plain", "Standard", "Full", "Brain", "2D", "Nebula"]) assert.equal(await radio(name).isChecked(), true, `${name} is not the default`);
+    for (const name of ["Black", "Plain", "Standard", "Full", "Brain", "2D", "Nebula"]) assert.equal(await radio(name).isChecked(), true, `${name} is not the default`);
     assert.equal(await panel.getByRole("group", { name: "Home" }).getByRole("radio").count(), 2, "home offers Brain and 2D only");
     await radio("2D map").check();
     await prefIs(() => prefs.ui?.home?.look, "2d", "home look not saved to the build");

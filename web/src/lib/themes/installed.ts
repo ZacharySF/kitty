@@ -8,7 +8,7 @@ import { DEFAULT_THEME, THEMES } from "./catalog.ts";
 /** Every theme the module can add: all but the default. */
 export const EXTRA_THEMES = THEMES.filter((theme) => theme.id !== DEFAULT_THEME);
 /** What turning the module on starts with. */
-export const STARTER_THEMES = ["liquid-glass", "blossom", "nord"];
+export const STARTER_THEMES = ["aero", "liquid-glass", "blossom", "nord"];
 
 /** The themes to offer, in the catalogue's order. */
 export function shownThemes(installed: readonly string[], active: string) {

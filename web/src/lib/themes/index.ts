@@ -31,6 +31,7 @@ const MODULES: Partial<Record<ThemeId, () => Promise<{ default: ThemeModule }>>>
   pretti: () => import("./pretti"),
   bloodluxe: () => import("./bloodluxe"),
   halfblood: () => import("./halfblood"),
+  aero: () => import("./aero"),
 };
 
 export function currentTheme(): ThemeId {

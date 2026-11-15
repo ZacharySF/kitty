@@ -105,7 +105,7 @@
           "type": "string",
           "pattern": "^[a-z0-9][a-z0-9-]{0,39}$",
           "description": "A built-in theme. An unknown name (say, from a newer rika!) is a warning and falls back to the default.",
-          "examples": ["harness", "dracula", "catppuccin-mocha", "tokyo-night", "nord", "gruvbox", "one-dark", "kitty", "blossom", "scythe", "liquid-glass", "speed", "c", "red", "pretti", "bloodluxe", "halfblood"],
+          "examples": ["harness", "dracula", "catppuccin-mocha", "tokyo-night", "nord", "gruvbox", "one-dark", "kitty", "blossom", "scythe", "liquid-glass", "speed", "c", "red", "pretti", "bloodluxe", "halfblood", "aero"],
           "default": "kitty"
         },
         "tokens": {
@@ -190,7 +190,8 @@
             "hidden": {"type": "array", "maxItems": 24, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$"}, "description": "Widgets taken off home.", "default": []},
             "widths": {"type": "array", "maxItems": 3, "items": {"type": "number", "minimum": 0.5, "maximum": 1.5}, "description": "Each widget column's share of the room, column by column (1 is an even share).", "default": [1, 1]},
             "rika": {"type": "number", "minimum": 0, "maximum": 0.45, "description": "Rika's share of home's width; 0 keeps the usual width.", "default": 0},
-            "template_offered": {"type": "boolean", "description": "Rika has offered a home template once.", "default": false}
+            "template_offered": {"type": "boolean", "description": "Rika has offered a home template once.", "default": false},
+            "tones": {"type": "array", "maxItems": 32, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}:[a-z][a-z0-9-]{0,19}$"}, "description": "Colour-coded widgets, each as widget:tone (a tone this rika! does not know is kept and not drawn).", "default": []}
           }
         },
         "brain": {

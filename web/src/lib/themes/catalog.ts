@@ -237,7 +237,7 @@ export const THEMES: readonly ThemeTokens[] = [
     // primary is inverted (white on black). Greys step one value at a time; the six data colours are a
     // lightness ramp, so groups never need a hue. Red stays for danger only. Flat, with a frosted top bar (kitty/).
     id: "kitty",
-    label: "Kitty",
+    label: "Black",
     scheme: "dark",
     roles: {
       void: "#000000",
@@ -328,6 +328,39 @@ export const THEMES: readonly ThemeTokens[] = [
     selection: "bar",
     motion: "snappy",
     backdrop: "nebula",
+  },
+  {
+    // Kitty (aero/): a night concourse behind aqua glass. Soft club and transit light: deep teal-navy,
+    // cyan signage, mint, periwinkle and one amber lamp. Glass with a lit top edge; the art, the text
+    // scraps behind it and the marks before widget titles are rolled anew on every load.
+    id: "aero",
+    label: "Kitty",
+    scheme: "dark",
+    roles: {
+      void: "#03101a",
+      panel: "#0a2433",
+      inset: "#061a26",
+      raised: "#103246",
+      line: "#2a6480",
+      lineHot: "#b6f3ff",
+      ink: "#eafaff",
+      mute: "#b3d8e6",
+      dim: "#93bccd",
+      structure: "#8fdcf5",
+      signal: "#7fe6ff",
+      go: "#84f5c8",
+      reference: "#a3c4ff",
+      caution: "#ffd76a",
+      alternate: "#c0b3ff",
+      danger: "#ff8a98",
+    },
+    graph: ["#7fe6ff", "#84f5c8", "#a3c4ff", "#ffd76a", "#c0b3ff", "#ff9ecf"],
+    shadow: "#000a12",
+    surface: { style: "glass", alpha: { panel: 58, inset: 52, raised: 68 }, radius: 18 },
+    focus: "glow",
+    selection: "lit",
+    motion: "fluid",
+    backdrop: "plain",
   },
   {
     // Clear, neutral glass in the manner of macOS/iOS (liquid-glass/): heavy blur, a white

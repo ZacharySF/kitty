@@ -66,7 +66,8 @@ export type ThemeId =
   | "red"
   | "pretti"
   | "bloodluxe"
-  | "halfblood";
+  | "halfblood"
+  | "aero";
 
 export type Palette = Omit<Theme, "name">;
 

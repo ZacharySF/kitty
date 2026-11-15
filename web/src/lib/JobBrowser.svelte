@@ -980,8 +980,9 @@
   .selectable-job.focused {
     box-shadow: inset 3px 0 var(--accent);
   }
-  .selectable-job:focus-within {
-    outline: 1px solid var(--accent);
+  /* Keyboard focus only: a click on a row or its checkbox draws no box around it. */
+  .selectable-job:has(:focus-visible) {
+    outline: 1px solid color-mix(in srgb, var(--ink) 45%, transparent);
     outline-offset: -1px;
   }
   .action-feedback {
@@ -1077,9 +1078,7 @@
     border: 0;
     min-width: 0;
   }
-  .selectable-job.marked {
-    background: var(--surface-raised);
-  }
+  /* A ticked row is marked by its checkbox alone: no band behind it. */
   .row-check {
     margin: 0 0 0 16px;
   }

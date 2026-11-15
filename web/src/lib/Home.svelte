@@ -16,6 +16,7 @@
   import { buildStore, setPreferences } from "./build.svelte";
   import { HOME_WIDGETS, MAX_COLUMNS, RIKA_LIMITS, WIDTH_LIMITS, columnShares, placeWidget, resolveHome, rikaShare, savedHome, spareWidgets, splitWidths, type HomeWidgetId } from "./home/layout";
   import { homeEditor, templatePicker } from "./home/templatePicker.svelte";
+  import { TONES, toneColor, withTone } from "./home/tones";
   import TemplateSuggestion from "./home/TemplateSuggestion.svelte";
   import { activeModules } from "./modules.svelte";
   import RikaPanel from "./rika/RikaPanel.svelte";
@@ -54,6 +55,16 @@
   const rikaWidth = $derived(draftRika ?? buildStore.build.ui.home.rika);
   /** Rika's panel can leave home too: "rika" among the build's hidden widgets. The drawer still opens with Ctrl + J. */
   let draftPanel = $state<boolean | null>(null);
+  /** Colour-coding: a tone dragged from the palette onto a widget, or picked there and then pressed onto one. */
+  let draftTones = $state<string[] | null>(null);
+  const tones = $derived(draftTones ?? buildStore.build.ui.home.tones);
+  /** The tone in hand: its id, or "" for the one that clears; null when none is. */
+  let toneInHand = $state<string | null>(null);
+  let toneOver = $state<string | null>(null);
+  function paint(widget: string, tone: string | null = toneInHand) {
+    if (tone === null) return;
+    draftTones = withTone(tones, widget, tone || null);
+  }
   const WIDGET_ICONS: Record<HomeWidgetId, string> = { agenda: "today", note: "quick-notes", focus: "timer", next: "next", agents: "terminal", session: "pulse",
     goals: "goals", week: "week", cards: "flashcards", pipeline: "applications", clock: "clock" };
   const panel = $derived(draftPanel ?? !buildStore.build.ui.home.hidden.includes("rika"));
@@ -104,7 +115,7 @@
     const next = savedHome($state.snapshot(draft) ?? [], $state.snapshot(buildStore.build.ui.home), enabled);
     const sized = { widths: draftWidths ? $state.snapshot(draftWidths) : $state.snapshot(buildStore.build.ui.home.widths), rika: draftRika ?? buildStore.build.ui.home.rika };
     const hidden = [...next.hidden.filter((id) => id !== "rika"), ...(panel ? [] : ["rika"])];
-    if (!(await setPreferences({ ui: { home: { ...next, hidden, ...sized } } }))) {
+    if (!(await setPreferences({ ui: { home: { ...next, hidden, ...sized, tones: $state.snapshot(tones) } } }))) {
       failure = "Could not save the arrangement.";
       return;
     }
@@ -112,6 +123,8 @@
     draftWidths = null;
     draftRika = null;
     draftPanel = null;
+    draftTones = null;
+    toneInHand = null;
     homeEditor.on = false;
   }
   function place(id: HomeWidgetId, column: number, before?: HomeWidgetId) {
@@ -170,9 +183,15 @@
       <div class="column" ondragover={(event) => { if (dragged) { event.preventDefault(); place(dragged, index); } }}>
         {#each column as widget, row (widget)}
           <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div class="slot" class:dragged={dragged === widget} draggable={editing}
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <div class="slot" class:dragged={dragged === widget} class:toned={!!toneColor(tones, widget)} class:tone-over={toneOver === widget} draggable={editing}
+            style:--tone={toneColor(tones, widget)}
             ondragstart={(event) => { dragged = widget; event.dataTransfer?.setData("text/plain", widget); if (event.dataTransfer) event.dataTransfer.effectAllowed = "move"; }}
-            ondragend={() => (dragged = null)} ondragover={(event) => over(event, index, row)} ondrop={(event) => event.preventDefault()}>
+            ondragend={() => (dragged = null)}
+            ondragover={(event) => { if (toneInHand !== null && !dragged) { event.preventDefault(); toneOver = widget; } else over(event, index, row); }}
+            ondragleave={() => { if (toneOver === widget) toneOver = null; }}
+            ondrop={(event) => { event.preventDefault(); if (toneInHand !== null && !dragged) { paint(widget); toneOver = null; toneInHand = null; } }}
+            onclick={() => { if (editing && toneInHand !== null) paint(widget); }}>
             {#if editing}
               <div class="tools">
                 <button type="button" class="handle" data-handle={widget} aria-label={`Move ${titleOf(widget)}: drag, or use the arrow keys`}
@@ -231,6 +250,19 @@
           {/each}
         </ul>
       {:else}<p class="quiet">Every widget is on home.</p>{/if}
+      <div class="tones" role="group" aria-label="Colours">
+        <h4>Colours</h4>
+        <div class="swatches">
+          {#each [{ id: "", label: "None", color: "" }, ...TONES] as tone (tone.id)}
+            <button type="button" class="swatch" class:none={!tone.id} draggable="true" aria-pressed={toneInHand === tone.id} aria-label={tone.label} title={tone.label}
+              style:--tone={tone.color || null}
+              ondragstart={(event) => { toneInHand = tone.id; event.dataTransfer?.setData("text/plain", tone.label); if (event.dataTransfer) event.dataTransfer.effectAllowed = "copy"; }}
+              ondragend={() => { toneInHand = null; toneOver = null; }}
+              onclick={() => (toneInHand = toneInHand === tone.id ? null : tone.id)}></button>
+          {/each}
+        </div>
+        <p class="quiet">{toneInHand === null ? "Drag a colour onto a widget." : "Now press a widget."}</p>
+      </div>
       <ul>
         <li><span>Rika's panel</span><button type="button" class="text-button" onclick={() => (draftPanel = !panel)}>{panel ? "Remove" : "Add"}</button></li>
       </ul>
@@ -333,6 +365,59 @@
   }
   .slot.dragged {
     opacity: 0.4;
+  }
+  /* A colour-coded widget: tinted glass in its tone, a hairline of the same tone and a
+     lighter top edge; no blur. The widget's own top rule goes, the tint is its frame. */
+  .slot.toned {
+    margin: 6px 0;
+    padding: 0 18px 14px;
+    border-radius: 18px;
+    background: color-mix(in srgb, var(--tone) 30%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tone) 55%, transparent), inset 0 1px 0 color-mix(in srgb, #fff 12%, transparent);
+  }
+  .slot.toned :global(.home-widget) {
+    border-top-color: transparent;
+  }
+  .slot.tone-over {
+    outline: 2px dashed color-mix(in srgb, var(--ink) 55%, transparent);
+    outline-offset: 2px;
+    border-radius: 18px;
+  }
+  .tones {
+    padding: 14px 0 6px;
+    border-top: 1px solid var(--hairline);
+  }
+  .tones h4 {
+    margin: 0 0 12px;
+    font: 500 17px/1.2 var(--font-ui);
+  }
+  .swatches {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  :global(:root body) .swatch {
+    width: 30px;
+    height: 30px;
+    min-height: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--tone) 55%, #000);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tone) 70%, #fff 10%), inset 0 1px 0 color-mix(in srgb, #fff 22%, transparent);
+    cursor: grab;
+  }
+  :global(:root body) .swatch.none {
+    background: transparent;
+    box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--ink) 40%, transparent);
+  }
+  :global(:root body) .swatch[aria-pressed="true"] {
+    outline: 2px solid var(--ink);
+    outline-offset: 3px;
+  }
+  :global(:root body) .swatch:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
   }
   .board.editing .slot {
     cursor: grab;

@@ -19,7 +19,7 @@ import { THEMES } from "../src/lib/themes/catalog.ts";
 const root = fileURLToPath(new URL("..", import.meta.url));
 const VIEWPORT = { width: 1100, height: 760 };
 /** Themes that ship a motif module (lib/themes/<id>/). */
-const MODULES = ["kitty", "blossom", "liquid-glass", "scythe", "speed", "c", "red", "pretti", "bloodluxe", "halfblood"];
+const MODULES = ["kitty", "blossom", "liquid-glass", "scythe", "speed", "c", "red", "pretti", "bloodluxe", "halfblood", "aero"];
 let server;
 let browser;
 let base;

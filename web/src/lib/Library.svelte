@@ -2,6 +2,7 @@
   import { onMount, tick } from "svelte";
   import { api, followApiLink, openApi, type TaskRecord } from "./api";
   import TaskStatus from "./TaskStatus.svelte";
+  import Select from "./ui/Select.svelte";
   import ResumeReview, { type ResumeAudit } from "./ResumeReview.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
   const pane = useWorkspaceContext();
@@ -310,68 +311,31 @@
   </header>
   {#if error}<p class="error-banner" role="alert">{error}</p>{/if}
   {#if notice}<p class="inset" role="status">{notice}</p>{/if}
-  <section class="inset">
-    <h3>Add a resume</h3>
+  <section class="inset calm">
     <form
+      class="add"
       onsubmit={(event) => {
         event.preventDefault();
         void ask("register");
       }}
     >
-      <div class="grid">
-        <label
-          >Name<input
-            bind:value={label}
-            required
-            maxlength="200"
-            placeholder="My general resume"
-          /></label
-        ><label
-          >Note (optional)<input
-            bind:value={description}
-            maxlength="4096"
-          /></label
-        >
+      <div class="calm-row">
+        <input class="grow" bind:value={label} required maxlength="200" placeholder="Name this resume" aria-label="Resume name" />
+        {#if mode === "upload"}
+          <label class="calm-file"><input type="file" accept=".pdf,application/pdf" bind:files required aria-label="Resume PDF" />{files?.[0]?.name ?? "Choose PDF"}</label>
+        {:else}
+          <input class="grow" bind:value={localPath} required placeholder="/path/to/resume.pdf" aria-label="Full path to your PDF" />
+        {/if}
+        <button class="button primary" disabled={busy}>Add</button>
       </div>
       <details bind:open={sourceOpen}>
-        <summary>Advanced: use a PDF already on this computer</summary>
-        <p class="muted">
-          Usually, choose a PDF below. If the website runs on another computer,
-          a local path must refer to that computer.
-        </p>
-        <label
-          >PDF source<select bind:value={mode}>
-            <option value="upload">Upload from this device</option>
-            <option value="path">Register a local file path instead</option>
-          </select></label
-        >
+        <summary>More</summary>
+        <div class="calm-row">
+          <input class="grow" bind:value={description} maxlength="4096" placeholder="Note" aria-label="Note" />
+          <Select label="PDF source" kind="segments" bind:value={mode}
+            options={[{ value: "upload", label: "Upload a file" }, { value: "path", label: "Use a file path" }]} />
+        </div>
       </details>
-      {#if mode === "path" && !sourceOpen}<p class="muted">
-          Using a local file path. Open the advanced source option to switch
-          back to upload.
-        </p>{/if}
-      {#if mode === "upload"}<label
-          >PDF (up to 8 MB)<input
-            type="file"
-            accept=".pdf,application/pdf"
-            bind:files
-            required
-          /></label
-        >{:else}<label
-          >Full path to your PDF<input
-            bind:value={localPath}
-            required
-            placeholder="/path/to/resume.pdf"
-          /></label
-        >{/if}
-      <p class="muted">
-        Saved on this computer. To replace a resume, add it under a new name.
-      </p>
-      <button class="button primary" disabled={busy}
-        >{mode === "upload"
-          ? "Upload"
-          : "Review & register local PDF"}</button
-      >
     </form>
   </section>
   <section class="inset">

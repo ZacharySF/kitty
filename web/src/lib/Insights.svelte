@@ -2,6 +2,7 @@
   import { untrack } from "svelte";
   import { api, followApiLink, safeUrl, type TaskRecord } from "./api";
   import TaskStatus from "./TaskStatus.svelte";
+  import Select from "./ui/Select.svelte";
   import Loader from "./Loader.svelte";
   import ReportSummary, { type Summary } from "./ReportSummary.svelte";
 
@@ -338,7 +339,7 @@
 
     {#if section === "finder"}
       <form
-        class="controls"
+        class="controls calm"
         onsubmit={(event) => {
           event.preventDefault();
           confirm(
@@ -348,34 +349,27 @@
           );
         }}
       >
-        <label
-          >Proposal cap<input
+        <Select label="Decision" kind="segments" value={decision} onchange={(next) => { decision = next; void load(); }}
+          options={[{ value: "pending", label: "Pending", count: counts.pending ?? 0 }, { value: "approved", label: "Approved", count: counts.approved ?? 0 },
+            { value: "rejected", label: "Rejected", count: counts.rejected ?? 0 }]} />
+        <span class="spacer"></span>
+        <label class="calm-inline"
+          >Up to <input
             type="number"
             min="0"
             max="1000"
             bind:value={cap}
             required
-          /></label
+            aria-label="Proposal cap"
+          /> companies</label
         >
         <button class="button primary" disabled={demo || running}
           >Find companies</button
         >
-        <label
-          >Decision<select bind:value={decision} onchange={load}
-            ><option value="pending">Pending ({counts.pending ?? 0})</option
-            ><option value="approved">Approved ({counts.approved ?? 0})</option
-            ><option value="rejected">Rejected ({counts.rejected ?? 0})</option
-            ></select
-          ></label
-        >
       </form>
-      <p class="muted">
-        Keyboard: j/k select · a/Enter approve · r/x reject · R run finder · u
-        refresh. Actions always require confirmation.
-      </p>
       {#if lastFinderRun}<details>
           <summary
-            >Last finder run: {lastFinderRun.started_at} · {lastFinderRun.proposed}
+            >Last run: {lastFinderRun.started_at} · {lastFinderRun.proposed}
             proposed</summary
           >
           <ul>
@@ -385,9 +379,7 @@
                   : ""}
               </li>{/each}
           </ul>
-        </details>{:else}<p class="muted">
-          Finder has not completed a run.
-        </p>{/if}
+        </details>{/if}
       {#if !loading && candidates.length === 0}<p class="empty-state">
           No {decision} company proposals.
         </p>{/if}
@@ -802,8 +794,11 @@
   dd {
     overflow-wrap: anywhere;
   }
+  .controls .spacer {
+    flex: 1 1 auto;
+  }
   .controls {
-    align-items: end;
+    align-items: center;
   }
   label {
     display: grid;
