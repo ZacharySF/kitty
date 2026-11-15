@@ -232,6 +232,14 @@ def test_voice_streams_over_the_rika_socket_and_the_spoken_request_routes_fast(d
     final = stream.until(lambda event: event["type"] == "voice.final")[-1]
     assert final["text"] == voice_engine.DEMO_COMMAND and final["mode"] == "command" and final["duration"] == 1.5
     assert demo.request("/api/rika/history")[1]["items"] == []  # hearing stores nothing by itself
+    # "Tomorrow" said before 04:00 asks which day is meant, so the calendar gets a zone where it is daytime now.
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    daytime = next(name for name in ("UTC", "Asia/Tokyo", "America/Los_Angeles") if 4 <= datetime.now(ZoneInfo(name)).hour < 23)
+    with closing(connect(demo.app.settings.db_path)) as conn:
+        conn.execute("UPDATE calendar_calendars SET timezone=? WHERE id='personal'", (daytime,))
+        conn.commit()
     status, sent = demo.request("/api/rika/messages", {"text": final["text"], "spoken": True})
     events = stream.reply()
     assert kinds(events, "message")[0]["message"]["source"] == "voice"

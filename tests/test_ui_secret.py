@@ -168,12 +168,12 @@ def test_the_bootstrap_code_is_single_use_and_short_lived(python_running):
 
 def test_a_link_ticket_opens_one_exact_get_once(running):
     page = {web_auth.HEADER: None}
-    running.request("/api/quick-notes/create", {"body": "linked"})
-    status, body = running.request(web_auth.LINK_PATH, {"path": "/api/quick-notes"})
-    assert status == 200 and body["url"].startswith("/api/quick-notes?ticket=")
+    # A read the worker answers in both set-ups (the front answers quick notes' reads itself).
+    status, body = running.request(web_auth.LINK_PATH, {"path": "/api/notes"})
+    assert status == 200 and body["url"].startswith("/api/notes?ticket=")
     assert running.secret not in body["url"]
     status, listed = running.request(body["url"], headers=page)
-    assert status == 200 and listed["notes"][0]["body"] == "linked"
+    assert status == 200 and "notebooks" in listed
     assert refused(running.request(body["url"], headers=page)), "single use"
     # Bound to the exact path and query.
     url = running.request(web_auth.LINK_PATH, {"path": "/api/build/export"})[1]["url"]
