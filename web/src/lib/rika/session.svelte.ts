@@ -372,7 +372,10 @@ export class RikaSession {
     try {
       const body = decision === "approve" ? { decision, items, choices } : { decision };
       const { plan } = await api<{ plan: RikaPlan }>(`/rika/plans/${encodeURIComponent(String(id))}`, body);
-      this.plan(plan);
+      // The live channel can be ahead of this answer: a plan it already finished is not set back to running.
+      const known = this.entries.find((entry) => entry.kind === "plan" && String(entry.id) === String(plan.id));
+      const finished = known?.kind === "plan" && (known.status === "applied" || known.status === "failed");
+      if (!(plan.status === "running" && finished)) this.plan(plan);
     } catch (cause) {
       this.error = (cause as Error).message;
     }
