@@ -31,8 +31,9 @@ rusqlite = { version = "0.42", default-features = false, features = ["bundled"] 
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider", "system-proxy"] }
 rustls = { version = "0.23.46", default-features = false, features = ["ring"] }
 serde = { version = "1", features = ["derive"] }
-# Python's dict order in answers the front builds itself.
-serde_json = { version = "1.0.154", features = ["preserve_order"] }
+# Python's dict order in answers the front builds itself, and floats parsed to the exact
+# double as Python's `json.loads` does (a stored map's coordinates are read and written back).
+serde_json = { version = "1.0.154", features = ["preserve_order", "float_roundtrip"] }
 # The live channel's WebSocket handshake (crate::live).
 sha1 = "0.10.6"
 sha2 = "0.10.9"
