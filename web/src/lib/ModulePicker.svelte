@@ -32,6 +32,12 @@
   // Themes are a module without a download or a restart: its picks save as they are made.
   const themes = $derived(buildStore.build.ui.themes.installed);
   const icons = $derived(buildStore.build.ui.icons.on);
+  const animations = $derived(buildStore.build.ui.animations.on);
+  /** The size of a pack that still has to be downloaded ("" when it is here or unknown). */
+  const download = (id: string) => {
+    const pack = store.packs?.packs.find((entry) => entry.id === id);
+    return pack && (pack.state === "available" || pack.state === "outdated") && pack.size ? megabytes(pack.size) : "";
+  };
   const MODULE_ICONS: Record<string, string> = { applyai: "jobs", workspace: "notes", math: "math", learnharness: "study", terminal: "terminal", voice: "actor-rika", brain: "atlas" };
   const keepThemes = (installed: string[]) => void setPreferences({ ui: { themes: { installed } } });
   const available = $derived(store.modules?.available ?? []);
@@ -125,10 +131,10 @@
       {#if !question || showAll || themes.length}
         <div class="row" data-themes>
           <button type="button" class="switch" role="switch" id={`${uid}-themes`} aria-checked={themes.length > 0} aria-label="Themes"
-            aria-describedby={`${uid}-themes-about`} onclick={() => keepThemes(themes.length ? [] : STARTER_THEMES)}><i></i></button>
+            aria-describedby={`${uid}-themes-about`} onclick={async () => { if (themes.length) keepThemes([]); else if (await store.fetch("themes")) keepThemes(STARTER_THEMES); }}><i></i></button>
           <label class="name" for={`${uid}-themes`}>Themes</label>
           <span class="about" id={`${uid}-themes-about`}>Other looks for the whole app</span>
-          <span class="end">{#if themes.length}<span class="quiet">{themes.length} of {EXTRA_THEMES.length}</span>{/if}</span>
+          <span class="end">{#if themes.length}<span class="quiet">{themes.length} of {EXTRA_THEMES.length}</span>{:else if download("themes")}<span class="size">{download("themes")}</span>{/if}</span>
         </div>
         {#if themes.length}
           <div class="theme-picks">
@@ -136,6 +142,13 @@
               onpick={(id) => keepThemes(toggleTheme(themes, id))} />
           </div>
         {/if}
+        <div class="row" data-animations-row>
+          <button type="button" class="switch" role="switch" id={`${uid}-animations`} aria-checked={animations} aria-label="Animations"
+            aria-describedby={`${uid}-animations-about`} onclick={async () => { if (animations || (await store.fetch("animations"))) void setPreferences({ ui: { animations: { on: !animations } } }); }}><i></i></button>
+          <label class="name" for={`${uid}-animations`}><span class="module-icon"><Icon name="pulse" size={17} /></span>Animations</label>
+          <span class="about" id={`${uid}-animations-about`}>Pages, widgets and menus move as they open</span>
+          <span class="end">{#if !animations && download("animations")}<span class="size">{download("animations")}</span>{/if}</span>
+        </div>
         <div class="row" data-icons-row>
           <button type="button" class="switch" role="switch" id={`${uid}-icons`} aria-checked={icons} aria-label="Icons"
             aria-describedby={`${uid}-icons-about`} onclick={() => void setPreferences({ ui: { icons: { on: !icons } } })}><i></i></button>

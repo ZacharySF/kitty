@@ -2,6 +2,7 @@
   import { onMount, tick, untrack } from "svelte";
   import { Panel, Button, Badge } from "@nunera/bracket";
   import { api, safeUrl } from "./api";
+  import { tween } from "./motion";
   import SchemaNetwork from "./SchemaNetwork.svelte";
   import type { GraphLayout, GraphLink, GraphNode } from "./graph3d";
   import { useWorkspaceContext, type SaveStatus } from "./workspaceContext.svelte";
@@ -1277,7 +1278,8 @@
     if (stage?.hasPointerCapture(e.pointerId))
       stage.releasePointerCapture(e.pointerId);
   }
-  function zoom(factor: number, clientX?: number, clientY?: number) {
+  let stopZoom = () => {};
+  function zoom(factor: number, clientX?: number, clientY?: number, glide = clientX === undefined) {
     if (!current || !editable) return;
     const rect = stage?.getBoundingClientRect(),
       x =
@@ -1291,9 +1293,15 @@
     remember();
     const v = current.viewport,
       z = Math.max(0.1, Math.min(4, v.zoom * factor));
-    v.x = Math.max(-1e7, Math.min(1e7, x - ((x - v.x) * z) / v.zoom));
-    v.y = Math.max(-1e7, Math.min(1e7, y - ((y - v.y) * z) / v.zoom));
-    v.zoom = z;
+    const from = { x: v.x, y: v.y, zoom: v.zoom };
+    const to = { x: Math.max(-1e7, Math.min(1e7, x - ((x - v.x) * z) / v.zoom)), y: Math.max(-1e7, Math.min(1e7, y - ((y - v.y) * z) / v.zoom)), zoom: z };
+    // The buttons and keys glide there (the Animations module); the wheel and a pinch stay direct.
+    stopZoom();
+    stopZoom = tween(glide ? 170 : 0, (progress) => {
+      v.x = from.x + (to.x - from.x) * progress;
+      v.y = from.y + (to.y - from.y) * progress;
+      v.zoom = from.zoom + (to.zoom - from.zoom) * progress;
+    });
   }
   function fit() {
     if (!current || !editable) return;

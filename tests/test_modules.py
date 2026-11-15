@@ -62,7 +62,7 @@ def test_registry_constants_and_metadata():
     assert {key: MODULE_PACKS[key] for key in MODULE_IDS} == {
         "applyai": ("discovery",), "workspace": (), "math": ("math",), "learnharness": ("learnharness",),
         "terminal": ("herdr",), "voice": ("voice",), "brain": ("brain",)}
-    assert [pack["id"] for pack in REGISTRY["packs"]] == ["discovery", "math", "learnharness", "herdr", "voice", "brain"]
+    assert [pack["id"] for pack in REGISTRY["packs"]] == ["discovery", "math", "learnharness", "herdr", "voice", "brain", "themes", "animations"]
     assert all(pack["label"] and pack["description"] for pack in REGISTRY["packs"])
     assert [item["id"] for item in available_modules()] == list(MODULE_IDS)
     assert all(item["label"] and item["description"] for item in available_modules())
@@ -70,7 +70,7 @@ def test_registry_constants_and_metadata():
 
 
 def test_every_pack_has_one_kind_of_payload():
-    """kitty.packs loads the Python and program packs; the Brain's web code is the front's."""
+    """kitty.packs loads the Python and program packs; web code (the Brain, Themes, Animations) is the front's."""
     from kitty import packs
 
     kinds = [set(packs.PYTHON), set(packs.PROGRAMS), set(packs.WEB)]

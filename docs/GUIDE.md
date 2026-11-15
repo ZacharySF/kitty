@@ -139,6 +139,23 @@ installed · Download", their routes answer 409 with the same advice, the JobSpy
 reports an error instead of finding nothing, and voice input says the Speech engine is
 missing. Every other view works as before.
 
+Two packs belong to no worker module, only to the page: **Themes** (the art, loaders and
+stylesheets of every theme but Black) and **Animations** (below). Settings → Modules
+downloads one when its switch is turned on and shows the size beside it until then.
+Without the Themes pack a chosen theme still recolours the app; only its art is missing.
+
+### Animations module
+
+Settings → Modules → **Animations** (`ui.animations.on` in the build, off by default). With
+it on, a view fades up a few pixels as it arrives, home's widgets and list rows follow one
+another in, anything pressable gives a little under the pointer and springs back, dialogs,
+menus and toasts grow in, a loader waits a beat before showing, and a mind map's zoom
+buttons glide (the wheel stays direct). Only `transform` and `opacity` move, nothing
+lasts longer than 260 ms, and all of it stops under Settings → Appearance → Reduce motion
+or the system's reduced-motion setting. The module's code is one stylesheet and a tween
+(`web/src/lib/animations/`); the base reaches it through `web/src/lib/motion.ts` and loads
+it only when the switch is on.
+
 ### Builds
 
 `config/build.json` is the workspace's build (`docs/platform-design.md` Q8, Q9): modules,

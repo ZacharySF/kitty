@@ -205,7 +205,7 @@ def test_a_build_has_exactly_the_documented_sections():
     assert set(document.schema()["properties"]["settings"]["properties"]) == {
         "ai", "notes", "history", "tags", "study", "opportunities", "tern"}
     assert set(document.schema()["properties"]["ui"]["properties"]) == {
-        "graph", "atlas", "notes", "terminal", "appearance", "home", "brain", "notifications", "flashcards", "study", "themes", "icons", "rika"}
+        "graph", "atlas", "notes", "terminal", "appearance", "home", "brain", "notifications", "flashcards", "study", "themes", "icons", "rika", "animations"}
 
 
 def test_export_never_carries_keys_credentials_devices_clients_or_applicant_data(tmp_path):

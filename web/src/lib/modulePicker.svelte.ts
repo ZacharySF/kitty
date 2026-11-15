@@ -99,6 +99,30 @@ class ModuleStore {
     }
   }
 
+  /**
+   * Have one pack that belongs to no worker module (Themes, Animations): download it unless
+   * it is here already. True when it can be used; a failure is left in `packsError`.
+   */
+  async fetch(id: string): Promise<boolean> {
+    if (this.phase) return false;
+    this.phase = "downloading";
+    try {
+      this.packs = await api<PacksState>("/packs");
+      const pack = this.packs.packs.find((entry) => entry.id === id);
+      if (!pack || packReady(pack)) return true;
+      if (pack.state === "unavailable") throw new Error(this.packs.index.error ?? `${pack.label}'s download is not available`);
+      await this.download(pack, 0, pack.size ?? 0);
+      this.packsError = "";
+      return true;
+    } catch (cause) {
+      this.packsError = (cause as Error).message;
+      return false;
+    } finally {
+      this.phase = "";
+      this.progress = null;
+    }
+  }
+
   /** Turn one more module on, keeping the rest of the saved selection. */
   async enable(id: ModuleId): Promise<ModulesState> {
     const modules = this.modules ?? (this.modules = await api<ModulesState>("/modules"));

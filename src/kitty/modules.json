@@ -74,6 +74,16 @@
       "id": "brain",
       "label": "Brain",
       "description": "The Brain's views and 3D engine (three.js, 3d-force-graph)."
+    },
+    {
+      "id": "themes",
+      "label": "Themes",
+      "description": "The art, loaders and stylesheets of every theme but Black."
+    },
+    {
+      "id": "animations",
+      "label": "Animations",
+      "description": "The motion stylesheet and its script."
     }
   ]
 }

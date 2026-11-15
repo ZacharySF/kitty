@@ -53,6 +53,8 @@ export type BuildUi = {
   themes: { installed: string[] };
   /** The Icons module: icons beside names (`<html data-icons>`, shown by `.module-icon`). */
   icons: { on: boolean };
+  /** The Animations module (motion.ts, the `animations` pack). */
+  animations: { on: boolean };
   /** Rika's conversation text size (`<html data-rika-text>`, rika.css). */
   rika: { text: "normal" | "large" };
 };
@@ -116,6 +118,7 @@ export const DEFAULT_BUILD: Build = {
     study: { guide_view: "columns", plans_view: "timeline" },
     themes: { installed: [] },
     icons: { on: false },
+    animations: { on: false },
     rika: { text: "normal" },
   },
 };

@@ -16,6 +16,11 @@ const localPage = (host = "", origin?: string) =>
  */
 const PACKS: Record<string, RegExp[]> = {
   brain: [/\/src\/lib\/brain\//, /\/node_modules\/three\//, /\/node_modules\/3d-force-graph\//],
+  // Every theme's module but the default's (themes/kitty stays in the base: it is the look
+  // a fresh install opens in). Colours live in themes/catalog.ts, so a theme without its
+  // pack still recolours the app; only its art, loader and motif stylesheet are missing.
+  themes: [/\/src\/lib\/themes\/(aero|blossom|liquid-glass|scythe|speed|c|red|pretti|bloodluxe|halfblood)\//],
+  animations: [/\/src\/lib\/animations\//],
 };
 
 function packFiles(): Plugin {

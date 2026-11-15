@@ -94,7 +94,7 @@ def test_the_web_build_lists_the_brain_pack_and_the_base_never_imports_it_static
     if not (dist / "pack-files.json").is_file():
         pytest.skip("the website is not built; run npm run build in web/")
     listed = json.loads((dist / "pack-files.json").read_text())
-    assert set(listed) == {"brain"}
+    assert set(listed) == {"animations", "brain", "themes"}
     names = [name.rsplit("/", 1)[-1].split("-")[0] for name in listed["brain"]]
     assert {"BrainStage", "brainScene", "three.module", "3d"} <= set(names)
     page = (dist / "index.html").read_text()

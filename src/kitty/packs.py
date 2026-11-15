@@ -36,7 +36,7 @@ PYTHON: dict[str, tuple[tuple[str, ...], str]] = {
     "voice": (("faster-whisper",), "faster_whisper"),
 }
 #: Packs the page loads (web code, served by the front); never missing from the worker's view.
-WEB = frozenset({"brain"})
+WEB = frozenset({"brain", "themes", "animations"})
 PROGRAMS = frozenset({"learnharness", "herdr"})
 LABELS: dict[str, str] = {pack["id"]: pack["label"] for pack in REGISTRY["packs"]}
 ENVIRONMENT = "KITTY_PACKS"

@@ -277,6 +277,14 @@
             "on": {"type": "boolean", "default": false}
           }
         },
+        "animations": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The Animations module: views, widgets and overlays move as they arrive and when pressed.",
+          "properties": {
+            "on": {"type": "boolean", "default": false}
+          }
+        },
         "rika": {
           "type": "object",
           "additionalProperties": false,
