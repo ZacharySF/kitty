@@ -199,7 +199,10 @@ fn ocr(tesseract: &str, image: &str) -> Result<String, String> {
 fn inspect(request: &Value) -> Result<(), String> {
     let input = request["input"].as_str().filter(|name| !name.contains('/')).ok_or("Invalid PDF input")?;
     let document = pdf::open(std::fs::read(Path::new("/job").join(input)).map_err(|e| e.to_string())?)?;
-    let mut texts = pdf::texts(&document);
+    let layer = pdf::pages(&document);
+    // What a parser reads is the PDF's own text layer, so the ATS check runs before OCR.
+    let ats = crate::ats::report(&layer);
+    let mut texts: Vec<String> = layer.into_iter().map(|page| page.text).collect();
     let mut warnings = Vec::new();
     let cache = hayro::RenderCache::new();
     if request["ocr"].as_bool() == Some(true) {
@@ -228,6 +231,6 @@ fn inspect(request: &Value) -> Result<(), String> {
         }
     }
     let layout = std::fs::read("/job/layout.json").ok().and_then(|raw| serde_json::from_slice::<Value>(&raw).ok());
-    let checks = pdf::checks(&texts.join("\n\n"), warnings, layout.as_ref());
+    let checks = pdf::checks(&texts.join("\n\n"), warnings, layout.as_ref(), ats);
     write_json("/job/result.json", &json!({"pages": document.pages().len(), "checks": checks}))
 }

@@ -202,6 +202,11 @@ def compiled_pdf(settings, doc, revision=None):
     return _read(folder / 'output.pdf')
 
 
+def compiled_checks(settings, doc):
+    """The readability and ATS report of a revision's cached, verified compile."""
+    return _result(_cache(settings, doc), doc)['checks']
+
+
 def compiled_page(settings, doc, page):
     store.positive_int(page, 'page')
     folder = _cache(settings, doc)

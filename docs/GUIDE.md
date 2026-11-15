@@ -3033,6 +3033,22 @@ optionally linked to an ApplyAI job. **Many resumes at once** queues one tailore
 version per selected job under a total cost limit; nothing is applied or submitted.
 ApplyAI outcomes are shown per exported revision as observed counts only.
 
+Templates: Clean HTML, Clean Typst, Clean LaTeX and **Jake's Resume** (Jake
+Gutierrez's one-page LaTeX layout from `github.com/jakegut/resume`, MIT, notice kept;
+sample content replaced by placeholders). Jake's Resume compiles with pdfLaTeX and
+needs the TeX Live packages `preprint` (`fullpage.sty`), `marvosym`, `titlesec`,
+`enumitem` and `fancyhdr`; a missing one is named in the compile error.
+
+**The ATS check runs on every successful compile.** The engine reads the PDF's own
+text layer the way a resume parser does and lists what it found (name, email, phone,
+links, recognised section headings) and what commonly breaks parsing: no selectable
+text, missing contact details, non-standard headings, undated experience, two
+columns of running text (right-aligned dates are fine), unreadable or icon-font
+characters, text under 7.5 pt and more than two pages. For a version linked to an
+ApplyAI job it also lists which `config/resume_terms.yaml` terms the posting asks
+for that the resume shows or lacks (the company's own name is ignored). It is a
+readability report, not a score, and does not predict any employer's system.
+
 **Rika's cloud help is off by default.** Turning it on in the workshop's privacy
 settings allows company research from public pages and Rika edit proposals through
 the configured OpenRouter model. Each request shows its redacted payload and maximum

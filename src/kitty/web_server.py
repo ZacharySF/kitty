@@ -898,7 +898,7 @@ def main() -> None:
                 example_dir = root / "config"
                 if not (example_dir / "tracks.yaml.example").is_file():
                     example_dir = Path(__file__).resolve().parents[2] / "config"
-                for name in ("profile", "tracks", "sources", "watchlist", "answers", "views"):
+                for name in ("profile", "tracks", "sources", "watchlist", "answers", "views", "resume_terms"):
                     shutil.copyfile(example_dir / f"{name}.yaml.example", config_dir / f"{name}.yaml")
                 settings = Settings(root=demo_root, db_path=demo_root / "data" / "demo.db", demo=True)
                 _serve(settings, static_dir, args.port, safe=args.safe)

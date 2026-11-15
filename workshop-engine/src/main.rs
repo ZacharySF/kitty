@@ -11,6 +11,7 @@
 //!
 //! `worker` is the private in-sandbox half; it only ever runs inside bubblewrap.
 
+mod ats;
 mod cdp;
 mod discover;
 mod docx;

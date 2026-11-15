@@ -11,11 +11,16 @@ export interface Batch { id: string; master_id: string; master_revision: number;
 export interface OutcomeRow { doc_id: string; revision: number; resume_id: number; title: string; label: string; applications: number; responses: number; advanced: number; outcomes: Record<string, number> }
 export interface BatchIndex { batches: Batch[]; jobs: { id: number; title: string; company: string }[]; insights: { resumes: OutcomeRow[]; notice: string } }
 export interface WorkshopIndex { documents: WorkshopDoc[]; templates: { id: string; label: string; format: WorkshopDoc['format']; description: string }[]; capabilities: { engines: { id: string; label: string; available: boolean; reason: string }[] } }
+export interface AtsFinding { id: string; level: 'pass'|'warn'|'fail'; title: string; detail: string }
+export interface AtsReport { contact: { name: string|null; email: string|null; phone: string|null; links: string[] }; sections: { title: string; kind: string; lines: number }[]; findings: AtsFinding[]; counts: { pass: number; warn: number; fail: number }; note: string }
+export interface JobTerms { job_id: number; title: string; company: string; found: string[]; missing: string[]; error?: string }
+export interface AtsResult { revision: number; report: AtsReport|null; job_terms: JobTerms|null }
 export const workshop = {
   index: () => api<WorkshopIndex>('/workshop'),
   get: (id: string) => api<{document: WorkshopDoc; revisions: Revision[]}>(`/workshop/${id}`),
   save: (id: string, body: {source: string; assets: Record<string,string>; title: string; base_revision: number}) => api<{document: WorkshopDoc}>(`/workshop/${id}`, body),
   batches: () => api<BatchIndex>('/workshop-batches'),
+  ats: (id: string, revision: number) => api<AtsResult>(`/workshop/${id}/ats?revision=${revision}`),
 };
 export async function taskResult<T>(response: {task?: TaskRecord} & Record<string,unknown>, signal: AbortSignal): Promise<T> {
   let task = response.task;

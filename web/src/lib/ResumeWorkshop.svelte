@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api, ApiError, apiObjectUrl, downloadApi, type TaskRecord } from './api';
-  import { workshop, taskResult, fileBase64, encodeText, decodeText, type WorkshopDoc, type WorkshopIndex, type Revision, type Compile, type Settings, type Fact, type Proposal, type Preview, type Research, type BatchIndex } from './workshopApi';
+  import { workshop, taskResult, fileBase64, encodeText, decodeText, type WorkshopDoc, type WorkshopIndex, type Revision, type Compile, type Settings, type Fact, type Proposal, type Preview, type Research, type BatchIndex, type AtsResult } from './workshopApi';
   let { onview }: { onview: (view: 'resumes') => void } = $props();
   let index = $state<WorkshopIndex | null>(null), doc = $state<WorkshopDoc | null>(null);
   let source = $state(''), title = $state(''), assets = $state<Record<string,string>>({}), revisions = $state<Revision[]>([]);
@@ -17,6 +17,7 @@
   const pendingProposals = $derived(proposals.filter(p => p.status === 'pending').length);
   const engineReady = $derived((index?.capabilities.engines || []).filter(e => e.available).length);
   let preferences = $state<unknown[]>([]);
+  let atsResult = $state<AtsResult|null>(null);
   let activeBatches = $state<string[]>([]);
   const lifetime = new AbortController(); let selection = 0, compileToken = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -32,7 +33,7 @@
   async function open(id: string) {
     if (saving || (dirty && !await save()) || dirty) return;
     const token = ++selection; const result = await workshop.get(id); if (token !== selection || lifetime.signal.aborted) return;
-    ++compileToken; images.forEach(URL.revokeObjectURL); images = []; compiled = null; compileError = ''; adopt(result.document); revisions = result.revisions;
+    ++compileToken; images.forEach(URL.revokeObjectURL); images = []; compiled = null; atsResult = null; compileError = ''; adopt(result.document); revisions = result.revisions;
     company = doc!.company; role = doc!.role; jobId = doc!.job_id == null ? '' : String(doc!.job_id); research = null;
     await Promise.all([compile(), loadProposals(id)]);
   }
@@ -63,6 +64,9 @@
       catch (cause) { next.forEach(URL.revokeObjectURL); throw cause; }
       if (token !== compileToken || doc?.revision !== target.revision || lifetime.signal.aborted) { next.forEach(URL.revokeObjectURL); return; }
       images.forEach(URL.revokeObjectURL); images = next; compiled = result;
+      // The ATS check runs on every successful compile; it never blocks the preview.
+      const report = await workshop.ats(target.id, target.revision).catch(() => null);
+      if (token === compileToken && doc?.revision === target.revision) atsResult = report;
     } catch (cause) { if (token === compileToken && !lifetime.signal.aborted) compileError = `Preview unavailable: ${message(cause)}`; }
     finally { if (token === compileToken) compiling = false; }
   }
@@ -159,6 +163,36 @@
             {#if compiling}<p class="hint" role="status">Compiling saved revision…</p>{/if}
             {#if compileError}<pre class="compile-error" role="alert">{compileError}</pre>{:else if stale}<p class="stale">Stale preview — last successful revision {compiled?.revision}; current edits are not shown.</p>{/if}
             {#each images as image, i}<img src={image} alt={`Resume PDF page ${i+1}`} />{:else}<p class="hint">No successful preview yet. Source editing remains available offline.</p>{/each}
+            {#if atsResult?.report}
+              {@const counts = atsResult.report.counts}
+              <section class="ats" aria-label="ATS check">
+                <h3>ATS check <small>revision {atsResult.revision} · runs on every compile · {counts.pass} passed · {counts.warn} to review{counts.fail ? ` · ${counts.fail} failed` : ''}</small></h3>
+                <ul class="findings">
+                  {#each atsResult.report.findings as finding}
+                    <li class={finding.level}><span class="mark" aria-label={finding.level}>{finding.level === 'pass' ? '✓' : finding.level === 'warn' ? '!' : '×'}</span><div><strong>{finding.title}</strong><small>{finding.detail}</small></div></li>
+                  {/each}
+                </ul>
+                <dl class="parsed">
+                  <dt>Name</dt><dd>{atsResult.report.contact.name || '—'}</dd>
+                  <dt>Email</dt><dd>{atsResult.report.contact.email || '—'}</dd>
+                  <dt>Phone</dt><dd>{atsResult.report.contact.phone || '—'}</dd>
+                  <dt>Links</dt><dd>{atsResult.report.contact.links.join(' · ') || '—'}</dd>
+                  <dt>Sections</dt><dd>{atsResult.report.sections.map(s => `${s.title} (${s.lines} lines)`).join(' · ') || '—'}</dd>
+                </dl>
+                {#if atsResult.job_terms}
+                  {@const terms = atsResult.job_terms}
+                  <div class="terms">
+                    <strong>Against the linked job: {terms.company} — {terms.title}</strong>
+                    {#if terms.error}<p class="hint">{terms.error}</p>{:else}
+                      <p><span class="label">In your resume</span>{#each terms.found as term}<span class="chip found">{term}</span>{:else}<span class="hint">none of the posting's terms</span>{/each}</p>
+                      <p><span class="label">Asked for, not found</span>{#each terms.missing as term}<span class="chip missing">{term}</span>{:else}<span class="hint">nothing missing</span>{/each}</p>
+                      <p class="hint">Add a missing term only where it is true for you.</p>
+                    {/if}
+                  </div>
+                {/if}
+                <p class="hint">{atsResult.report.note}</p>
+              </section>
+            {/if}
             {#if compiled}
               <details>
                 <summary>Can software read this PDF? (revision {compiled.revision})</summary>
@@ -300,6 +334,20 @@
   .stale { border-left: 3px solid var(--warning); padding: 8px 12px; background: var(--wash); border-radius: var(--r-chip); }
   .compile-error { border-left: 3px solid var(--error); background: color-mix(in srgb, var(--error) 10%, transparent); font-family: var(--font-mono); font-size: 12px; }
   .checks { margin: 8px 0; padding-left: 18px; } .checks li { margin: 4px 0; }
+  .ats { margin-top: 14px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--r-field); background: var(--surface); }
+  .ats h3 { margin: 0 0 8px; font-size: var(--fs-control); } .ats h3 small { display: block; color: var(--muted); font-weight: normal; margin-top: 2px; }
+  .findings { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+  .findings li { display: flex; gap: 10px; align-items: flex-start; }
+  .findings li small { display: block; color: var(--muted); }
+  .mark { flex: none; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 12px; color: var(--canvas); }
+  .pass .mark { background: var(--success); } .warn .mark { background: var(--warning); } .fail .mark { background: var(--error); }
+  .parsed { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; margin: 12px 0 8px; font-size: var(--fs-label); }
+  .parsed dt { color: var(--muted); } .parsed dd { margin: 0; overflow-wrap: anywhere; }
+  .terms { border-top: 1px solid var(--border); padding-top: 8px; margin-top: 8px; font-size: var(--fs-label); }
+  .terms p { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; margin: 6px 0; }
+  .terms .label { color: var(--muted); margin-right: 4px; }
+  .chip { border-radius: 999px; padding: 1px 8px; border: 1px solid var(--border); }
+  .chip.found { border-color: var(--success); } .chip.missing { border-color: var(--warning); }
   details { margin-top: 10px; }
   details.section { border: 1px solid var(--border); border-radius: var(--r-panel); padding: 10px 14px; margin-top: 14px; background: var(--surface); }
   summary { cursor: pointer; font-weight: 600; }

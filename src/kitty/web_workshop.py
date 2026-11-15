@@ -8,7 +8,7 @@ from __future__ import annotations
 from contextlib import closing
 import re
 
-from kitty.core.workshop import imports, render, store, templates
+from kitty.core.workshop import ats, imports, render, store, templates
 from kitty.db import connect
 
 PREFIX = "/api/workshop"
@@ -81,6 +81,17 @@ def get(app, conn, path, query):
         if match:
             _keys(query, ())
             return {"document": store.get_doc(conn, match[1]), "revisions": store.revisions(conn, match[1])}
+        match = re.fullmatch(_DOC + "/ats", path)
+        if match:
+            # The engine's parser view of a compiled revision, plus the linked posting's terms
+            # compared now (the posting and vocabulary can change after the compile).
+            doc = _revision(conn, match[1], query)
+            try:
+                checks = render.compiled_checks(app.settings, doc)
+            except store.WorkshopError:
+                raise store.WorkshopError("Compile this revision first; the ATS check reads its PDF", 409) from None
+            return {"revision": doc["revision"], "report": checks.get("ats"),
+                    "job_terms": ats.job_terms(conn, app.config.resume_terms, doc, checks.get("extracted_text", ""))}
         return None
     except store.WorkshopError as exc:
         raise _error(exc) from None
@@ -114,11 +125,13 @@ def post(app, conn, path, body):
                 if body.get("format", chosen["format"]) != chosen["format"]:
                     raise store.WorkshopError("Template format does not match the requested format")
                 fmt, source = chosen["format"], chosen["source"]
+                template_engine = chosen.get("engine")
             else:
                 if "format" not in body:
                     raise store.WorkshopError("Choose a format or a template")
                 fmt, source = body["format"], body.get("source", "")
-            fmt_engine = body.get("engine")
+                template_engine = None
+            fmt_engine = body.get("engine") or template_engine
             if fmt_engine is None and isinstance(fmt, str) and fmt in store.FORMATS:
                 fmt_engine = render.preferred_engine(app.settings, fmt)
             return {"document": store.create_doc(conn, title=body["title"], format=fmt, source=source,
