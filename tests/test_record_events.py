@@ -49,8 +49,16 @@ def _notes(app, conn):
 
 
 def _schema(app, conn):
-    created = app.mutate(conn, "/api/schema/create", {"title": "Ideas"})
-    return ("schema", "map", str(created["id"]), "create", "/api/schema/create")
+    """The maps' own mutations are rika-server's (tests/test_schema_parity.py); linking backlinks is Python's."""
+    from kitty.core import schema_maps
+
+    created = schema_maps.create(conn, {"title": "Ideas"})
+    created = schema_maps.add_node(conn, {"map_id": created["id"], "revision": created["revision"], "label": "Waves"})
+    path = "/api/schema/backlinks/apply"
+    app.mutate(conn, path, {"map_id": created["id"], "revision": created["revision"], "node_ids": [created["graph"]["nodes"][0]["id"]]})
+    # A route the front answers and records: its rule is still the reference.
+    assert record_events.classify("/api/schema/create", {"title": "Ideas"}, created) == ("schema", "map", str(created["id"]), "create")
+    return ("schema", "map", str(created["id"]), "link", path)
 
 
 def _jobs(app, conn):

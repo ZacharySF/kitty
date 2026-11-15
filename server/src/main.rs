@@ -19,6 +19,7 @@ mod goals;
 mod quick_notes;
 mod study;
 mod opportunities;
+mod schema;
 mod effects;
 mod flashcards;
 mod front;

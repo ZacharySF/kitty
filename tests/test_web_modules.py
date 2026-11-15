@@ -512,8 +512,9 @@ def test_schema_job_sources_keep_links_but_hide_live_data_without_applyai(worksp
 
 
 def test_schema_web_rejects_new_job_links_without_applyai(tmp_path):
+    """The maps' routes are rika-server's (server/src/schema)."""
     settings = make_root(tmp_path, ("workspace",))
-    with site(settings) as (app, request):
+    with front(settings) as request:
         status, created = request("/api/schema/create", {"title": "Plain map", "mode": "general"})
         assert status == 200
         body = {"map_id": created["id"], "revision": created["revision"], "label": "Job", "kind": "job",
