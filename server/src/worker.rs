@@ -128,7 +128,9 @@ impl Worker {
         stdin
             .write_all(format!("{front_secret}\n{ui_session}\n").as_bytes())
             .await
-            .map_err(|_| WorkerError("the Python backend closed its input before starting".into()))?;
+            // A closed input means the backend is gone: the same reason as an early exit, whichever
+            // of the two the front notices first.
+            .map_err(|_| WorkerError("the Python backend exited before becoming ready".into()))?;
         let mut stdout = BufReader::new(child.stdout.take().expect("stdout is piped"));
         let mut line = String::new();
         let read = tokio::time::timeout(READY_TIMEOUT, stdout.read_line(&mut line))
