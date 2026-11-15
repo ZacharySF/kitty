@@ -526,6 +526,59 @@ selection: base only.
    `GET /api/goals` took 12.2 to 12.7 ms (each of the 40 goals sums the 200 sessions) and
    `GET /api/quick-notes` 0.4 ms; their Python times were not measured.
 
+   *Built (mind maps):* the mind-map routes are answered by rika-server (`server/src/schema/`):
+   `GET /api/schema` (the list), `/api/schema/map`, `/api/schema/export`, `/api/schema/network`
+   (`network.rs`) and `/api/schema/jobs`, and `POST /api/schema/{create, import, save, add-node,
+   delete, undo, import-jobs, transfer}`. The validation of a document and the order of its
+   refusals follow `kitty.core.schema_maps.graph`; `graph_json`, `viewport_json` and the undo
+   snapshot in `previous_json` (with its partner after a transfer) are written as `json.dumps`
+   writes them, numbers kept as the integer or float they were sent as; new ids are
+   `uuid4().hex`; a transfer's arithmetic on positions and its clamp to the canvas give
+   Python's integer or float. A link is judged as `urllib.parse.urlsplit` judges it (`url.rs`:
+   the scheme, a host, no credentials, a numeric port, bracketed IPv6 and IPvFuture hosts, and
+   the characters whose NFKC form hides a separator, listed from `unicodedata` 15.0). The two
+   routes over tracked jobs are a second route group that belongs to ApplyAI, as the longest
+   prefix in `ROUTE_MODULES` gave them; without ApplyAI the live view of a job or company
+   source is `unavailable` and a save, an added node or an import that would make a new such
+   link is the 403 of a disabled module. Content events are recorded by the front: the two
+   schema rules already in `ported/events.rs` are the ones in `record_events.ROUTES`, and
+   `/api/schema/transfer` has no rule in either and takes the general shape. `serde_json`
+   now parses floats to the exact double (`float_roundtrip`), as `json.loads` does: a stored
+   coordinate is read and written back on every change of its map and must not drift.
+
+   Stay on Python, forwarded: `GET /api/schema/backlinks` and `POST /api/schema/backlinks/apply`.
+   They scan notes, study, flashcards, the calendar and jobs through `kitty.core.backlinks`
+   (574 lines over `kitty.core.search`'s phrase matching and snippet redaction), which
+   `/api/backlinks` and the notes' page connections also use; it moves as one piece.
+   `web_schema.py` keeps only those two. All of `kitty.core.schema_maps` stays: Rika's tools
+   call `load`, `create`, `save`, `add_node`, `delete`, `undo` and `workspace`, the backlinks
+   and the pages' concept maps call `graph`, `_row`, `_write` and the validators, and
+   `transfer`, `import_jobs`, `job_options`, `network` and `export` are the reference of
+   `tests/test_schema_maps.py` and of the parity test.
+
+   `tests/test_schema_parity.py` runs one scenario over every route, with the refusals
+   between (252 requests, 190 of them refused: every refusal of a document, the 500 Python gives for an
+   unhashable value, undo and redo, a split, its paired undo and redo, the merge back, a drop
+   beside existing nodes and one that reaches the canvas edge, the network with and without
+   merged labels, deletes and a pair whose partner is gone), through the front and through
+   the Python core on two copies of a workspace at the same clock readings, and compares
+   every answer, the `schema_maps` rows as text and the events recorded; a second scenario
+   does the same with the workspace module alone, and a third checks that the backlink routes
+   still answer behind the front and that the front then reads what the worker wrote. The
+   web tests of `tests/test_schema_maps.py` and `tests/test_web_modules.py` go through the
+   front. 12,000 generated links (460 accepted) were judged the same by the front and by
+   `schema_maps._url`.
+
+   Known differences: a query integer (`id`, `offset`, `map_ids`) is read as `int()` reads
+   ASCII digits, signs, spaces and underscores, not other Unicode digits; a number past a
+   double's range (`1e999`) is "Malformed JSON body" to the front's JSON reader, where Python
+   read infinity and the core refused the value; `-0` in a
+   body is a float to serde_json and an integer to Python (a browser never sends it); labels
+   are case-folded as the calendar entry above says; IPv6 literals are parsed by Rust's
+   `Ipv6Addr`, not `ipaddress`.
+
+   Measured: MEASUREMENTS
+
 ## Rules for every step
 
 - The Python suite and the browser suites pass against whatever mix serves the
