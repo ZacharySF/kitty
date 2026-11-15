@@ -138,8 +138,8 @@ def test_a_capture_failure_never_fails_the_request(app, workspace, monkeypatch, 
 
     monkeypatch.setattr(record_events, "append", broken)
     with caplog.at_level(logging.WARNING, logger="kitty.core.record_events"):
-        item = app.mutate(workspace.conn, "/api/opportunities", {"title": "Kept"})
-    assert item["id"]
+        job = app.mutate(workspace.conn, "/api/jobs/add", {"company": "Acme", "title": "Kept", "url": "https://example.invalid/kept"})
+    assert job["id"]
     assert events(workspace.conn) == []
     assert any("not recorded" in record.message for record in caplog.records)
 
