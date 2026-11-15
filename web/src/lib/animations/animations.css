@@ -51,27 +51,28 @@
 
 @media (prefers-reduced-motion: no-preference) {
   /* ── Pages arrive. The view's root is re-made on every switch, so these play by themselves;
-     index.ts sets data-nav just before the first frame to say from where. */
-  :root[data-anim="on"]:not([data-motion="reduced"]) [data-kitty-panel="view"]:not([hidden]) > :not(.anim-ghost) {
+     index.ts sets data-nav just before the first frame to say from where. The layer of page
+     widgets (pageEdit/PageWidgets.svelte) is not the page: it stays where it is. */
+  :root[data-anim="on"]:not([data-motion="reduced"]) [data-kitty-panel="view"]:not([hidden]) > :not(.anim-ghost, .page-widgets) {
     animation: anim-rise 520ms var(--anim-glide) backwards;
   }
-  :root[data-anim="on"][data-nav="forward"]:not([data-motion="reduced"]) [data-kitty-panel="view"]:not([hidden]) > :not(.anim-ghost) {
+  :root[data-anim="on"][data-nav="forward"]:not([data-motion="reduced"]) [data-kitty-panel="view"]:not([hidden]) > :not(.anim-ghost, .page-widgets) {
     animation: anim-from-right 560ms var(--anim-glide) backwards;
   }
-  :root[data-anim="on"][data-nav="back"]:not([data-motion="reduced"]) [data-kitty-panel="view"]:not([hidden]) > :not(.anim-ghost) {
+  :root[data-anim="on"][data-nav="back"]:not([data-motion="reduced"]) [data-kitty-panel="view"]:not([hidden]) > :not(.anim-ghost, .page-widgets) {
     animation: anim-from-left 560ms var(--anim-glide) backwards;
   }
-  :root[data-anim="on"][data-nav="next"]:not([data-motion="reduced"]) [data-kitty-panel="view"]:not([hidden]) > :not(.anim-ghost) {
+  :root[data-anim="on"][data-nav="next"]:not([data-motion="reduced"]) [data-kitty-panel="view"]:not([hidden]) > :not(.anim-ghost, .page-widgets) {
     animation: anim-step-right 460ms var(--anim-glide) backwards;
   }
-  :root[data-anim="on"][data-nav="prev"]:not([data-motion="reduced"]) [data-kitty-panel="view"]:not([hidden]) > :not(.anim-ghost) {
+  :root[data-anim="on"][data-nav="prev"]:not([data-motion="reduced"]) [data-kitty-panel="view"]:not([hidden]) > :not(.anim-ghost, .page-widgets) {
     animation: anim-step-left 460ms var(--anim-glide) backwards;
   }
-  :root[data-anim="on"][data-nav="zoom"]:not([data-motion="reduced"]) [data-kitty-panel="view"]:not([hidden]) > :not(.anim-ghost) {
+  :root[data-anim="on"][data-nav="zoom"]:not([data-motion="reduced"]) [data-kitty-panel="view"]:not([hidden]) > :not(.anim-ghost, .page-widgets) {
     transform-origin: var(--nav-origin, 50% 30%);
     animation: anim-grow 600ms var(--anim-glide) backwards;
   }
-  :root[data-anim="on"][data-nav="home"]:not([data-motion="reduced"]) [data-kitty-panel="view"]:not([hidden]) > :not(.anim-ghost) {
+  :root[data-anim="on"][data-nav="home"]:not([data-motion="reduced"]) [data-kitty-panel="view"]:not([hidden]) > :not(.anim-ghost, .page-widgets) {
     animation: anim-settle 560ms var(--anim-glide) backwards;
   }
 

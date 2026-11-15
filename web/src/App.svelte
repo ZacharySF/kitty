@@ -33,6 +33,7 @@
   import { rika } from "./lib/rika/session.svelte";
   import { goalHash } from "./lib/goals/goals";
   import PageEdit from "./lib/pageEdit/PageEdit.svelte";
+  import PageWidgets from "./lib/pageEdit/PageWidgets.svelte";
 
   type PaneHandle = {
     breadcrumbs: () => WorkspaceTrail;
@@ -550,6 +551,8 @@
           onnotepagetab={id => void newTab("notes", { id, title: "" })}
         />
         {/if}
+        <PageWidgets view={tab.view} idPrefix={`page-${tab.id}`} {revision} editing={pageEditing && tab.id === activeId}
+          onview={next => { if (tab.id === activeId) navigate(next); }} />
       </div>
     {/each}
   </main>

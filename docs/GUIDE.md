@@ -178,8 +178,14 @@ page** put things back; **Done** or Esc saves, and so does leaving the page. The
 the build's `ui.pages.moves`, one entry per block as `view|dx,dy,width,height|path`, and is
 put back every time that page opens (not in safe mode). A block is found again by its path
 from the page (tags, labels and class names), so a block a later rika! no longer draws is
-kept and not moved. On home the shortcut opens home's own edit mode instead. The code is
-`web/src/lib/pageEdit/`.
+kept and not moved. On home the shortcut opens home's own edit mode instead.
+
+The bar's **Widgets** menu lists home's widgets that are not on the page yet: press one to
+put it at the top right, or drag it to where it should stand. A placed widget is a pane
+over the page that works as it does on home; in edit mode drag it to move it, drag the bar
+on its right edge for its width (240 to 1200 px), and **Remove widget** takes it off
+(**Reset page** takes them all). They are the build's `ui.pages.widgets`, one entry each as
+`view|widget|x,y,width`. The code is `web/src/lib/pageEdit/`.
 
 ### Builds
 
@@ -1639,9 +1645,9 @@ the window: how many, **All N** (the whole filter), **Save**, **Change** (their 
 rank or category; g and t open it), **Check** (are they still open) and **Fill in N
 forms**; × clears the ticks. On a job map (2D), every point carries its name.
 
-Home's **Edit** also colour-codes widgets: drag one of the six **Colours** onto a widget,
-or press a colour and then a widget (the empty ring clears it). The colours are the active
-theme's own (`ui.home.tones` in the build).
+Home's **Edit** also colour-codes widgets: drag one of the six colours in the bar onto a
+widget, or press a colour and then a widget (the empty ring clears it). The colours are the
+active theme's own (`ui.home.tones` in the build).
 
 Home is a dashboard: the day's widgets on the left, **Rika** filling the right-hand
 column (see **Rika** above). The widgets sit in two columns when there is room (one in
@@ -1663,13 +1669,14 @@ the same timer as Study's and the top bar's, so starting it in one place starts 
 all. **Agent session** shows one coding-agent session's usage (see Agent usage under
 the Terminal module); it appears once usage is on for an agent.
 
-**Edit** under the widgets (or **Edit home** in Ctrl Space) unlocks home: drag a
-widget by its handle to another place or column (or focus the handle and use the
-arrow keys), **Remove** it, or **Add** one from the **Widgets** list that takes
-Rika's place while you edit. Two thin splitters set the widths: one between the
-two widget columns and one before Rika's column (drag them, or focus one and use
-the arrow keys; a double-click resets it). **Done** saves the arrangement and the
-widths to the build (`ui.home`).
+**Edit** under the widgets (or **Edit home** in Ctrl Space, or Ctrl+Shift+Space) unlocks
+home: drag a widget by its handle to another place or column (or focus the handle and use
+the arrow keys), or **Remove** it. A bar at the bottom of the window holds the rest:
+**Widgets** lists the ones not on home (press one to add it, or drag it to its place), then
+the colours, **Hide Rika** (or **Show Rika**) and **Done**. Two thin splitters set the
+widths: one between the two widget columns and one before Rika's column (drag them, or
+focus one and use the arrow keys; a double-click resets it). **Done** saves the
+arrangement and the widths to the build (`ui.home`).
 
 Loading shows a small turning brain made of points with a line that names what is
 loading; there are no placeholder rows. The Brain itself stays still while you work

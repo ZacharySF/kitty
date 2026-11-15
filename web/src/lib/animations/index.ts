@@ -155,7 +155,9 @@ export function start(): void {
     }
   };
 
-  // ── Pages turn: the old one leaves as a ghost while the new one arrives.
+  // ── Pages turn: the old one leaves as a ghost while the new one arrives. The layer of page
+  // widgets (pageEdit/PageWidgets.svelte) stays with its panel: it is neither page.
+  const aside = (node: Element) => node.classList.contains("anim-ghost") || node.classList.contains("page-widgets");
   let view = viewOf(location.hash), clear = 0;
   // The page that is open when the module starts arrives too.
   root.dataset.nav = "open";
@@ -181,7 +183,7 @@ export function start(): void {
     // one is left out of the ghost and the new one does not arrive, so only its marker moves.
     const plain = (item: Element) => [...item.classList].filter((name) => !name.startsWith("anim-")).join(" ");
     const shared = (a: Element, b: Element) => a.tagName === b.tagName && !!plain(a) && plain(a) === plain(b) && a.matches("nav, header");
-    const arrived = [...panel.children].filter((child) => !child.classList.contains("anim-ghost"));
+    const arrived = [...panel.children].filter((child) => !aside(child));
     for (const node of removed) {
       const twin = arrived.find((child) => shared(node, child));
       if (twin) {
@@ -230,8 +232,8 @@ export function start(): void {
       }
       if (!target.matches?.('[data-kitty-panel="view"]') || target.hidden) continue;
       panel = target;
-      for (const node of record.removedNodes) if (node instanceof Element && !node.classList.contains("anim-ghost")) removed.push(node);
-      for (const node of record.addedNodes) if (node instanceof Element && !node.classList.contains("anim-ghost")) arrived = true;
+      for (const node of record.removedNodes) if (node instanceof Element && !aside(node)) removed.push(node);
+      for (const node of record.addedNodes) if (node instanceof Element && !aside(node)) arrived = true;
     }
     if (panel && arrived) turn(panel, removed);
   });
