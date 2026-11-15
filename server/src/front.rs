@@ -76,13 +76,13 @@ pub struct Front {
 }
 
 /// A refusal the Python server would also send: status, message and extra headers.
-struct Refusal {
+pub(crate) struct Refusal {
     status: StatusCode,
     message: String,
     headers: Vec<(&'static str, &'static str)>,
 }
 
-fn refuse(status: u16, message: impl Into<String>) -> Refusal {
+pub(crate) fn refuse(status: u16, message: impl Into<String>) -> Refusal {
     Refusal { status: StatusCode::from_u16(status).expect("a valid status"), message: message.into(), headers: Vec::new() }
 }
 
@@ -132,7 +132,7 @@ fn send(status: StatusCode, data: Vec<u8>, content_type: &str, head: bool) -> Re
     response
 }
 
-fn send_json(status: StatusCode, value: &Value, head: bool) -> Response<Body> {
+pub(crate) fn send_json(status: StatusCode, value: &Value, head: bool) -> Response<Body> {
     send(status, serde_json::to_vec(value).expect("JSON values serialize"), "application/json; charset=utf-8", head)
 }
 
@@ -267,7 +267,7 @@ impl Front {
 }
 
 /// `RequestHandler._body`'s framing rules: one Content-Length, no Transfer-Encoding.
-fn content_length(headers: &HeaderMap) -> Result<u64, Refusal> {
+pub(crate) fn content_length(headers: &HeaderMap) -> Result<u64, Refusal> {
     let lengths = all(headers, "content-length");
     if headers.contains_key("transfer-encoding") || lengths.len() != 1 {
         return Err(refuse(400, "A single Content-Length is required"));
@@ -283,7 +283,7 @@ fn content_length(headers: &HeaderMap) -> Result<u64, Refusal> {
     Ok(length)
 }
 
-async fn read_body(body: Incoming, length: u64) -> Result<Bytes, Refusal> {
+pub(crate) async fn read_body(body: Incoming, length: u64) -> Result<Bytes, Refusal> {
     let collected = Limited::new(body, length as usize).collect().await.map_err(|_| refuse(400, "Incomplete JSON body"))?.to_bytes();
     if collected.len() as u64 != length {
         return Err(refuse(400, "Incomplete JSON body"));
@@ -332,7 +332,7 @@ impl<'de> Deserialize<'de> for Strict {
     }
 }
 
-fn json_object(raw: &[u8]) -> Result<Map<String, Value>, Refusal> {
+pub(crate) fn json_object(raw: &[u8]) -> Result<Map<String, Value>, Refusal> {
     match serde_json::from_slice::<Strict>(raw) {
         Ok(Strict(Value::Object(object))) => Ok(object),
         Ok(_) => Err(refuse(400, "JSON body must be an object")),

@@ -37,6 +37,8 @@ enum Name {
     Fixed(&'static str),
     Group,
     Opportunity,
+    /// `/api/flashcards/action`: the body's action, on the note when it deletes or archives, else on the card.
+    Flashcard,
     /// `_body_action()`: the body's `action` when it is a word, else "save".
     Body,
 }
@@ -51,12 +53,17 @@ struct Route {
     grouped: bool,
     /// `logged`: a new record (no `id` in the body) has its own history and is not captured.
     own_history_when_new: bool,
+    /// The id is the body's field of this name, whatever the path and the result say.
+    ident_field: Option<&'static str>,
 }
 
 /// The `ROUTES` of the sections whose mutations the front answers.
 static ROUTES: LazyLock<Vec<Route>> = LazyLock::new(|| {
-    let route = |pattern: &str, entity, action, undone| Route { pattern: compile(pattern), entity, action, undone, grouped: false, own_history_when_new: false };
+    let route = |pattern: &str, entity, action, undone| Route { pattern: compile(pattern), entity, action, undone, grouped: false, own_history_when_new: false, ident_field: None };
     vec![
+        Route { grouped: true, ..route(r"/api/flashcards/(deck|type|note)", "", Name::Fixed("save"), false) },
+        route(r"/api/flashcards/action", "card", Name::Flashcard, false),
+        Route { ident_field: Some("deck_id"), ..route(r"/api/flashcards/import", "deck", Name::Fixed("import"), false) },
         Route { grouped: true, ..route(r"/api/study/(subjects|projects|targets|tasks|exams|plan)", "", Name::Body, false) },
         Route { own_history_when_new: true, ..route(r"/api/study/sessions", "session", Name::Body, false) },
         route(r"/api/study/guide", "guide", Name::Fixed("save"), false),
@@ -145,13 +152,16 @@ fn classify(conn: &Connection, path: &str, body: &Map<String, Value>, result: &V
                 return None;
             }
             let action = match &route.action {
-                Name::Body => body.get("action").and_then(Value::as_str).map_or_else(|| "save".to_owned(), |action| word(action, "save")),
+                Name::Body | Name::Flashcard => body.get("action").and_then(Value::as_str).map_or_else(|| "save".to_owned(), |action| word(action, "save")),
                 Name::Fixed(action) => (*action).to_owned(),
                 Name::Group => found.get(1).map(|m| m.as_str().to_owned()).unwrap_or_default(),
                 Name::Opportunity => found.get(2).map(|m| m.as_str().to_owned()).unwrap_or_else(|| "save".into()),
             };
             let path_id = found.name("id").map(|m| m.as_str().to_owned());
             let mut entity = if route.grouped { found.get(1).map(|m| singular(m.as_str()).to_owned()).unwrap_or_default() } else { route.entity.to_owned() };
+            if matches!(route.action, Name::Flashcard) && matches!(body.get("action").and_then(Value::as_str), Some("delete" | "archive")) {
+                entity = "note".into();
+            }
             let ident = if route.undone {
                 let history = body.get("id").and_then(Value::as_i64);
                 let row = history.and_then(|id| conn.query_row("SELECT entity, entity_id FROM calendar_history WHERE id = ?", [id],
@@ -163,6 +173,8 @@ fn classify(conn: &Connection, path: &str, body: &Map<String, Value>, result: &V
                     }
                     None => None,
                 }
+            } else if let Some(field) = route.ident_field {
+                token(body.get(field))
             } else {
                 path_id.clone().or_else(|| result_id(result)).or_else(|| token(body.get("id")))
             };

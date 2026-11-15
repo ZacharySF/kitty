@@ -20,6 +20,9 @@ mutations whose core already appends to its own history (``flash_reviews``,
 Notes, Documents and Quick-notes write is a block transaction): those logs are their
 edits. Block transactions that never pass through ``WebApplication.mutate`` (the
 editor's live-channel ``txn``, peer-sync merges, ingress captures) are in ``op_log`` too.
+
+Routes answered by rika-server record their own events with the same rules
+(server/src/modkit/record.rs): the flashcard routes, so none of them are listed here.
 """
 from __future__ import annotations
 
@@ -56,8 +59,6 @@ SKIP = tuple(re.compile(pattern) for pattern in (
     r"/api/notes/pages/[0-9]+/viewport",          # pan and zoom of the canvas view
     r"/api/notes/(daily|resolve)",                # get-or-create while navigating; new pages are records
     r"/api/notes/(preferences|cleanup)",          # notes settings, unused reference-file cleanup
-    r"/api/flashcards/(review|reveal|export|media)",  # practice controls, export, media upload
-    r"/api/flashcards/(grade|undo)",              # flash_reviews is their history
     r"/api/calendar/import/preview",              # a computed answer
     r"/api/calendar/google/.*",                   # provider credentials and sync controls
     r"/api/study/(timer|settings)",               # timer controls (study_sessions keeps the result), settings
@@ -134,11 +135,6 @@ ROUTES = (
     _route(r"/api/documents", "document", "create"),
     _route(r"/api/documents/import", "document", "import"),
     _route(r"/api/quick-notes/(create|save|delete)", "note", _group),
-    _route(r"/api/flashcards/(deck|type|note)", _group, "save"),
-    _route(r"/api/flashcards/action", lambda match, body: "note" if body.get("action") in {"delete", "archive"}
-           else "card", _body_action()),
-    _route(r"/api/flashcards/import", "deck", "import",
-           ident=lambda conn, match, body, result: body.get("deck_id")),
     _route(r"/api/study/(subjects|projects|targets|tasks|exams|plan)",
            lambda match, body: _singular(match[1]), _body_action()),
     _route(r"/api/study/sessions", "session", _body_action(), logged=lambda body: body.get("id") is None),

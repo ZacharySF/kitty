@@ -526,6 +526,28 @@ selection: base only.
    `GET /api/goals` took 12.2 to 12.7 ms (each of the 40 goals sums the 200 sessions) and
    `GET /api/quick-notes` 0.4 ms; their Python times were not measured.
 
+   *Built (flashcards):* every `/api/flashcards` route is answered by rika-server
+   (`server/src/flashcards/`): decks, note types and notes with their generated cards
+   (`store.rs`), the overview, browser, statistics and the review session (`review.rs`),
+   card rendering with the allowlisted HTML (`render.rs`, `html.rs` after Python's
+   `html.parser`, `entities.rs`), scheduling (`scheduler.rs`) and Anki packages and CSV in
+   and out (`anki.rs`). Scheduling is py-fsrs 6's `review_card` in the same f64 operations
+   in the same order, so a review stores the numbers py-fsrs stored;
+   `tests/test_flashcard_scheduling_parity.py` compares single reviews and whole histories
+   with py-fsrs for equality, not within a tolerance. (An earlier draft used the `fsrs`
+   crate; it computes in f32 and caps stability at 36500 days, which py-fsrs does not.)
+   `serde_json` now reads floats with `float_roundtrip`: without it a stored float could
+   read back one bit off, which showed as a different stability after a review.
+   The group stands on the shared kit (`crate::ported`): the module guard, the connection
+   and the content events are the kit's, and `ported/events.rs` gained the flashcard
+   rules; `flashcards/pyjson.rs` and `pytime.rs` are the module's own value formats. The
+   Python route file is deleted. `kitty.core.flashcards` keeps what Rika's tools call
+   (built-in decks and types, saving a deck or a note, deleting a note) and the renderer
+   the tests use as the reference; `tests/test_flashcards.py` runs through the front and
+   checks that a note Rika's tool writes and one the route writes are the same rows and
+   render the same. The clock for tests is `KITTY_TEST_CLOCK`, a file the shared clock
+   re-reads, so a test moves time without restarting the front. Not measured.
+
 ## Rules for every step
 
 - The Python suite and the browser suites pass against whatever mix serves the

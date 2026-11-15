@@ -45,9 +45,6 @@ def _notes(app, conn):
     return ("notes", "notebook", str(notebook["id"]), "create", "/api/notes/notebooks")
 
 
-def _flashcards(app, conn):
-    deck = app.mutate(conn, "/api/flashcards/deck", {"name": "Biology"})["deck"]
-    return ("flashcards", "deck", str(deck["id"]), "create", "/api/flashcards/deck")
 
 
 def _schema(app, conn):
@@ -73,7 +70,7 @@ def _reminders(app, conn):
     return ("reminders", "reminder", str(reminder["id"]), "create", "/api/reminders")
 
 
-@pytest.mark.parametrize("case", [_notes, _flashcards,
+@pytest.mark.parametrize("case", [_notes, 
                                   _schema, _opportunities, _jobs, _reminders], ids=lambda case: case.__name__[1:])
 def test_one_real_route_per_section_is_captured(app, workspace, case):
     conn = workspace.conn
@@ -101,9 +98,9 @@ def test_block_backed_writes_are_left_to_op_log(app, workspace):
 
 def test_edits_and_deletes_resolve_the_entity_from_path_result_or_body(app, workspace):
     conn = workspace.conn
-    deck = app.mutate(conn, "/api/flashcards/deck", {"name": "Words"})["deck"]
-    assert events(conn) == [("flashcards", "deck", str(deck["id"]), "create", "/api/flashcards/deck")]
-    # A route rika-server answers and records (tests/test_study_parity.py): its rule is still the reference.
+    note = app.mutate(conn, "/api/notes/notebooks", {"title": "Words"})
+    assert events(conn) == [("notes", "notebook", str(note["id"]), "create", "/api/notes/notebooks")]
+    # Routes rika-server answers and records: their rule is still the reference.
     assert record_events.classify("/api/study/subjects", {"id": 4, "revision": 1, "action": "delete"}, {"deleted": 4}) == ("study", "subject", "4", "delete")
 
 
@@ -135,8 +132,8 @@ def test_a_capture_failure_never_fails_the_request(app, workspace, monkeypatch, 
 
     monkeypatch.setattr(record_events, "append", broken)
     with caplog.at_level(logging.WARNING, logger="kitty.core.record_events"):
-        deck = app.mutate(workspace.conn, "/api/flashcards/deck", {"name": "Kept"})["deck"]
-    assert deck["name"] == "Kept"
+        item = app.mutate(workspace.conn, "/api/opportunities", {"title": "Kept"})
+    assert item["id"]
     assert events(workspace.conn) == []
     assert any("not recorded" in record.message for record in caplog.records)
 
@@ -155,8 +152,8 @@ def test_every_route_prefix_is_classified():
     assert prefixes <= declared
     assert not set(record_events.SECTION_PREFIXES) & set(record_events.NON_CONTENT_PREFIXES)
     for path in ("/api/reload", "/api/modules", "/api/account/onboarding", "/api/ai/settings",
-                 "/api/notes/preferences", "/api/notes/pages/3/viewport", "/api/flashcards/grade",
-                 "/api/flashcards/review", "/api/study/timer", "/api/calendar/google/sync",
+                 "/api/notes/preferences", "/api/notes/pages/3/viewport",
+                 "/api/study/timer", "/api/calendar/google/sync",
                  "/api/opportunities/settings", "/api/opportunities/discover", "/api/terminal/session"):
         assert record_events.classify(path, {}, {"id": 1}) is None, path
     assert record_events.classify("/api/documents/import", {}, {"task": "a" * 32}) is None
