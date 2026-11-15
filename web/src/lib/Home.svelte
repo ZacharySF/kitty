@@ -1,17 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte";
-  import HomeAgents from "./HomeAgents.svelte";
-  import HomeCards from "./HomeCards.svelte";
-  import Icon from "./Icon.svelte";
-  import HomeClock from "./HomeClock.svelte";
-  import HomeFocus from "./HomeFocus.svelte";
-  import HomeGoals from "./HomeGoals.svelte";
-  import HomePipeline from "./HomePipeline.svelte";
-  import HomeWeek from "./HomeWeek.svelte";
-  import HomeQuickNote from "./HomeQuickNote.svelte";
-  import HomeSession from "./HomeSession.svelte";
-  import HomeUpNext from "./HomeUpNext.svelte";
-  import TodayAgenda from "./TodayAgenda.svelte";
+  import HomeWidget from "./home/HomeWidget.svelte";
+  import WidgetMenu from "./home/WidgetMenu.svelte";
   import type { Bootstrap } from "./api";
   import { buildStore, setPreferences } from "./build.svelte";
   import { HOME_WIDGETS, MAX_COLUMNS, RIKA_LIMITS, WIDTH_LIMITS, columnShares, placeWidget, resolveHome, rikaShare, savedHome, spareWidgets, splitWidths, type HomeWidgetId } from "./home/layout";
@@ -31,8 +21,9 @@
    * one quiet line says so. Which widgets show, and where, is the build's `ui.home`
    * (home/layout.ts); a template (home/templates.ts) rearranges it from Rika's panel.
    * Edit (under the widgets, or "Edit home" in search) unlocks them: drag one by its
-   * handle (or move it with the arrow keys), Remove it, or add one from the library that
-   * takes Rika's place until Done, which saves the arrangement. In edit mode a splitter
+   * handle (or move it with the arrow keys), Remove it, or bring one in from the Widgets
+   * menu of the bar at the bottom (press it, or drag it to its place); the bar also holds
+   * the colours, Hide Rika and Done, which saves the arrangement. In edit mode a splitter
    * between the two columns, and one before Rika's column, sets how the width is shared
    * (drag, arrow keys, double-click to reset).
    */
@@ -65,8 +56,6 @@
     if (tone === null) return;
     draftTones = withTone(tones, widget, tone || null);
   }
-  const WIDGET_ICONS: Record<HomeWidgetId, string> = { agenda: "today", note: "quick-notes", focus: "timer", next: "next", agents: "terminal", session: "pulse",
-    goals: "goals", week: "week", cards: "flashcards", pipeline: "applications", clock: "clock" };
   const panel = $derived(draftPanel ?? !buildStore.build.ui.home.hidden.includes("rika"));
   let board = $state<HTMLElement>();
   let home = $state<HTMLElement>();
@@ -185,7 +174,7 @@
   }
 </script>
 
-<div class="home" class:solo={!editing && !panel && !templatePicker.open} data-tutorial="home" bind:this={home} style:--rika-column={rikaWidth ? `${Math.round(rikaWidth * 100)}%` : null}>
+<div class="home" class:solo={!panel && !templatePicker.open} data-tutorial="home" bind:this={home} style:--rika-column={rikaWidth ? `${Math.round(rikaWidth * 100)}%` : null}>
   <div class="board" class:editing class:sized={columns.length === 2} bind:this={board} role="region" aria-label="Home widgets"
     style:--board-columns={columns.length === 2 ? `minmax(0, ${shares[0]}fr) minmax(0, ${shares[1]}fr)` : null}>
     {#each columns as column, index (index)}
@@ -212,17 +201,7 @@
               </div>
             {/if}
             <div class="content" inert={editing}>
-              {#if widget === "agenda"}<TodayAgenda id={`${homeId}-agenda`} {revision} {onview} />
-              {:else if widget === "note"}<HomeQuickNote id={`${homeId}-note`} {onview} />
-              {:else if widget === "next"}<HomeUpNext id={`${homeId}-next`} {revision} {onview} />
-              {:else if widget === "focus"}<HomeFocus id={`${homeId}-focus`} />
-              {:else if widget === "goals"}<HomeGoals id={`${homeId}-goals`} {revision} {onview} />
-              {:else if widget === "week"}<HomeWeek id={`${homeId}-week`} {revision} {onview} />
-              {:else if widget === "cards"}<HomeCards id={`${homeId}-cards`} {revision} {onview} />
-              {:else if widget === "pipeline"}<HomePipeline id={`${homeId}-pipeline`} {revision} {onview} />
-              {:else if widget === "clock"}<HomeClock id={`${homeId}-clock`} />
-              {:else if widget === "session"}<HomeSession id={`${homeId}-session`} placeholder={editing} />
-              {:else}<HomeAgents id={`${homeId}-agents`} {onview} placeholder={editing} />{/if}
+              <HomeWidget {widget} idPrefix={homeId} {revision} {onview} placeholder={editing} />
             </div>
           </div>
         {/each}
@@ -245,44 +224,40 @@
       <p class="edit"><button type="button" class="text-button" onclick={() => (homeEditor.on = true)}>Edit</button></p>
     {/if}
   </div>
+  {#if panel || templatePicker.open}
+    {#if editing}
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex a11y_no_noninteractive_element_interactions -->
+      <div class="splitter rika" role="separator" aria-orientation="vertical" aria-label="Width of Rika's column" tabindex="0"
+        aria-valuemin={RIKA_LIMITS.min * 100} aria-valuemax={RIKA_LIMITS.max * 100} aria-valuenow={Math.round((rikaWidth || 0.3) * 100)}
+        onpointerdown={(event) => grab(event, "rika")} onpointermove={size} onpointerup={() => (sizing = null)} onpointercancel={() => (sizing = null)}
+        onkeydown={(event) => step(event, "rika")} ondblclick={() => (draftRika = 0)}></div>
+    {/if}
+    <!-- While editing Rika keeps its column, dimmed and still like a widget's content.
+         With the panel off home, the template offer (the palette's Templates) still shows in it. -->
+    <div class="rika-column" class:editing inert={editing}>
+      <RikaPanel id={`${homeId}-rika`} active={pane.active}>
+        {#snippet lead()}<TemplateSuggestion {counts} />{/snippet}
+      </RikaPanel>
+    </div>
+  {/if}
   {#if editing}
-    <!-- svelte-ignore a11y_no_noninteractive_tabindex a11y_no_noninteractive_element_interactions -->
-    <div class="splitter rika" role="separator" aria-orientation="vertical" aria-label="Width of Rika's column" tabindex="0"
-      aria-valuemin={RIKA_LIMITS.min * 100} aria-valuemax={RIKA_LIMITS.max * 100} aria-valuenow={Math.round((rikaWidth || 0.3) * 100)}
-      onpointerdown={(event) => grab(event, "rika")} onpointermove={size} onpointerup={() => (sizing = null)} onpointercancel={() => (sizing = null)}
-      onkeydown={(event) => step(event, "rika")} ondblclick={() => (draftRika = 0)}></div>
-    <aside class="library" aria-label="Widget library">
-      <header><h3>Widgets</h3><button type="button" class="pill primary" onclick={done}>Done</button></header>
-      {#if spare.length}
-        <ul>
-          {#each spare as widget (widget.id)}
-            <li><span><span class="module-icon"><Icon name={WIDGET_ICONS[widget.id]} size={17} /></span>{widget.title}</span><button type="button" class="text-button" onclick={() => add(widget.id)}>Add</button></li>
-          {/each}
-        </ul>
-      {:else}<p class="quiet">Every widget is on home.</p>{/if}
-      <div class="tones" role="group" aria-label="Colours">
-        <h4>Colours</h4>
-        <div class="swatches">
-          {#each [{ id: "", label: "None", color: "" }, ...TONES] as tone (tone.id)}
-            <button type="button" class="swatch" class:none={!tone.id} draggable="true" aria-pressed={toneInHand === tone.id} aria-label={tone.label} title={tone.label}
-              style:--tone={tone.color || null}
-              ondragstart={(event) => { toneInHand = tone.id; event.dataTransfer?.setData("text/plain", tone.label); if (event.dataTransfer) event.dataTransfer.effectAllowed = "copy"; }}
-              ondragend={() => { toneInHand = null; toneOver = null; }}
-              onclick={() => (toneInHand = toneInHand === tone.id ? null : tone.id)}></button>
-          {/each}
-        </div>
-        <p class="quiet">{toneInHand === null ? "Drag a colour onto a widget." : "Now press a widget."}</p>
+    <div class="edit-bar" role="toolbar" aria-label="Home editing">
+      <span class="count">Editing home</span>
+      <i class="rule"></i>
+      <WidgetMenu widgets={spare} placement="top" onpick={add} ondrag={(id) => (dragged = id)} />
+      <div class="swatches" role="group" aria-label="Colours">
+        {#each [{ id: "", label: "None", color: "" }, ...TONES] as tone (tone.id)}
+          <button type="button" class="swatch" class:none={!tone.id} draggable="true" aria-pressed={toneInHand === tone.id} aria-label={tone.label} title={tone.label}
+            style:--tone={tone.color || null}
+            ondragstart={(event) => { toneInHand = tone.id; event.dataTransfer?.setData("text/plain", tone.label); if (event.dataTransfer) event.dataTransfer.effectAllowed = "copy"; }}
+            ondragend={() => { toneInHand = null; toneOver = null; }}
+            onclick={() => (toneInHand = toneInHand === tone.id ? null : tone.id)}></button>
+        {/each}
       </div>
-      <ul>
-        <li><span>Rika's panel</span><button type="button" class="text-button" onclick={() => (draftPanel = !panel)}>{panel ? "Remove" : "Add"}</button></li>
-      </ul>
-      {#if failure}<p class="quiet" role="alert">{failure}</p>{/if}
-    </aside>
-  {:else if panel || templatePicker.open}
-    <!-- With the panel off home, the template offer (the palette's Templates) still shows in it. -->
-    <RikaPanel id={`${homeId}-rika`} active={pane.active}>
-      {#snippet lead()}<TemplateSuggestion {counts} />{/snippet}
-    </RikaPanel>
+      <button type="button" class="text-button" onclick={() => (draftPanel = !panel)}>{panel ? "Hide Rika" : "Show Rika"}</button>
+      {#if failure}<span class="failure" role="alert">{failure}</span>{/if}
+      <button type="button" class="pill primary" onclick={done}>Done</button>
+    </div>
   {/if}
 </div>
 
@@ -366,7 +341,11 @@
       display: none;
     }
   }
-  /* Edit mode: each widget gains a handle row and stops taking clicks; a dashed rule marks a free column. */
+  /* Edit mode: each widget gains a handle row and stops taking clicks; a dashed rule marks a free column.
+     The last widgets scroll clear of the bar. */
+  .board.editing {
+    padding-bottom: 96px;
+  }
   .board.editing .column {
     min-height: 120px;
   }
@@ -399,22 +378,15 @@
     outline-offset: 2px;
     border-radius: 18px;
   }
-  .tones {
-    padding: 14px 0 6px;
-    border-top: 1px solid var(--hairline);
-  }
-  .tones h4 {
-    margin: 0 0 12px;
-    font: 500 17px/1.2 var(--font-ui);
-  }
   .swatches {
     display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
+    align-items: center;
+    gap: 8px;
+    margin: 0 4px;
   }
   :global(:root body) .swatch {
-    width: 30px;
-    height: 30px;
+    width: 24px;
+    height: 24px;
     min-height: 0;
     padding: 0;
     border: 0;
@@ -463,42 +435,21 @@
   .handle:focus-visible {
     color: var(--ink);
   }
-  .board.editing .content {
+  .board.editing .content,
+  .rika-column.editing > :global(.rika-panel) {
     opacity: 0.55;
     pointer-events: none;
+  }
+  /* Rika's column: a wrapper without a box, so the panel is still the grid's own child. */
+  .rika-column {
+    display: contents;
+  }
+  .failure {
+    color: var(--muted);
   }
   .edit {
     grid-column: 1 / -1;
     margin: 0;
-  }
-  .library {
-    min-width: 0;
-    border-top: 1px solid var(--hairline);
-    padding-top: 4px;
-  }
-  .library header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 14px 0 12px;
-  }
-  .library h3 {
-    margin: 0;
-    font: 600 22px/1.2 var(--font-ui);
-    letter-spacing: -0.01em;
-  }
-  .library ul {
-    margin: 0;
-    padding: 0;
-    list-style: none;
-  }
-  .library li {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    padding: 10px 0;
-    border-top: 1px solid var(--hairline);
-    font-size: 17px;
   }
   .quiet {
     margin: 12px 0 0;
@@ -513,7 +464,7 @@
       grid-template-columns: minmax(0, 1fr);
       grid-template-rows: none;
     }
-    .home > :global(.rika-panel) {
+    .home :global(.rika-panel) {
       order: -1;
       height: 70vh;
       min-height: 360px;

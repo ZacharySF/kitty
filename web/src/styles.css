@@ -1767,3 +1767,46 @@ html[data-panel-fullscreen] body .contents:not([data-kitty-panel][data-panel-ful
   text-decoration-thickness: 2px;
   text-underline-offset: 3px;
 }
+
+/* A view panel is what its page widgets (pageEdit/PageWidgets.svelte) are placed against. */
+[data-kitty-panel="view"] {
+  position: relative;
+}
+/* The edit modes' bar (home's and page edit mode's): one piece at the bottom of the window. */
+.edit-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 26px;
+  z-index: 41;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100vw - 32px);
+  padding: 8px 10px 8px 20px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-raised);
+  box-shadow: 0 18px 50px rgb(0 0 0 / 0.55);
+  font-size: var(--text-small, 14px);
+  transform: translateX(-50%);
+  white-space: nowrap;
+  pointer-events: auto;
+}
+.edit-bar .count {
+  font-weight: 600;
+}
+.edit-bar .rule {
+  flex: none;
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--border);
+}
+@media (max-width: 640px) {
+  .edit-bar {
+    bottom: 12px;
+    flex-wrap: wrap;
+    justify-content: center;
+    border-radius: 24px;
+  }
+}

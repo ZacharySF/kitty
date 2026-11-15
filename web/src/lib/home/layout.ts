@@ -19,7 +19,7 @@ export const HOME_WIDGETS = [
 ] as const satisfies readonly Widget[];
 /**
  * `modules`: the widget draws when any of them is on (none: always). `library`: it waits
- * in edit mode's library until it is added or a template places it, so home stays as it
+ * in edit mode's Widgets menu until it is added or a template places it, so home stays as it
  * was for everyone who has not asked for it.
  */
 type Widget = { id: string; title: string; modules: readonly ModuleId[]; column: number; library?: boolean };
@@ -63,7 +63,7 @@ export function placeWidget(columns: HomeWidgetId[][], id: HomeWidgetId, column:
   return next;
 }
 
-/** The widgets that can be drawn and are not on home: edit mode's library. */
+/** The widgets that can be drawn and are not placed: edit mode's Widgets menu (home's, and a page's in page edit mode). */
 export function spareWidgets(columns: HomeWidgetId[][], enabled: readonly string[]) {
   const placed = new Set<string>(columns.flat());
   return HOME_WIDGETS.filter((widget) => !placed.has(widget.id) && drawable(widget, enabled));

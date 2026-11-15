@@ -55,8 +55,8 @@ export type BuildUi = {
   icons: { on: boolean };
   /** The Animations module (motion.ts, the `animations` pack). */
   animations: { on: boolean };
-  /** Page edit mode: the blocks moved or resized on each page (pageEdit/moves.ts). */
-  pages: { moves: string[] };
+  /** Page edit mode: the blocks moved or resized on each page (pageEdit/moves.ts) and the home widgets placed on it (pageEdit/widgets.ts). */
+  pages: { moves: string[]; widgets: string[] };
   /** Rika's conversation text size (`<html data-rika-text>`, rika.css). */
   rika: { text: "normal" | "large" };
 };
@@ -121,7 +121,7 @@ export const DEFAULT_BUILD: Build = {
     themes: { installed: [] },
     icons: { on: false },
     animations: { on: false },
-    pages: { moves: [] },
+    pages: { moves: [], widgets: [] },
     rika: { text: "normal" },
   },
 };

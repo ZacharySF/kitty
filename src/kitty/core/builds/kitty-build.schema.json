@@ -288,9 +288,10 @@
         "pages": {
           "type": "object",
           "additionalProperties": false,
-          "description": "Page edit mode (Ctrl+Shift+Space): the blocks moved or resized on each page.",
+          "description": "Page edit mode (Ctrl+Shift+Space): the blocks moved or resized on each page, and the home widgets placed on it.",
           "properties": {
-            "moves": {"type": "array", "maxItems": 400, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}[|][-]?[0-9]{1,5},[-]?[0-9]{1,5},[0-9]{0,5},[0-9]{0,5}[|][ -~]{1,600}$"}, "description": "One moved block each, as view|dx,dy,width,height|path: the offset and size in px (a size left empty is unchanged), then the block's path inside the page (a block this rika! cannot find is kept and not moved).", "default": []}
+            "moves": {"type": "array", "maxItems": 400, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}[|][-]?[0-9]{1,5},[-]?[0-9]{1,5},[0-9]{0,5},[0-9]{0,5}[|][ -~]{1,600}$"}, "description": "One moved block each, as view|dx,dy,width,height|path: the offset and size in px (a size left empty is unchanged), then the block's path inside the page (a block this rika! cannot find is kept and not moved).", "default": []},
+            "widgets": {"type": "array", "maxItems": 200, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}[|][a-z][a-z0-9-]{0,39}[|][0-9]{1,5},[0-9]{1,5},[0-9]{3,4}$"}, "description": "One home widget placed on a page each, as view|widget|x,y,width: px from the page's top-left corner (a widget this rika! does not know, or whose module is off, is kept and not drawn).", "default": []}
           }
         },
         "rika": {

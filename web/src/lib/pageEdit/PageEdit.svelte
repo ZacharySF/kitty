@@ -1,26 +1,38 @@
 <script lang="ts">
-  import { onMount, untrack } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import { buildStore, setPreferences } from "../build.svelte";
+  import WidgetMenu from "../home/WidgetMenu.svelte";
+  import { spareWidgets, type HomeWidgetId } from "../home/layout";
+  import { activeModules } from "../modules.svelte";
   import { applyMoves } from "./apply";
+  import { pageDraft } from "./draft.svelte";
   import { MIN_SIZE, moveOf, movesFor, snap, withMove, withoutMove, withoutView, type Move } from "./moves";
   import { pathOf, resolvePath } from "./paths";
+  import { WIDGET_WIDTH, addWidget, moveWidget, removeWidget, resizeWidget, widgetsFor, withoutViewWidgets, type PageWidget } from "./widgets";
 
   /**
    * Page edit mode (Ctrl + Shift + Space on any page but home, which has its own): the
-   * page's blocks can be dragged and resized; Done (or Esc) saves the result in the build's
-   * `ui.pages.moves`. Mounted once: it also puts the saved moves back on the page in view
-   * whenever that page redraws. Safe mode applies none.
+   * page's blocks can be dragged and resized, and home's widgets brought onto it from the
+   * bar's Widgets menu (pressed, or dragged to their place; PageWidgets.svelte draws them).
+   * Done (or Esc) saves the result in the build's `ui.pages`. Mounted once: it also puts the
+   * saved moves back on the page in view whenever that page redraws. Safe mode applies none.
    */
   let { view, tab, editing = $bindable(false) }: { view: string; /** The tab in front. */ tab: string; editing?: boolean } = $props();
 
   /** What counts as a block: the page's structural elements (a list is often a labelled region, not a section). */
   const BLOCKS = 'section, aside, article, header, nav, form, table, [role="region"], [data-kitty-panel]:not([data-kitty-panel="view"]), .panel, .home-widget';
   const OPEN_DIALOG = 'dialog[open], [role="dialog"][aria-modal="true"]';
+  /** What a row dragged out of the Widgets menu carries (home/WidgetMenu.svelte). */
+  const WIDGET_TYPE = "application/x-rika-widget";
 
   /** Every page's moves while editing; null otherwise (the build's are in effect). */
   let draft = $state.raw<string[] | null>(null);
   const entries = $derived(draft ?? (buildStore.safe ? [] : buildStore.build.ui.pages.moves));
   const moves = $derived(movesFor(entries, view));
+  /** This page's widgets while editing (the draft every PageWidgets draws), and those still to bring in. */
+  const pageWidgets = $derived(pageDraft.widgets ? widgetsFor(pageDraft.widgets, view) : []);
+  const spare = $derived(spareWidgets([pageWidgets.map((item) => item.widget) as HomeWidgetId[]], activeModules.enabled));
+  let menuOpen = $state(false);
 
   const panel = () => document.querySelector<HTMLElement>('#main-content > [data-kitty-panel="view"]:not([hidden])');
   let frame = 0;
@@ -54,8 +66,10 @@
   type Box = { left: number; top: number; width: number; height: number };
   let box = $state.raw<Box | null>(null);
   let hoverBox = $state.raw<Box | null>(null);
+  /** The page widget selected, by its id; null while a block of the page (or nothing) is. */
+  const selectedWidget = $derived(selected?.dataset.pageWidget ?? null);
   const selectedPath = $derived.by(() => {
-    const root = selected && panel();
+    const root = selected && !selectedWidget && panel();
     return root ? pathOf(root, selected!) : null;
   });
 
@@ -68,6 +82,7 @@
       else if (buildStore.safe || view === "today") wasEditing = editing = false;
       else {
         draft = [...buildStore.build.ui.pages.moves];
+        pageDraft.widgets = [...buildStore.build.ui.pages.widgets];
         const focused = document.activeElement;
         if (focused instanceof HTMLElement && panel()?.contains(focused)) focused.blur();
       }
@@ -80,12 +95,15 @@
     untrack(() => { if (editing) editing = false; });
   });
   async function finish() {
-    const next = draft;
-    const saving = next && JSON.stringify(next) !== JSON.stringify(buildStore.build.ui.pages.moves)
-      ? setPreferences({ ui: { pages: { moves: next } } }) : null;
+    const next = draft && pageDraft.widgets ? { moves: draft, widgets: $state.snapshot(pageDraft.widgets) } : null;
+    const saved = buildStore.build.ui.pages;
+    const saving = next && JSON.stringify(next) !== JSON.stringify({ moves: saved.moves, widgets: saved.widgets })
+      ? setPreferences({ ui: { pages: next } }) : null;
     draft = null;
+    pageDraft.widgets = null;
     selected = hovered = null;
     drag = null;
+    menuOpen = false;
     await saving;
   }
 
@@ -105,12 +123,14 @@
       if (holds(root, at)) return at;
     return null;
   }
+  /** What the pointer is over: a page widget's pane first, else the innermost block. */
   function blockAt(x: number, y: number): HTMLElement | null {
     const root = panel();
-    return blockFrom(document.elementsFromPoint(x, y).find((element) => element !== root && root?.contains(element)) ?? null);
+    const hit = document.elementsFromPoint(x, y).find((element) => element !== root && root?.contains(element)) ?? null;
+    return hit?.closest<HTMLElement>(".page-widget") ?? blockFrom(hit);
   }
   const current = $derived(selected ?? hovered);
-  const parentBlock = $derived(current ? blockFrom(current.parentElement) : null);
+  const parentBlock = $derived(current && !current.dataset.pageWidget ? blockFrom(current.parentElement) : null);
   function toParent() {
     if (parentBlock) selected = parentBlock;
   }
@@ -118,26 +138,73 @@
     if (draft && selectedPath) draft = withoutMove(draft, view, selectedPath);
     apply();
   }
+  function removeSelected() {
+    if (pageDraft.widgets && selectedWidget) pageDraft.widgets = removeWidget(pageDraft.widgets, view, selectedWidget);
+    selected = null;
+  }
   function resetPage() {
     if (draft) draft = withoutView(draft, view);
+    if (pageDraft.widgets) pageDraft.widgets = withoutViewWidgets(pageDraft.widgets, view);
     apply();
   }
 
-  type Drag = { kind: "move" | "e" | "s" | "se"; start: Move; x: number; y: number; width: number; height: number; moved: boolean };
+  /** `id` put on the page with its pane's corner at a point of the window, then selected. */
+  function put(id: string, left: number, top: number) {
+    const root = panel();
+    if (!root || !pageDraft.widgets || !spare.some((widget) => widget.id === id)) return;
+    const page = root.getBoundingClientRect();
+    const x = Math.max(0, Math.min(left - page.left + root.scrollLeft, root.clientWidth - WIDGET_WIDTH.initial));
+    pageDraft.widgets = addWidget(pageDraft.widgets, view, id, x, Math.max(0, top - page.top + root.scrollTop));
+    void tick().then(() => { selected = panel()?.querySelector<HTMLElement>(`[data-page-widget="${id}"]`) ?? null; });
+  }
+  /** A row pressed in the menu: its widget lands near the top right of what is visible, each a little lower than the last. */
+  function pick(id: HomeWidgetId) {
+    const page = panel()?.getBoundingClientRect();
+    if (!page) return;
+    const bar = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--workbench-top")) || 0;
+    put(id, Math.min(page.right, window.innerWidth) - WIDGET_WIDTH.initial - 24, Math.max(page.top, bar) + 24 + pageWidgets.length * 24);
+  }
+  /** A row dragged out of the menu may be dropped anywhere on the page. */
+  const overPage = (event: DragEvent) => !!event.dataTransfer?.types.includes(WIDGET_TYPE)
+    && event.target instanceof Node && !ui?.contains(event.target) && !!document.getElementById("main-content")?.contains(event.target);
+  function dragOver(event: DragEvent) {
+    if (!overPage(event)) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+  }
+  function drop(event: DragEvent) {
+    if (!overPage(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    // The pane lands under the pointer: centred on it, its title where the pointer is.
+    put(event.dataTransfer?.getData(WIDGET_TYPE) ?? "", event.clientX - WIDGET_WIDTH.initial / 2, event.clientY - 24);
+  }
+
+  type Drag = { kind: "move" | "e" | "s" | "se"; x: number; y: number; moved: boolean }
+    & ({ widget: PageWidget } | { widget: null; start: Move; width: number; height: number });
   let drag: Drag | null = null;
   function grab(event: PointerEvent, kind: Drag["kind"], block = selected) {
+    if (!draft || !block) return;
+    const held = { kind, x: event.clientX, y: event.clientY, moved: false };
+    const widget = pageWidgets.find((item) => item.widget === block.dataset.pageWidget);
     const root = panel();
-    const path = root && block ? pathOf(root, block) : null;
-    if (!draft || !block || !path) return;
-    drag = { kind, start: moveOf(draft, view, path), x: event.clientX, y: event.clientY, width: block.offsetWidth, height: block.offsetHeight, moved: false };
+    const path = root && !block.dataset.pageWidget ? pathOf(root, block) : null;
+    if (widget) drag = { ...held, widget };
+    else if (path) drag = { ...held, widget: null, start: moveOf(draft, view, path), width: block.offsetWidth, height: block.offsetHeight };
   }
   function pull(event: PointerEvent) {
-    if (!drag || !draft) return;
+    if (!drag || !draft || !pageDraft.widgets) return;
     const x = event.clientX - drag.x;
     const y = event.clientY - drag.y;
     // A press that barely moves only selects.
     if (!drag.moved && Math.hypot(x, y) < 4) return;
     drag.moved = true;
+    if (drag.widget) {
+      // A page widget is always on the grid: it moves, or takes a width.
+      const { widget, x: left, y: top, w } = drag.widget;
+      pageDraft.widgets = drag.kind === "move" ? moveWidget(pageDraft.widgets, view, widget, left + x, top + y) : resizeWidget(pageDraft.widgets, view, widget, w + x);
+      return;
+    }
     const free = event.altKey;
     const next = { ...drag.start };
     if (drag.kind === "move") {
@@ -172,8 +239,8 @@
     if (!inUi(event.target) && inPage(event.target)) still(event);
   }
   function key(event: KeyboardEvent) {
-    // The shortcut itself is App's; a dialog over the page keeps its own keys.
-    if ((event.ctrlKey && event.shiftKey && event.code === "Space") || document.querySelector(OPEN_DIALOG)) return;
+    // The shortcut itself is App's; a dialog over the page, and the open Widgets menu, keep their own keys.
+    if ((event.ctrlKey && event.shiftKey && event.code === "Space") || menuOpen || document.querySelector(OPEN_DIALOG)) return;
     if (event.ctrlKey || event.metaKey || event.altKey) return;
     if (event.key === "Escape") { still(event); editing = false; return; }
     if (event.key === "ArrowUp") { still(event); toParent(); return; }
@@ -191,6 +258,8 @@
     window.addEventListener("pointerup", release, capture);
     window.addEventListener("pointercancel", release, capture);
     window.addEventListener("keydown", key, capture);
+    window.addEventListener("dragover", dragOver, capture);
+    window.addEventListener("drop", drop, capture);
     for (const name of QUIET) window.addEventListener(name, quiet, capture);
     document.documentElement.dataset.pageEditing = "";
     // The outlines follow their blocks through scrolling and reflow.
@@ -215,6 +284,8 @@
       window.removeEventListener("pointerup", release, capture);
       window.removeEventListener("pointercancel", release, capture);
       window.removeEventListener("keydown", key, capture);
+      window.removeEventListener("dragover", dragOver, capture);
+      window.removeEventListener("drop", drop, capture);
       for (const name of QUIET) window.removeEventListener(name, quiet, capture);
     };
   });
@@ -227,20 +298,28 @@
     {#if box}
       <div class="outline" style={place(box)}>
         <!-- The grip sits on top of the block, out of its content's way; under the top bar it goes beside the block, or inside it at the window's edge. -->
-        <button type="button" class="grip" class:beside={box.top < 96 && box.left >= 24} class:inside={box.top < 96 && box.left < 24} aria-label="Move block" onpointerdown={(event) => grab(event, "move")}>
+        <button type="button" class="grip" class:beside={box.top < 96 && box.left >= 24} class:inside={box.top < 96 && box.left < 24} aria-label={selectedWidget ? "Move widget" : "Move block"} onpointerdown={(event) => grab(event, "move")}>
           <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M5 3.5h.01M5 8h.01M5 12.5h.01M11 3.5h.01M11 8h.01M11 12.5h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg>
         </button>
         <span class="handle e" data-resize="width" onpointerdown={(event) => grab(event, "e")}></span>
-        <span class="handle s" data-resize="height" onpointerdown={(event) => grab(event, "s")}></span>
-        <span class="handle se" data-resize="both" onpointerdown={(event) => grab(event, "se")}></span>
+        <!-- A page widget is as tall as what it shows. -->
+        {#if !selectedWidget}
+          <span class="handle s" data-resize="height" onpointerdown={(event) => grab(event, "s")}></span>
+          <span class="handle se" data-resize="both" onpointerdown={(event) => grab(event, "se")}></span>
+        {/if}
       </div>
     {/if}
-    <div class="bar" role="toolbar" aria-label="Page editing">
+    <div class="edit-bar" role="toolbar" aria-label="Page editing">
       <span class="count">Editing this page</span>
       <i class="rule"></i>
+      <WidgetMenu widgets={spare} placement="top" bind:open={menuOpen} onpick={pick} />
       <button type="button" class="text-button" disabled={!parentBlock} onclick={toParent}>Parent</button>
-      <button type="button" class="text-button" disabled={!moves.some((item) => item.path === selectedPath)} onclick={resetBlock}>Reset block</button>
-      <button type="button" class="text-button" disabled={!moves.length} onclick={resetPage}>Reset page</button>
+      {#if selectedWidget}
+        <button type="button" class="text-button" onclick={removeSelected}>Remove widget</button>
+      {:else}
+        <button type="button" class="text-button" disabled={!moves.some((item) => item.path === selectedPath)} onclick={resetBlock}>Reset block</button>
+      {/if}
+      <button type="button" class="text-button" disabled={!moves.length && !pageWidgets.length} onclick={resetPage}>Reset page</button>
       <button type="button" class="pill primary" onclick={() => (editing = false)}>Done</button>
     </div>
   </div>
@@ -334,42 +413,8 @@
     height: 8px;
     border-radius: 2px;
   }
-  /* JobBrowser's selection bar: one piece at the bottom of the window. */
-  .bar {
-    position: fixed;
-    left: 50%;
-    bottom: 26px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    max-width: calc(100vw - 32px);
-    padding: 8px 10px 8px 20px;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    background: var(--raised);
-    box-shadow: 0 18px 50px rgb(0 0 0 / 0.55);
-    font-size: var(--text-small, 14px);
-    transform: translateX(-50%);
-    white-space: nowrap;
-    pointer-events: auto;
-  }
-  .bar .count {
-    font-weight: 600;
-  }
-  .bar .rule {
-    width: 1px;
-    height: 18px;
-    margin: 0 4px;
-    background: var(--border);
-  }
   :global(html[data-page-editing] #main-content > [data-kitty-panel="view"] *) {
     cursor: move !important;
     user-select: none !important;
-  }
-  @media (max-width: 640px) {
-    .bar {
-      bottom: 12px;
-      overflow-x: auto;
-    }
   }
 </style>
