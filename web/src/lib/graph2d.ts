@@ -12,7 +12,10 @@ type Box = { x: number; y: number; w: number; h: number };
 const HUB_LINKS = 4;
 /** Groups take this many lightness steps of one hue at most; more groups repeat them. */
 const MAX_STEPS = 6;
-const LABEL_DIRECTIONS: [number, number][] = [[0, 1], [0, -1], [1, 0], [-1, 0], [0.75, 0.66], [-0.75, 0.66], [0.75, -0.66], [-0.75, -0.66]];
+/** Where a name may sit round its point, in order of preference: over it first. */
+const LABEL_DIRECTIONS: [number, number][] = [[0, -1], [0, 1], [1, 0], [-1, 0], [0.75, 0.66], [-0.75, 0.66], [0.75, -0.66], [-0.75, -0.66]];
+/** How many points get a name at most. */
+const NAMED = 60;
 const overlaps = (a: Box, b: Box) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 
 /** Mixes two #rrggbb colours; anything else falls back to `a`. */
@@ -241,21 +244,24 @@ export async function mountGraph2D(el: HTMLElement, opts: GraphOptions): Promise
       }
     }
     ctx.globalAlpha = 1;
-    if (focus) names(focus, neighbors, at);
+    names(focus, neighbors, at);
   }
   /**
-   * Names show only for the focused node and its neighbours, each beside its point in the
-   * first of eight directions (three rings out) that covers neither a point nor another
-   * name. A name with no free spot is skipped; the focused node's is placed first.
+   * Every point carries its name, over it when there is room: the first of eight directions
+   * (three rings out) that covers neither a point nor another name. A name with no free spot
+   * is skipped, so the order matters: the focused node, its neighbours, hubs, then the rest
+   * (at most NAMED of them, which keeps a crowded map legible and a frame cheap). With a
+   * focus, names outside its neighbourhood are dimmed with their points.
    */
-  function names(focus: string, neighbors: Set<string>, at: Map<string, [number, number]>) {
+  function names(focus: string | null, neighbors: Set<string>, at: Map<string, [number, number]>) {
     ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.lineJoin = "round";
     const points: Box[] = nodes.map(node => {
       const [x, y] = at.get(node.id)!, r = sizeOf(node) * (node.spiked ? 2.8 : 1) + 3;
       return { x: x - r, y: y - r, w: 2 * r, h: 2 * r };
     });
     const placed: Box[] = [];
-    const shown = nodes.filter(node => node.id === focus || neighbors.has(node.id)).sort((a, b) => Number(b.id === focus) - Number(a.id === focus));
+    const order = (node: Node) => (node.id === focus ? 0 : neighbors.has(node.id) ? 1 : node.spiked ? 2 : 3);
+    const shown = [...nodes].sort((a, b) => order(a) - order(b) || sizeOf(b) - sizeOf(a)).slice(0, NAMED);
     for (const node of shown) {
       const main = node.id === focus;
       ctx.font = main ? `600 15px ${font}` : `400 13px ${font}`;
@@ -277,8 +283,9 @@ export async function mountGraph2D(el: HTMLElement, opts: GraphOptions): Promise
       // A halo in the page colour keeps the name readable over lines.
       ctx.lineWidth = 5; ctx.strokeStyle = chrome; ctx.globalAlpha = 0.92;
       ctx.strokeText(text, spot.x + w / 2, spot.y + h / 2 + 0.5);
-      ctx.globalAlpha = 1; ctx.fillStyle = main ? ink : muted;
+      ctx.globalAlpha = !focus || main || neighbors.has(node.id) ? 1 : 0.3; ctx.fillStyle = main || (!focus && node.spiked) ? ink : muted;
       ctx.fillText(text, spot.x + w / 2, spot.y + h / 2 + 0.5);
+      ctx.globalAlpha = 1;
     }
   }
   function hover(node: GraphNode | null) {

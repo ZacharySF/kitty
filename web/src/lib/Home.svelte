@@ -366,14 +366,16 @@
   .slot.dragged {
     opacity: 0.4;
   }
-  /* A colour-coded widget: tinted glass in its tone, a hairline of the same tone and a
-     lighter top edge; no blur. The widget's own top rule goes, the tint is its frame. */
+  /* A colour-coded widget sits on a pane of its tone mixed into the page colour: dark glass
+     with a lit top edge, no outline. The widget's own top rule goes; the pane is its frame. */
   .slot.toned {
-    margin: 6px 0;
-    padding: 0 18px 14px;
-    border-radius: 18px;
-    background: color-mix(in srgb, var(--tone) 30%, transparent);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tone) 55%, transparent), inset 0 1px 0 color-mix(in srgb, #fff 12%, transparent);
+    margin: 8px 0;
+    padding: 2px 20px 16px;
+    border-radius: 22px;
+    background:
+      linear-gradient(180deg, color-mix(in srgb, var(--ink) 5%, transparent), transparent 42%),
+      color-mix(in srgb, var(--tone) 20%, var(--void));
+    box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 9%, transparent);
   }
   .slot.toned :global(.home-widget) {
     border-top-color: transparent;
@@ -403,8 +405,10 @@
     padding: 0;
     border: 0;
     border-radius: 999px;
-    background: color-mix(in srgb, var(--tone) 55%, #000);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tone) 70%, #fff 10%), inset 0 1px 0 color-mix(in srgb, #fff 22%, transparent);
+    background:
+      linear-gradient(180deg, color-mix(in srgb, var(--ink) 10%, transparent), transparent 55%),
+      color-mix(in srgb, var(--tone) 34%, var(--void));
+    box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 14%, transparent);
     cursor: grab;
   }
   :global(:root body) .swatch.none {

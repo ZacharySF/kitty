@@ -603,6 +603,14 @@
           {#if view === "jobs" || view === "inbox"}
             <button type="button" class="pill" disabled={scraping} title="Look for new jobs on your job sources now" onclick={scrape}>{scraping ? "Scraping…" : "Scrape"}</button>
           {/if}
+          {#if view !== "jobs" && view !== "inbox" && !marked.length}
+            <PostingAvailability jobIds={jobs.map(job => job.id)} label="Check they are still open" demo={workspace?.demo ?? true} oncomplete={checkedAvailability} />
+          {/if}
+          <button type="button" class="text-button" title="Prepare another group or check Firefox progress" onclick={() => (preparationOpen = true)}>Progress</button>
+          {#if view === "queue" && !marked.length}
+            <button type="button" class="pill" disabled={busy || loading || (selected === null && !jobs[cursor])} onclick={prepareSelected}
+              title="Fills the form and stops before submitting: you send it">Fill in the form <kbd>Shift+F</kbd></button>
+          {/if}
           <button type="button" class="pill primary page-action" onclick={onadd}><Icon name="plus" size={14} />Add a job link</button>
         </div>
       </header>
@@ -626,6 +634,22 @@
           void filter();
         }}
       >
+        <input
+          type="checkbox"
+          class="select-all"
+          aria-label="Select all shown"
+          title="Select all shown"
+          disabled={busy || loading}
+          checked={jobs.length > 0 && jobs.every((job) => markedSet.has(job.id))}
+          onchange={(event) => {
+            const next = new Set(marked);
+            for (const job of jobs) {
+              if (event.currentTarget.checked) next.add(job.id);
+              else next.delete(job.id);
+            }
+            marked = [...next];
+          }}
+        />
         <label class="search-field"
           ><Icon name="jobs" size={17} /><input
             bind:this={searchInput}
@@ -673,80 +697,48 @@
           </div>
         </Popover>
       </form>
-      <div class="selection-toolbar">
-        <label class="inline-check"
-          ><input
-            type="checkbox"
-            aria-label="Select all shown"
-            disabled={busy || loading}
-            checked={jobs.length > 0 &&
-              jobs.every((job) => markedSet.has(job.id))}
-            onchange={(event) => {
-              const next = new Set(marked);
-              for (const job of jobs) {
-                if (event.currentTarget.checked) next.add(job.id);
-                else next.delete(job.id);
-              }
-              marked = [...next];
+    {/if}
+    {#if marked.length && view !== "today"}
+      <!-- Shown only while rows are ticked, where the pointer already is: at the bottom, in one piece. -->
+      <div class="selection-bar" role="toolbar" aria-label="Selected jobs">
+        <span class="count">{marked.length} selected</span>
+        {#if total > marked.length}<button type="button" class="text-button" disabled={busy || loading} onclick={selectAll}>All {total.toLocaleString()}</button>{/if}
+        <i class="rule"></i>
+        {#if view !== "favorites"}<button type="button" class="pill" disabled={busy || loading} onclick={() => bulk("favorite", true)}>Save</button>{/if}
+        <Popover label="Change selected jobs" bind:open={bulkOptionsOpen} placement="top-end" class="job-bulk">
+          {#snippet trigger(props)}
+            <button type="button" class="pill" {...props}>Change</button>
+          {/snippet}
+          <form
+            class="bulk-form"
+            onsubmit={(event) => {
+              event.preventDefault();
+              void bulk(bulkAction, bulkValue);
             }}
-          />Select all</label
-        >{#if total > jobs.length}<button
-          class="text-button"
-          disabled={busy || loading}
-          onclick={selectAll}
-          >All {total.toLocaleString()}</button
-        >{/if}{#if marked.length}<span class="muted">{marked.length} selected</span><button
-            class="text-button"
-            onclick={() => (marked = [])}>Clear selection</button
-          >{/if}
-        <span class="toolbar-gap"></span>
-        {#if marked.length}
-          {#if view !== "favorites"}<button
-              class="button"
-              disabled={busy || loading}
-              onclick={() => bulk("favorite", true)}
-              >Save selected ({marked.length})</button
-            >{/if}
-          <Popover label="Change selected jobs" bind:open={bulkOptionsOpen} placement="bottom-end" class="job-bulk">
-            {#snippet trigger(props)}
-              <button type="button" class="pill" {...props}>Change selected</button>
-            {/snippet}
-            <form
-              class="bulk-form"
-              onsubmit={(event) => {
-                event.preventDefault();
-                void bulk(bulkAction, bulkValue);
-              }}
-            >
-              <div class="bulk-row">
-                <button class="button" type="button" disabled={busy} onclick={() => bulk("favorite", true)}>Save <kbd>*</kbd></button>
-                <button class="button" type="button" disabled={busy} onclick={() => bulk("favorite", false)}>Remove from saved jobs</button>
-              </div>
-              <div class="bulk-row">
-                <span class="field-label">Set</span>
-                <Select label="Bulk action" options={bulkActionOptions} bind:value={bulkAction} onchange={() => (bulkValue = "")} />
-              </div>
-              <div class="bulk-row">
-                <Select id={fieldId("bulk-value")} label="Bulk value" kind="list" options={bulkValueOptions} bind:value={bulkValue} />
-                <button class="button primary" disabled={busy || !bulkValue}>Apply to {marked.length}</button>
-              </div>
-            </form>
-          </Popover>
-        {/if}
-        <PostingAvailability
-          jobIds={marked.length ? marked : jobs.map(job => job.id)}
-          label={marked.length ? "Check selected" : "Check they are still open"}
-          demo={workspace?.demo ?? true}
-          oncomplete={checkedAvailability}
-        />
-        <button type="button" class="text-button" title="Prepare another group or check Firefox progress" onclick={() => (preparationOpen = true)}>Progress</button>
-        
+          >
+            <div class="bulk-row">
+              <button class="button" type="button" disabled={busy} onclick={() => bulk("favorite", true)}>Save <kbd>*</kbd></button>
+              <button class="button" type="button" disabled={busy} onclick={() => bulk("favorite", false)}>Remove from saved jobs</button>
+            </div>
+            <div class="bulk-row">
+              <span class="field-label">Set</span>
+              <Select label="Bulk action" options={bulkActionOptions} bind:value={bulkAction} onchange={() => (bulkValue = "")} />
+            </div>
+            <div class="bulk-row">
+              <Select id={fieldId("bulk-value")} label="Bulk value" kind="list" options={bulkValueOptions} bind:value={bulkValue} />
+              <button class="button primary" disabled={busy || !bulkValue}>Apply to {marked.length}</button>
+            </div>
+          </form>
+        </Popover>
+        <PostingAvailability jobIds={marked} label="Check" demo={workspace?.demo ?? true} oncomplete={checkedAvailability} />
         <button
-          class="button primary"
-          disabled={busy || loading || (!marked.length && selected === null && !jobs[cursor])}
+          type="button"
+          class="pill primary"
+          disabled={busy || loading}
           onclick={prepareSelected}
           title="Fills the forms and stops before submitting: you send each one"
         >Fill in {marked.length > 1 ? `${marked.length} forms` : "the form"} <kbd>Shift+F</kbd></button>
+        <button type="button" class="icon-button" aria-label="Clear selection" title="Clear selection" onclick={() => (marked = [])}>×</button>
       </div>
     {/if}
     <div bind:this={results} class="job-list" class:dense={view !== "today"} role="region" aria-label="Job results" aria-busy={loading}>
@@ -1040,17 +1032,37 @@
     gap: 8px;
     font-size: 11px;
   }
-  .selection-toolbar {
+  .filters .select-all {
+    flex: none;
+    margin: 0 6px 0 3px;
+  }
+  /* What can be done with the ticked rows, in one piece at the bottom of the window. */
+  .selection-bar {
+    position: fixed;
+    left: 50%;
+    bottom: 26px;
+    z-index: 30;
     display: flex;
     align-items: center;
-    flex-wrap: wrap;
-    gap: 12px;
-    padding: 10px 20px;
-    border-bottom: 1px solid var(--border);
-    font-size: 11px;
+    gap: 8px;
+    max-width: calc(100vw - 32px);
+    padding: 8px 10px 8px 20px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--raised);
+    box-shadow: 0 18px 50px rgb(0 0 0 / 0.55);
+    font-size: var(--text-small, 14px);
+    transform: translateX(-50%);
+    white-space: nowrap;
   }
-  .toolbar-gap {
-    flex: 1;
+  .selection-bar .count {
+    font-weight: 600;
+  }
+  .selection-bar .rule {
+    width: 1px;
+    height: 18px;
+    margin: 0 4px;
+    background: var(--border);
   }
   .bulk-form {
     display: grid;
@@ -1086,8 +1098,9 @@
     .jobs-head {
       padding: 10px 12px;
     }
-    .selection-toolbar {
-      padding: 10px 12px;
+    .selection-bar {
+      bottom: 12px;
+      overflow-x: auto;
     }
     .row-check {
       margin-left: 10px;
