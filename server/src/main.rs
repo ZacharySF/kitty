@@ -164,6 +164,7 @@ async fn run(options: Options) -> Result<(), String> {
         workspace: worker.workspace.take().expect("a started worker reports its workspace"),
         bootstrap: bootstrap::Bootstrap::new(database.paths.db_path.clone(), database.paths.root.clone(),
                                              database.demo.is_some(), worker.digest),
+        csp: front::csp(&worker.frame_ports),
     });
     keys::start(database.paths.root.clone(), database.demo.is_some());
     effects::start(database.paths.db_path.clone(), worker.ui_session.clone());

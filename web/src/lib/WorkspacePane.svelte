@@ -1,7 +1,7 @@
 <script lang="ts">
   import { provideWorkspaceContext, type SaveStatus, type WorkspaceTrail } from "./workspaceContext.svelte";
   import type { Bootstrap } from "./api";
-  import { missingPack, navigation, viewEnabled, type View } from "./workspace";
+  import { externalViewFor, missingPack, navigation, viewEnabled, type AnyView, type View } from "./workspace";
   import { activeModules } from "./modules.svelte";
   import Home from "./Home.svelte";
   import JobsNav from "./JobsNav.svelte";
@@ -14,7 +14,7 @@
 
   let { tabId, view, active, workspace, revision, epoch, initialJobId, notePage, onchange, onadd, onview, onopenjob, onguide, onnotepage, onfocusnotepage, onnotepagetab }: {
     tabId: string;
-    view: View;
+    view: AnyView;
     active: boolean;
     workspace: Bootstrap | null;
     revision: number;
@@ -24,7 +24,7 @@
     notePage: number | null;
     onchange: () => Promise<void>;
     onadd: () => void;
-    onview: (next: View) => void;
+    onview: (next: AnyView) => void;
     onopenjob: (id: number) => void;
     onguide: () => void;
     onnotepage: (id: number | null, title: string) => void;
@@ -110,9 +110,20 @@
 
 {#snippet pending()}<Loader kind="view" label="rika! is waking up…" />{/snippet}
 {#key `${view}:${epoch}:${initialJobId}`}
-  {#if !viewEnabled(view, activeModules.enabled)}
+  {#if !viewEnabled(view, activeModules.enabled, activeModules.views)}
     <!-- Disabled modules never mount or fetch; App redirects such tabs to the atlas. -->
-  {:else if missingPack(view, activeModules.missing)}
+  {:else if externalViewFor(view, activeModules.views)}
+    {@const added = externalViewFor(view, activeModules.views)!}
+    {#if added.ui === "iframe"}
+      {#await import("./ModuleFrame.svelte")}{@render pending()}{:then { default: ModuleFrame }}
+        <ModuleFrame view={added} />
+      {/await}
+    {:else}
+      {#await import("./ModuleElement.svelte")}{@render pending()}{:then { default: ModuleElement }}
+        <ModuleElement view={added} />
+      {/await}
+    {/if}
+  {:else if missingPack(view as View, activeModules.missing)}
     <!-- The module is on but its pack is not loaded: its routes answer 409; say how to get it. -->
     <PackMissing id={view} label={navigation.find(item => item.id === view)?.label ?? view} {onview} />
   {:else if view === "today"}

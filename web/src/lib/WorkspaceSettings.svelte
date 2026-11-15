@@ -17,7 +17,7 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
   import { Button, Panel } from "@nunera/bracket";
-  import type { ModuleId } from "./api";
+  import type { ModuleId, ModulesState } from "./api";
   import AppearanceSettings from "./AppearanceSettings.svelte";
   import DesktopSettings from "./DesktopSettings.svelte";
   import QuietHours from "./QuietHours.svelte";
@@ -26,6 +26,7 @@
   import ConnectedApps from "./ConnectedApps.svelte";
   import PhoneSettings from "./PhoneSettings.svelte";
   import Keys from "./Keys.svelte";
+  import ExternalModules from "./ExternalModules.svelte";
   import ApplyAccounts from "./ApplyAccounts.svelte";
   import Devices from "./Devices.svelte";
   import TagSettings from "./TagSettings.svelte";
@@ -64,7 +65,7 @@
     ] },
     { label: "Workspace", items: [
       { page: "account", label: "Account", icon: "shield", keywords: "google sign-in connect welcome guided tour onboarding identity microsoft outlook slack calendar mail reaction" },
-      { page: "modules", label: "Modules", icon: "atlas", keywords: "applyai job search workspace study terminal brain atlas enable disable restart download pack" },
+      { page: "modules", label: "Modules", icon: "atlas", keywords: "applyai job search workspace study terminal brain atlas enable disable restart download pack add-on addon plugin github repository install update remove" },
       { page: "graphs", label: "Graphs", icon: "schema", keywords: "schemas default layout tree clusters sphere force physics repulsion spring damping" },
       ...(activeModules.enabled.includes("workspace") ? [{ page: "tags", label: "Tags", icon: "favorites", keywords: "auto tags keywords suggest always attach" } as Entry] : []),
     ] },
@@ -144,6 +145,11 @@
     pane.setStatus(modulesDirty ? { state: "unsaved", detail: "Unsaved module selection" } : null);
     return () => pane.setStatus(null);
   });
+  /** An add-on change saves at once; an unsaved built-in selection (the picker's overrides) stays as the user left it. */
+  async function adoptExternal(next: ModulesState) {
+    moduleStore.modules = next;
+    await onchange();
+  }
   const labels: Record<keyof GraphPhysics, string> = { repulsion: "Repulsion", spring: "Spring", damping: "Damping" };
   const explanations: Record<keyof GraphPhysics, string> = {
     repulsion: "How strongly nodes push apart. Increase to give crowded branches more room.",
@@ -222,6 +228,7 @@
         <Panel title={title} aria-label={title}>
           <ModulePicker bind:overrides={moduleOverrides} onsaved={onchange} />
         </Panel>
+        {#if moduleStore.modules}<ExternalModules modules={moduleStore.modules} onstate={adoptExternal} onkeys={() => choose("keys")} />{/if}
       {:else if shown === "graphs"}
         <Panel title={title} aria-label={title}>
           <div class="rows">

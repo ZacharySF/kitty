@@ -3,8 +3,8 @@
   import Icon from "./Icon.svelte";
   import OverflowMenu, { type OverflowItem } from "./ui/OverflowMenu.svelte";
   import Popover from "./ui/Popover.svelte";
-  import { SECTION_DRAG_TYPE, type AtlasSection } from "./atlasNodes";
-  import type { View } from "./workspace";
+  import { SECTION_DRAG_TYPE, hideableSection, type AtlasSection } from "./atlasNodes";
+  import type { AnyView } from "./workspace";
 
   type Section = AtlasSection["items"][number];
 
@@ -34,20 +34,20 @@
     sections: AtlasSection[];
     hidden: Set<string>;
     /** Linked items per section. */
-    counts: Map<View, number>;
+    counts: ReadonlyMap<string, number>;
     /** The section last found on the map. */
-    current?: View | null;
+    current?: AnyView | null;
     /** Label of a node held over this control, which a release hides. */
     holding?: string | null;
     inline?: boolean;
     /** Why the linked counts could not be read. */
     error?: string;
     open?: boolean;
-    locatable: (view: View) => boolean;
-    onview: (view: View) => unknown;
-    onlocate: (view: View) => void;
-    ontoggle: (view: View) => void;
-    ondrag: (view: View | null) => void;
+    locatable: (view: AnyView) => boolean;
+    onview: (view: AnyView) => unknown;
+    onlocate: (view: AnyView) => void;
+    ontoggle: (view: AnyView) => void;
+    ondrag: (view: AnyView | null) => void;
     onretry: () => void;
   } = $props();
 
@@ -92,7 +92,7 @@
     if (current !== best.id && locatable(best.id)) onlocate(best.id);
     else onview(best.id);
   }
-  function startDrag(event: DragEvent, view: View) {
+  function startDrag(event: DragEvent, view: AnyView) {
     if (!event.dataTransfer) return;
     event.dataTransfer.setData(SECTION_DRAG_TYPE, view);
     event.dataTransfer.effectAllowed = "move";
@@ -102,7 +102,8 @@
     return [
       { label: "Open", onselect: () => onview(item.id) },
       ...(locatable(item.id) ? [{ label: "Show on the map", onselect: () => onlocate(item.id) }] : []),
-      { label: hidden.has(item.id) ? "Show on the atlas" : "Hide from the atlas", onselect: () => ontoggle(item.id) },
+      // Add-on sections always show on the atlas.
+      ...(hideableSection(item.id) ? [{ label: hidden.has(item.id) ? "Show on the atlas" : "Hide from the atlas", onselect: () => ontoggle(item.id) }] : []),
     ];
   }
 </script>

@@ -17,6 +17,7 @@ from contextlib import closing, contextmanager
 from pathlib import Path
 
 import pytest
+from external_module_kit import with_external
 
 from kitty import web_atlas, web_auth
 from kitty.config import load_config
@@ -321,11 +322,12 @@ INTERNAL = (500, {"error": "Local operation failed; inspect CLI diagnostics"})
 
 
 def python_answer(config_dir: Path, enabled: list | None) -> tuple[int, dict]:
-    """What the Python handlers answered: `modules_state` for a GET, `set_modules` for a POST."""
+    """What the Python handlers answered: `modules_state` for a GET, `set_modules` for a POST
+    (with the worker's external modules: none here)."""
     try:
         if enabled is not None:
             configure_modules(config_dir, enabled)
-        return 200, modules_state(("workspace",), config_dir)
+        return 200, with_external(modules_state(("workspace",), config_dir))
     except ValueError as exc:
         return (400, {"error": str(exc)}) if enabled is not None else INTERNAL
     except Exception:  # noqa: BLE001 - the handler's catch-all

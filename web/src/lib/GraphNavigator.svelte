@@ -8,10 +8,11 @@
   import HomeWidget from "./HomeWidget.svelte";
   import Select from "./ui/Select.svelte";
   import {
-    navigation,
+    navItem,
     viewEnabled,
     visibleGroups,
     visibleRelations,
+    type AnyView,
     type View,
   } from "./workspace";
   import {
@@ -19,6 +20,7 @@
     SECTION_DRAG_TYPE,
     atlasGraph,
     atlasSections,
+    hideableSection,
   } from "./atlasNodes";
   import { activeModules } from "./modules.svelte";
   import {
@@ -53,16 +55,17 @@
     onview,
   }: {
     revision: number;
-    onview: (view: View) => unknown;
+    onview: (view: AnyView) => unknown;
   } = $props();
 
   const atlasId = `atlas-${pane.id}`;
   const reducedMotion = prefersReducedMotion();
 
   const enabled = $derived(activeModules.enabled);
-  const sections = $derived(atlasSections(visibleGroups(enabled), navigation));
+  const external = $derived(activeModules.views);
+  const sections = $derived(atlasSections(visibleGroups(enabled, external), (id) => navItem(id, external)));
   let hidden = $state(hiddenSections());
-  const listed = (view: string): view is View =>
+  const listed = (view: string): view is AnyView =>
     sections.some((group) => group.items.some((item) => item.id === view));
 
   let atlas = $state<Atlas | null>(null);
@@ -107,8 +110,8 @@
   let container = $state.raw<HTMLDivElement>();
   let handle = $state.raw<GraphHandle | null>(null);
   let pendingGroup: string | null = null;
-  let draggedSection = $state<View | null>(null);
-  let nodeDrag: { view: View; label: string } | null = null;
+  let draggedSection = $state<AnyView | null>(null);
+  let nodeDrag: { view: AnyView; label: string } | null = null;
   let nodeOverList = $state<string | null>(null);
 
   const itemCounts = $derived.by(() => {
@@ -119,13 +122,13 @@
     return counts;
   });
   const graph = $derived(atlasGraph(sections, hidden, visibleRelations(enabled), itemCounts));
-  const current = $derived(selected?.id.startsWith("view:") ? (selected.id.slice(5) as View) : null);
+  const current = $derived(selected?.id.startsWith("view:") ? (selected.id.slice(5) as AnyView) : null);
 
-  function sectionNode(view: View) {
+  function sectionNode(view: AnyView) {
     return graph.nodes.find((node) => node.id === `view:${view}`) ?? null;
   }
   /** The Brain finds any section; the 2D atlas only one it draws. */
-  function locatable(view: View) {
+  function locatable(view: AnyView) {
     return look === "brain" ? listed(view) : mode === "graph" && !!sectionNode(view);
   }
   function locate(node: GraphNode) {
@@ -134,7 +137,7 @@
       if (node.id.startsWith("view:")) brain?.focusSection(node.id.slice(5));
     } else handle?.focus(node.id);
   }
-  function locateSection(view: View) {
+  function locateSection(view: AnyView) {
     const node = sectionNode(view);
     if (node) locate(node);
     else if (look === "brain") {
@@ -175,7 +178,7 @@
   function stagePointerDown(event: PointerEvent) {
     const node = mode === "graph" && pane.active && look !== "brain" && !event.button ? handle?.nodeAt(event.clientX, event.clientY) : null;
     const view = node?.id.startsWith("view:") ? node.id.slice(5) : "";
-    nodeDrag = listed(view) ? { view, label: node!.label } : null;
+    nodeDrag = listed(view) && hideableSection(view) ? { view, label: node!.label } : null;
   }
   /** Only a hidden section can be dropped onto the graph to show it. */
   function acceptsSection(event: DragEvent) {
@@ -194,7 +197,7 @@
     draggedSection = null;
     if (listed(view)) setSectionHidden(view, false);
   }
-  function toggleSection(view: View) {
+  function toggleSection(view: AnyView) {
     setSectionHidden(view, !hidden.has(view));
   }
 
@@ -269,7 +272,7 @@
           active: pane.active && look !== "brain",
           onSelect: (node) => {
             if (!pane.active) return;
-            if (node.id.startsWith("view:")) onview(node.id.slice(5) as View);
+            if (node.id.startsWith("view:")) onview(node.id.slice(5) as AnyView);
             else selected = node;
           },
           onHover: (node) => { if (pane.active || !node) hovered = node; },

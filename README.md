@@ -166,7 +166,9 @@ focus a pane, or capture one to a quick note.
 ### Leave the clutter. Keep the data.
 
 Disabled modules disappear from navigation, routes, workers and MCP tools;
-**their data stays intact**.
+**their data stays intact**. Install add-ons from a GitHub release in
+**Settings → Modules**, checked against the release's SHA-256.
+The [module guide](docs/MODULES.md) explains the format and how to publish one.
 
 <br>
 
@@ -291,6 +293,7 @@ check and the web unit tests on every pull request.
 | --- | --- |
 | Setup, configuration and everyday use | [Full guide](docs/GUIDE.md) |
 | Exact behaviour and contracts | [Behaviour spec](docs/SPEC.md) |
+| Building and publishing an add-on | [Module guide](docs/MODULES.md) |
 | The move to Rust: rules, what is built, what stays | [Rust core design](docs/rust-core-design.md) |
 | Rika: how she is put together | [Rika design](docs/rika-design.md) |
 | Linux installers and release notes | [Desktop releases](https://github.com/ZacharySF/kitty-releases/releases/latest) |

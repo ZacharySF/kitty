@@ -275,6 +275,43 @@ def test_settings_desktop_commands_travel_the_owner_pipe(backend):
 
 
 @pytest.fixture
+def framed_module_workspace(tmp_path, monkeypatch):
+    """A workspace with one installed `process` external module (kitty.web_external_modules)."""
+    from external_module_kit import FakeGitHub, process_files, tarball
+
+    from kitty.core.external_modules import installer
+    from kitty.db import connect, migrate
+    from kitty.settings import Settings
+
+    root = tmp_path / "workspace"
+    settings = Settings(root=root, db_path=root / "data" / "apply.db", demo=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    with FakeGitHub() as fake:
+        monkeypatch.setenv("KITTY_GITHUB_API", fake.origin)
+        fake.publish("synthetic/rika-proc", "rika-proc", "0.1.0", tarball(process_files(command=[sys.executable, "server.py"])))
+        conn = connect(settings.db_path)
+        try:
+            migrate(conn)
+            installer.install(settings, conn, "synthetic/rika-proc", token="")
+            conn.commit()
+        finally:
+            conn.close()
+    yield root
+
+
+def test_the_shell_and_the_front_learn_a_framed_modules_port(framed_module_workspace, backend):
+    process, origin, _root, secret = backend
+    # The backend's allow-frame line reaches the shell through rika-server's owner-pipe relay.
+    line = owner_line(process)
+    assert set(line) == {"command", "port"} and line["command"] == "allow-frame"
+    frame = f"http://127.0.0.1:{line['port']}"
+    status, _headers, body = request(origin, path="/api/modules/rika-proc", secret=secret)
+    assert status == 200 and json.loads(body)["url"] == frame
+    # The front's own answers frame it as well as the backend's.
+    assert f"frame-src http://127.0.0.1:3210 {frame};" in request(origin)[1]["Content-Security-Policy"]
+
+
+@pytest.fixture
 def terminal_workspace(tmp_path, monkeypatch):
     """A workspace selecting only the Terminal module, with a synthetic herdr."""
     fake = FakeHerdr(tmp_path)

@@ -9,6 +9,10 @@
 //! (`/api/modules`, crate::modules) and the built website are answered here; every other
 //! route is forwarded to the Python worker with
 //! the worker's own secrets, so the page never learns the worker's address or secrets.
+//! External modules (`kitty.web_external_modules`) stay the worker's: their routes
+//! (`/api/modules/<id>`) and element scripts (`/modules/<id>/<version>/...`) are forwarded,
+//! the module state answered here adds the worker's `GET /api/external-modules`, and the
+//! Content-Security-Policy on every answer frames their servers' ports (its readiness line).
 
 use std::convert::Infallible;
 use std::path::{Path, PathBuf};
@@ -36,6 +40,18 @@ pub type Body = BoxBody<Bytes, hyper::Error>;
 pub const MAX_BODY: u64 = 20 * 1024 * 1024;
 const INGRESS: &str = "/api/ingress";
 const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src http://127.0.0.1:3210; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
+/// The worker's own route for its external modules' state (`kitty.web_external_modules`).
+const EXTERNAL_PATH: &str = "/api/external-modules";
+/// Element view scripts of external modules, served by the worker (`RequestHandler._module_asset`).
+const MODULE_ASSETS: &str = "/modules/";
+
+/// `RequestHandler._send`'s policy: LearnHarness's fixed frame plus the worker's framed
+/// external-module servers, whose ports are fixed at its start-up (its readiness line).
+pub fn csp(frame_ports: &[u16]) -> HeaderValue {
+    let frames: String = frame_ports.iter().map(|port| format!(" http://127.0.0.1:{port}")).collect();
+    let policy = CSP.replacen("frame-src http://127.0.0.1:3210;", &format!("frame-src http://127.0.0.1:3210{frames};"), 1);
+    HeaderValue::from_str(&policy).expect("loopback origins are valid header text")
+}
 /// `web_server.STATIC_TYPES`: anything else under the website is a 404.
 const STATIC_TYPES: &[(&str, &str)] = &[
     ("html", "text/html; charset=utf-8"), ("js", "text/javascript; charset=utf-8"),
@@ -73,6 +89,8 @@ pub struct Front {
     pub workspace: Workspace,
     /// What `/api/bootstrap` reads besides the module state (crate::bootstrap).
     pub bootstrap: crate::bootstrap::Bootstrap,
+    /// The Content-Security-Policy every answer carries ([`csp`]).
+    pub csp: HeaderValue,
 }
 
 /// A refusal the Python server would also send: status, message and extra headers.
@@ -354,10 +372,45 @@ enum Kind {
 impl Front {
     pub async fn handle(self: Arc<Self>, peer_port: u16, request: Request<Incoming>) -> Result<Response<Body>, Infallible> {
         let head = request.method() == Method::HEAD;
-        Ok(match self.dispatch(peer_port, request).await {
+        let mut response = match self.dispatch(peer_port, request).await {
             Ok(response) => response,
             Err(refusal) => failure(refusal, head),
-        })
+        };
+        // Each route's answer carries the fixed policy; the framed module ports are this launch's.
+        if let Some(policy) = response.headers_mut().get_mut("content-security-policy") {
+            *policy = self.csp.clone();
+        }
+        Ok(response)
+    }
+
+    /// Python's `modules_state`: the built-in selection plus the worker's external modules,
+    /// with a restart also required while an install, update or removal waits for one.
+    async fn add_external(&self, state: &mut Value) -> Result<(), Refusal> {
+        let busy = || refuse(503, "Local workspace is busy or unavailable; try again");
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri(EXTERNAL_PATH)
+            .header("host", &self.backend.authority)
+            .header("x-kitty-secret", &self.backend.secret)
+            .header("x-kitty-front", &self.backend.front_secret)
+            .body(empty())
+            .map_err(|_| busy())?;
+        let mut sender = self.connect(false).await?;
+        let response = sender.send_request(request).await.map_err(|_| busy())?;
+        let status = response.status();
+        let data = response.into_body().collect().await.map_err(|_| busy())?.to_bytes();
+        let answer: Value = serde_json::from_slice(&data).map_err(|_| busy())?;
+        if status != StatusCode::OK {
+            let message = answer.get("error").and_then(Value::as_str).unwrap_or("Local operation failed; inspect CLI diagnostics");
+            return Err(Refusal { status, message: message.to_owned(), headers: Vec::new() });
+        }
+        let (Some(external), Some(pending), Some(object)) = (answer.get("external"), answer.get("pending").and_then(Value::as_bool), state.as_object_mut()) else {
+            return Err(refuse(500, "Local operation failed; inspect CLI diagnostics"));
+        };
+        object.insert("external".into(), external.clone());
+        let restart = object.get("restart_required").and_then(Value::as_bool).unwrap_or(false) || pending;
+        object.insert("restart_required".into(), Value::Bool(restart));
+        Ok(())
     }
 
     async fn dispatch(&self, peer_port: u16, mut request: Request<Incoming>) -> Result<Response<Body>, Refusal> {
@@ -395,14 +448,17 @@ impl Front {
             if !parse_target(&forward_target)?.query.is_empty() {
                 return Err(refuse(400, "This route does not accept query parameters"));
             }
-            let answer = tokio::task::block_in_place(|| self.bootstrap.answer(&self.workspace))?;
+            let mut answer = tokio::task::block_in_place(|| self.bootstrap.answer(&self.workspace))?;
+            if let Some(state) = answer.get_mut("modules") {
+                self.add_external(state).await?;
+            }
             return Ok(send_json(StatusCode::OK, &answer, method == Method::HEAD));
         }
         if target.path == modules::PATH && !upgrade {
             if !target.query.is_empty() {
                 return Err(refuse(400, "This route does not accept query parameters"));
             }
-            let state = if mutation {
+            let mut state = if mutation {
                 let length = content_length(request.headers())?;
                 let raw = read_body(request.into_body(), length).await?;
                 json_object(&raw)?;
@@ -410,6 +466,7 @@ impl Front {
             } else {
                 tokio::task::block_in_place(|| self.workspace.state())?
             };
+            self.add_external(&mut state).await?;
             return Ok(send_json(StatusCode::OK, &state, method == Method::HEAD));
         }
         if (target.path == packs::PATH || target.path.starts_with("/api/packs/")) && !upgrade {
@@ -462,7 +519,8 @@ impl Front {
             }
             return self.forward_upgrade(&mut request, forward_target, peer_port).await;
         }
-        if is_api(&target.path) {
+        if is_api(&target.path) || target.path.starts_with(MODULE_ASSETS) {
+            // An external module's element script: the worker checks `?retry=<n>` and the file.
             return self.forward(request, forward_target, Kind::Api, peer_port).await;
         }
         // `?safe` opens one window in safe mode and `?code` is the one-time code: the page reads both.

@@ -61,6 +61,7 @@ class SubmitTrap:
     def __init__(self, root: Path | None = None, *, tls: ssl.SSLContext | None = None) -> None:
         self.root = root
         self.pages: dict[str, str] = {}
+        self.statuses: dict[str, int] = {}                        # pages answered with another HTTP status
         self.requests: list[tuple[str, str]] = []
         self.received: list[tuple[str, str, str, int]] = []    # writes: method, path, query, body length
         self._lock = threading.Lock()
@@ -98,6 +99,7 @@ class SubmitTrap:
             self.requests.clear()
             self.received.clear()
         self.pages.clear()
+        self.statuses.clear()
 
     def close(self) -> None:
         self._server.shutdown()
@@ -128,7 +130,7 @@ class SubmitTrap:
             def do_GET(self):
                 path = self._record()
                 if path in trap.pages:
-                    self._send(200, trap.pages[path].encode())
+                    self._send(trap.statuses.get(path, 200), trap.pages[path].encode())
                     return
                 name = path.lstrip("/")
                 if trap.root is not None and name and "/" not in name and not name.startswith("."):

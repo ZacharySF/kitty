@@ -44,6 +44,9 @@ pub enum Command {
     Notify { key: String, title: String, body: String, actions: bool },
     /// Take down the notifications under these keys.
     CloseNotices(Vec<String>),
+    /// An external module's loopback server port the navigation guard keeps in a frame
+    /// (kitty.web_external_modules; sent by the sidecar right after readiness).
+    AllowFrame(u16),
 }
 
 /// A notice's key: 1 to 200 characters, none of them control characters.
@@ -51,8 +54,10 @@ fn notice_key(text: &str) -> bool {
     (1..=200).contains(&text.chars().count()) && !text.chars().any(char::is_control)
 }
 
-/// Accept only the page's fixed command envelope. The one argument is `open-skill`'s
-/// path: absolute, no `.`/`..` components, and a file named exactly SKILL.md.
+/// Accept only the page's fixed command envelope. The arguments are `open-skill`'s
+/// path (absolute, no `.`/`..` components, a file named exactly SKILL.md), `notify`'s key,
+/// title, body and actions flag, `notify-close`'s 1-50 notice keys, and `allow-frame`'s
+/// port (an unprivileged TCP port, 1024-65535).
 pub fn parse(line: &str) -> Option<Command> {
     let value: serde_json::Value = serde_json::from_str(line).ok()?;
     let object = value.as_object()?;
@@ -77,6 +82,11 @@ pub fn parse(line: &str) -> Option<Command> {
         if keys.is_empty() || keys.len() > 50 { return None; }
         let keys: Option<Vec<String>> = keys.iter().map(|key| key.as_str().filter(|key| notice_key(key)).map(String::from)).collect();
         return keys.map(Command::CloseNotices);
+    }
+    if command == "allow-frame" {
+        if object.len() != 2 { return None; }
+        let port = object.get("port")?.as_u64()?;
+        return (1024..=65535).contains(&port).then(|| Command::AllowFrame(port as u16));
     }
     if object.len() != 1 { return None; }
     match command {
@@ -166,6 +176,19 @@ mod tests {
                      long_title.as_str(), long_body.as_str(),
                      r#"{"command":"notify-close"}"#, r#"{"command":"notify-close","keys":[]}"#,
                      r#"{"command":"notify-close","keys":["a",7]}"#, r#"{"command":"notify-close","keys":"a"}"#] {
+            assert_eq!(parse(line), None, "{line}");
+        }
+    }
+
+    #[test]
+    fn allow_frame_carries_exactly_one_unprivileged_port() {
+        assert_eq!(parse(r#"{"command":"allow-frame","port":43210}"#), Some(Command::AllowFrame(43210)));
+        assert_eq!(parse(r#"{"command": "allow-frame", "port": 1024}"#), Some(Command::AllowFrame(1024)));
+        for line in [r#"{"command":"allow-frame"}"#, r#"{"command":"allow-frame","port":80}"#,
+                     r#"{"command":"allow-frame","port":65536}"#, r#"{"command":"allow-frame","port":"43210"}"#,
+                     r#"{"command":"allow-frame","port":43210.5}"#, r#"{"command":"allow-frame","port":-1}"#,
+                     r#"{"command":"allow-frame","port":43210,"host":"example.invalid"}"#,
+                     r#"{"command":"quit","port":43210}"#] {
             assert_eq!(parse(line), None, "{line}");
         }
     }

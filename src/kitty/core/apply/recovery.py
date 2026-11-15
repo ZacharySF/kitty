@@ -403,7 +403,7 @@ class OpenRouterPlanner:
                          "allow_fallbacks": False, "max_price": {
                              "prompt": float(self.budget.input_price_per_million),
                              "completion": float(self.budget.output_price_per_million),
-                             "request": 0, "image": 0}},
+                             "request": 0}},  # text only: no image cap, see web_ai._ceilings
         }
         input_bound = len(json.dumps(params, ensure_ascii=False).encode("utf-8")) + 1024
         if not self.budget.reserve(input_bound, self.max_output_tokens):

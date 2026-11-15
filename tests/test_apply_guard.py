@@ -118,6 +118,35 @@ def test_unknown_families_use_the_custom_profile():
         assert profile_for(family) is PROFILES[family]
 
 
+@pytest.mark.parametrize("review", [False, True])
+def test_cloudflare_reporting_is_dropped_without_stopping_preparation_even_on_review(review):
+    # Cloudflare documents this dedicated origin/path as CSP reporting, not an
+    # employer mutation. Still discard its payload; only the fill may continue.
+    decision = policy(event("POST",
+        "https://csp-reporting.cloudflare.com/cdn-cgi/script_monitor/report?token=synthetic-secret"),
+        "workday", (), review=review)
+    assert decision.verdict == FAIL
+    assert decision.stop_fill is False
+    assert "synthetic-secret" not in repr(decision)
+
+
+@pytest.mark.parametrize("method,url,navigation", [
+    ("POST", WORKDAY + "/cdn-cgi/script_monitor/report", False),
+    ("POST", "https://csp-reporting.cloudflare.com.evil.invalid/cdn-cgi/script_monitor/report", False),
+    ("POST", "http://csp-reporting.cloudflare.com/cdn-cgi/script_monitor/report", False),
+    ("POST", "https://csp-reporting.cloudflare.com:8443/cdn-cgi/script_monitor/report", False),
+    ("POST", "https://csp-reporting.cloudflare.com/cdn-cgi/script_monitor/report/submit", False),
+    ("POST", "https://csp-reporting.cloudflare.com/cdn-cgi/script_monitor/report", True),
+    ("DELETE", "https://csp-reporting.cloudflare.com/cdn-cgi/script_monitor/report", False),
+    ("POST", WORKDAY + "/wday/cxs/acme/External/job/x/submit", False),
+    ("POST", WORKDAY + "/unrecognized-mutation", False),
+])
+def test_reporting_exception_never_exempts_employer_or_unverified_requests(method, url, navigation):
+    decision = policy(event(method, url, navigation=navigation), "workday", ())
+    assert decision.verdict == FAIL
+    assert decision.stop_fill is True
+
+
 # ------------------------------------------------------------ §4.4 rules
 
 

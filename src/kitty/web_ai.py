@@ -163,6 +163,37 @@ def _tiers(conn, value):
     return value
 
 
+def _price(value):
+    """A fixed per-token or per-request price in [0, 1] USD, else None (e.g. a router's -1)."""
+    try:
+        price = Decimal(str(value))
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+    return price if price.is_finite() and 0 <= price <= 1 else None
+
+
+def _ceilings(pricing):
+    """(prompt, completion) USD per token that bound every charge a request here can incur, or None.
+
+    Requests send only text, no ``tools``/``plugins`` web search and ``max_price.request: 0``,
+    so image and opt-in web-search fees never apply and per-request fees are refused.
+    Reasoning tokens count against ``max_tokens`` but may be priced as ``internal_reasoning``;
+    Anthropic cache breakpoints bill writes at ``input_cache_write``; and ``overrides`` raise
+    prices for long prompts. Each ceiling is the highest of those, so the reviewed maximum
+    cost (input bound x prompt + max_tokens x completion) stays an upper bound.
+    """
+    if not isinstance(pricing, dict) or _price(pricing.get('request', '0')) != 0:
+        return None
+    tiers = [pricing, *(pricing.get('overrides') or [])]
+    if not all(isinstance(tier, dict) for tier in tiers):
+        return None
+    prompt = [_price(tier[k]) for tier in tiers for k in ('prompt', 'input_cache_write') if k in tier]
+    completion = [_price(tier[k]) for tier in tiers for k in ('completion', 'internal_reasoning') if k in tier]
+    if 'prompt' not in pricing or 'completion' not in pricing or None in prompt + completion:
+        return None
+    return max(prompt), max(completion)
+
+
 def _refresh_models(app):
     try:
         with httpx.Client(timeout=30, follow_redirects=False) as client:
@@ -174,12 +205,13 @@ def _refresh_models(app):
             modality = item.get('architecture', {}).get('output_modalities', ['text'])
             if 'text' not in modality or not isinstance(item.get('id'), str):
                 continue
-            pricing = item.get('pricing', {})
-            prompt = _number(pricing.get('prompt'), 'Input price', 0, 1)
-            completion = _number(pricing.get('completion'), 'Output price', 0, 1)
-            # Non-token surcharges cannot be bounded by this simple approval contract.
-            if any(Decimal(str(pricing.get(k, '0'))) != 0 for k in ('request', 'image', 'web_search', 'internal_reasoning')):
+            # Search is built into Perplexity models and ``:online`` variants: a fee on every call.
+            if item['id'].startswith('perplexity/') or item['id'].endswith(':online'):
                 continue
+            prices = _ceilings(item.get('pricing', {}))
+            if prices is None:
+                continue
+            prompt, completion = prices
             context = item.get('context_length')
             if type(context) is not int or context < 4096:
                 continue
@@ -341,7 +373,8 @@ def _completion(app, ledger_id, plan, key):
                 json={'model': plan['model'], 'messages': [{'role': 'system', 'content': plan['system_prompt']}, {'role': 'user', 'content': plan['text']}],
                       'max_tokens': plan['max_output_tokens'], 'stream': False,
                       'provider': {'sort': plan['routing'], 'data_collection': 'deny', 'require_parameters': True,
-                                   'max_price': {'prompt': float(Decimal(plan['prompt_price']) * 1_000_000), 'completion': float(Decimal(plan['completion_price']) * 1_000_000), 'request': 0, 'image': 0}},
+                                   # Text only, so no image cap (it would refuse image-capable providers); see _ceilings.
+                                   'max_price': {'prompt': float(Decimal(plan['prompt_price']) * 1_000_000), 'completion': float(Decimal(plan['completion_price']) * 1_000_000), 'request': 0}},
                       'usage': {'include': True}})
             response.raise_for_status()
             data = response.json()

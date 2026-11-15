@@ -63,6 +63,20 @@ Workday is not universally account-required: its [Candidate Home setup documenta
   consent; routine account-terms approval does not authorize it. Serval requires
   applicant-specific project and motivation answers. A sampled Leonardo DRS
   posting is explicitly closed and stays in the sample as a failed case.
+- **2026-11-14 ten-job internship trial (no submissions):** four postings were
+  correctly found closed. Every Workday `wd1`/`wd5` tenant tried, and plain HTTP
+  requests to them, answered HTTP 521 (Cloudflare "Web server is down"): an outage,
+  previously misreported as "Unsupported application page"; it is now a typed
+  `site_error`. On Greenhouse's job board, Country and School (react-select) and
+  Phone stayed blank: the page sets `html {scroll-behavior: smooth}`, so a plain
+  `scrollIntoView` before the pointer hit test scrolled asynchronously and the test
+  saw the control still below the viewport. Reachability scrolls are now
+  `behavior: 'instant'`, like the click inspection already was. Its Country select
+  also moves the focus to Phone inside the Enter keydown; the release of kitty's
+  own list-commit Enter on that text box is now cancelled silently instead of
+  failing the commit. Phone then fills from the selected Country. School still
+  needs a saved answer naming one campus: the saved name matches seven Texas A&M
+  campus options, and kitty never picks among them.
 
 The fixed random sample contains ten postings. None of these account-entry,
 field-filling or upload milestones is a ten-of-ten preparation result. A closed

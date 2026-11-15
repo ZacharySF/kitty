@@ -14,7 +14,7 @@ Public shapes, shared by ``GET /api/rika/history`` and the stream's events:
 * plan ``{kind:'plan', plan_kind:'dump'|'confirm'|'checkin', id, message_id, request_id,
   items, duration, note:{page_id, title}|null,
   status:'pending'|'running'|'applied'|'dismissed'|'failed', created_at, decided_at}``;
-  items are :func:`kitty.core.rika.dumps.public_items`. ``plan_kind`` (migration 056) is
+  items are :func:`kitty.core.rika.dumps.public_items`. ``plan_kind`` (migration 057) is
   a brain dump's plan, a question about a date (:mod:`~kitty.core.rika.slots`) or a
   check-in (:mod:`~kitty.core.rika.followups`).
 """

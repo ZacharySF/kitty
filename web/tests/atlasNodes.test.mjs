@@ -4,9 +4,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { atlasGraph, atlasSections as sectionsOf } from '../src/lib/atlasNodes.ts';
-import { navigation, visibleGroups, visibleRelations } from '../src/lib/workspace.ts';
+import { navItem, visibleGroups, visibleRelations } from '../src/lib/workspace.ts';
 
-const atlasSections = enabled => sectionsOf(visibleGroups(enabled), navigation);
+const atlasSections = enabled => sectionsOf(visibleGroups(enabled), id => navItem(id));
 const ids = graph => graph.nodes.map(node => node.id).sort();
 const touches = (graph, id) => graph.links.some(link => link.source === id || link.target === id);
 const build = (enabled, hidden = new Set()) => atlasGraph(atlasSections(enabled), hidden, visibleRelations(enabled), new Map());

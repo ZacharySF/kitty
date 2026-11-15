@@ -84,16 +84,21 @@ def current_version(conn: sqlite3.Connection) -> int:
 
 
 def pending_migrations(
-    conn: sqlite3.Connection, directory: Path | None = None
+    conn: sqlite3.Connection, directory: Path | None = None, *, namespace: str | None = None
 ) -> list[Migration]:
     """Migrations on disk that this database has not applied yet.
 
     Compared by version number rather than "above the highest applied", so a
     lower-numbered file that lands after a higher one (two features built in
-    parallel) still gets applied.
+    parallel) still gets applied. A `namespace` (an external module's id) keeps its
+    own numbers in ``module_schema_version`` instead of the core's ``schema_version``.
     """
-    conn.execute(_SCHEMA_VERSION_DDL)
-    applied = {row[0] for row in conn.execute("SELECT version FROM schema_version")}
+    if namespace is None:
+        conn.execute(_SCHEMA_VERSION_DDL)
+        applied = {row[0] for row in conn.execute("SELECT version FROM schema_version")}
+    else:
+        applied = {row[0] for row in conn.execute(
+            "SELECT version FROM module_schema_version WHERE module = ?", (namespace,))}
     return [m for m in available_migrations(directory) if m.version not in applied]
 
 
@@ -126,7 +131,7 @@ def _statements(sql: str):
 
 
 
-def migrate(conn: sqlite3.Connection, directory: Path | None = None) -> list[Migration]:
+def migrate(conn: sqlite3.Connection, directory: Path | None = None, *, namespace: str | None = None) -> list[Migration]:
     """Apply every pending migration; return the ones applied.
 
     Each migration runs as one script inside BEGIN ... COMMIT. BEGIN is written
@@ -138,14 +143,23 @@ def migrate(conn: sqlite3.Connection, directory: Path | None = None) -> list[Mig
     A script starting with `-- foreign_keys: off` runs with foreign keys off,
     which SQLite requires for rebuilding a table other tables point at (the
     pragma cannot change inside a transaction, so it is set around it).
+
+    `namespace` applies an external module's own folder (docs/MODULES.md) and records
+    its versions under that module in ``module_schema_version``.
     """
+    if namespace is not None and not re.fullmatch(r"[a-z][a-z0-9-]{0,47}", namespace):
+        raise ValueError(f"invalid migration namespace {namespace!r}")
     applied: list[Migration] = []
-    for migration in pending_migrations(conn, directory):
+    for migration in pending_migrations(conn, directory, namespace=namespace):
         # Interpolated rather than bound because executescript takes no parameters.
-        # All three values are machine-generated: an int, a [a-z0-9_] name, a timestamp.
+        # All values are machine-generated or checked: an int, a [a-z0-9_] name, a
+        # timestamp and a [a-z0-9-] module id.
         record = (
             "INSERT INTO schema_version (version, name, applied_at) VALUES "
             f"({migration.version}, '{migration.name}', '{now_iso()}');"
+        ) if namespace is None else (
+            "INSERT INTO module_schema_version (module, version, name, applied_at) VALUES "
+            f"('{namespace}', {migration.version}, '{migration.name}', '{now_iso()}');"
         )
         keys_were_on = bool(conn.execute("PRAGMA foreign_keys").fetchone()[0])
         keys_off = _wants_foreign_keys_off(migration)

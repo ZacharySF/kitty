@@ -1,6 +1,6 @@
 """Check-ins: once the day of a dated task Rika added has passed, "Did you finish it?".
 
-A follow-up (``rika_followups``, migration 056) is one question Rika owes for a task or
+A follow-up (``rika_followups``, migration 057) is one question Rika owes for a task or
 study task. :func:`schedule` books it when Rika's tools add or move a dated task: for
 the due day at :data:`CHECK_IN` local time, or the due time when that is later.
 

@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { shortcutsFor } from "./workspace";
+  import { activeModules } from "./modules.svelte";
   let { enabled, onclose }: { enabled: readonly string[]; onclose: () => void } = $props();
-  const groups = $derived(shortcutsFor(enabled));
+  const groups = $derived(shortcutsFor(enabled, activeModules.views));
   let dialog: HTMLDialogElement;
   onMount(() => dialog.showModal());
 </script>

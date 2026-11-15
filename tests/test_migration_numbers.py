@@ -6,8 +6,9 @@ would make one of them unreachable on any database that applied the other, as ha
 when main's 035_calendar_palette_subjects and the platform stack's 035_text_flow_outline
 were both written. The stack's then-unreleased 035-039 became 037-041; its 037 and 044 became
 045 and 046 when main shipped 037_rika and 044_math, then 046 and 047 when main shipped
-045_rika_voice. A database at an old stack numbering was never released and is not a
-supported starting point.
+045_rika_voice. The Rust-core branch's unreleased 056-060 became 057-061 when main shipped
+056_external_modules (v0.3.37). A database at an old stack numbering was never released and
+is not a supported starting point.
 """
 from __future__ import annotations
 

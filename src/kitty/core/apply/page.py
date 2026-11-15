@@ -1054,7 +1054,7 @@ _ITI_JS = r"""
       open: control.getAttribute('aria-expanded') === 'true' && !!list && shown(list), countries};
   }
   const reachable = e => {
-    e.scrollIntoView({block: 'nearest', inline: 'nearest'});
+    e.scrollIntoView({block: 'nearest', inline: 'nearest', behavior: 'instant'});
     const r = e.getBoundingClientRect();
     const hit = r.width && r.height ? hitAt(r.left + r.width / 2, r.top + r.height / 2) : null;
     return !!hit && contains(e, hit) && shown(e);
@@ -1245,7 +1245,7 @@ _REACHABLE_JS = r"""
 (key) => {""" + _DOM_HELPERS_JS + r"""
   const el = globalThis.kittyByKey.get(key);
   if (!fieldSafe(el)) return false;
-  el.scrollIntoView({block: 'center', inline: 'nearest'});
+  el.scrollIntoView({block: 'center', inline: 'nearest', behavior: 'instant'});
   const r = el.getBoundingClientRect();
   if (!r.width || !r.height) return false;
   const hit = hitAt(r.left + r.width / 2, r.top + r.height / 2);
@@ -1268,7 +1268,7 @@ _CHOICE_TARGET_JS = r"""
   const el = globalThis.kittyByKey.get(key);
   if (!fieldSafe(el)) return null;
   for (const target of [el, ...labelsOf(el)]) {
-    target.scrollIntoView({block: 'center', inline: 'nearest'});
+    target.scrollIntoView({block: 'center', inline: 'nearest', behavior: 'instant'});
     const r = target.getBoundingClientRect();
     if (!r.width || !r.height || getComputedStyle(target).visibility === 'hidden') continue;
     const hit = hitAt(r.left + r.width / 2, r.top + r.height / 2);
@@ -1451,7 +1451,7 @@ _SUGGESTIONS_JS = (r"""
         kittyActivate(option, 'field', () => option.dispatchEvent(new MouseEvent(type, {bubbles: true, composed: true, cancelable: true, button: 0})));
     return true;
   }
-  option.scrollIntoView({block: 'nearest'});
+  option.scrollIntoView({block: 'nearest', behavior: 'instant'});
   const r = option.getBoundingClientRect();
   const hit = r.width && r.height
     ? hitAt(r.left + r.width / 2, r.top + r.height / 2) : null;
@@ -1500,7 +1500,7 @@ _WORKDAY_MENU_JS = r"""
   const shown = e => !!e?.getClientRects().length && getComputedStyle(e).visibility !== 'hidden';
   const reachable = e => {
     if (!safe(e) || !shown(e)) return false;
-    e.scrollIntoView({block: 'nearest', inline: 'nearest'});
+    e.scrollIntoView({block: 'nearest', inline: 'nearest', behavior: 'instant'});
     const r = e.getBoundingClientRect(), hit = hitAt(r.left + r.width / 2, r.top + r.height / 2);
     return !!hit && contains(e, hit) && !closest(hit, actions) && safe(e) && fieldSafe(box);
   };

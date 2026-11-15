@@ -4,6 +4,8 @@ import { svelte } from "@sveltejs/vite-plugin-svelte";
 /** Only this local dev page may reach the API: a loopback host and, when sent, its own origin. */
 const localPage = (host = "", origin?: string) =>
   /^(127\.0\.0\.1|localhost):\d+$/.test(host) && (!origin || origin === `http://${host}`);
+/** What the dev server forwards to kitty-web: the API and add-on module page scripts (docs/MODULES.md). */
+const backendPath = (url = "") => url.startsWith("/api") || url.startsWith("/modules");
 
 /**
  * Module packs (docs/rust-core-design.md, milestone 3): the modules whose web code is a
@@ -87,7 +89,7 @@ export default defineConfig(({ mode }) => {
         name: "local-api-origin",
         configureServer(server) {
           server.middlewares.use((request, response, next) => {
-            if (request.url?.startsWith("/api")) {
+            if (backendPath(request.url)) {
               if (!localPage(request.headers.host, request.headers.origin)) {
                 response.writeHead(403, { "Content-Type": "application/json" });
                 response.end(
@@ -124,6 +126,17 @@ export default defineConfig(({ mode }) => {
                 socket.destroy();
                 return;
               }
+              request.setHeader("Origin", backendOrigin);
+            });
+          },
+        },
+        // Add-on module page scripts (`modules.external.views[].script`) are static files the backend serves.
+        // A browser sends Origin with every module script import, and kitty-web refuses one not its own.
+        "/modules": {
+          target: backendOrigin,
+          changeOrigin: true,
+          configure(proxy) {
+            proxy.on("proxyReq", (request) => {
               request.setHeader("Origin", backendOrigin);
             });
           },

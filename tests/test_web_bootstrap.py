@@ -15,6 +15,7 @@ import subprocess
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from external_module_kit import with_external
 
 from kitty.core import jobs, today, tracks
 from kitty.core.followups import mark_applied
@@ -117,7 +118,7 @@ def test_bootstrap_through_the_front_matches_the_python_functions(workspace, mon
     with front_site(workspace.settings) as running:
         status, answer = running.request("/api/bootstrap")
         assert status == 200
-        expected = {"demo": False, "modules": modules_state(DEFAULT_MODULES, workspace.settings.config_dir),
+        expected = {"demo": False, "modules": with_external(modules_state(DEFAULT_MODULES, workspace.settings.config_dir)),
                     **applyai_reference(workspace.conn, workspace.config)}
         assert answer == expected
         assert list(answer) == list(expected), "the same key order"
@@ -135,7 +136,7 @@ def test_without_applyai_the_answer_is_the_module_state(tmp_path):
 
     settings = make_root(tmp_path, ("workspace",))
     with front_site(settings) as running:
-        assert running.request("/api/bootstrap") == (200, {"demo": False, "modules": modules_state(("workspace",), settings.config_dir)})
+        assert running.request("/api/bootstrap") == (200, {"demo": False, "modules": with_external(modules_state(("workspace",), settings.config_dir))})
 
 
 def test_the_digest_command_matches_on_edge_data(workspace, monkeypatch):

@@ -108,8 +108,14 @@ def serve(root: Path, assets: Path, package: str, *, front: tuple[str, str, str]
             with endpoint_module.published(settings.root, app.origin):
                 # The UI secret travels only on this private pipe: the shell (or the front)
                 # injects it into rika!'s own windows (docs/platform-design.md, "UI secret").
-                # The front also learns the workspace it answers its own routes from.
+                # The front also learns the workspace it answers its own routes from, and the
+                # framed external-module ports its Content-Security-Policy allows.
                 send(server_module.readiness(server, settings, app.modules))
+                # Framed external-module servers (kitty.web_external_modules): their ports are
+                # fixed at start-up, so the shell's navigation guard learns them before any page.
+                # rika-server relays these lines to the shell like every other owner command.
+                for port in app.frame_ports():
+                    owner.allow_frame(port)
                 server.serve_forever(poll_interval=0.1)
         finally:
             server.server_close()

@@ -357,3 +357,75 @@ def test_rika_tier_models_are_settings_from_the_refreshed_catalog(ai, workspace)
                 'revision': saved['revision'], 'rika_tiers': tiers, 'confirmed': True})
         assert error.value.status == 400
     assert web_ai.get(ai, workspace.conn, '/api/ai/status', {})['rika_tiers']['fast'] == 'synthetic/text'
+
+
+def catalog_model(identifier, context=100000, **pricing):
+    return {'id': identifier, 'name': identifier, 'context_length': context,
+            'architecture': {'output_modalities': ['text']},
+            'pricing': {'prompt': '0.000001', 'completion': '0.000002', **pricing}}
+
+
+class CatalogClient(Client):
+    """A synthetic OpenRouter /models listing."""
+
+    listing: ClassVar[list] = []
+
+    def get(self, url, **kwargs):
+        Client.calls.append((url, kwargs))
+        return web_ai.httpx.Response(200, request=web_ai.httpx.Request('GET', url), json={'data': CatalogClient.listing})
+
+
+def refreshed(ai, workspace, monkeypatch, *listing):
+    CatalogClient.listing = list(listing)
+    monkeypatch.setattr(web_ai.httpx, 'Client', CatalogClient)
+    web_ai._refresh_models(ai)
+    workspace.conn.commit()
+    return {row['id']: dict(row) for row in workspace.conn.execute('SELECT * FROM ai_models')}
+
+
+def test_refresh_keeps_models_whose_surcharges_rika_never_triggers(ai, workspace, monkeypatch):
+    """Image and web-search fees apply only to image inputs and opted-in search; rika sends neither."""
+    models = refreshed(ai, workspace, monkeypatch,
+        catalog_model('synthetic/searchable', web_search='0.01', image='0.0000003', input_cache_read='0.0000001'),
+        catalog_model('synthetic/reasoner', internal_reasoning='0.000002', web_search='0.014'),
+        catalog_model('synthetic/plain'))
+    assert set(models) == {'synthetic/searchable', 'synthetic/reasoner', 'synthetic/plain'}
+    assert models['synthetic/searchable']['prompt_price'] == '0.000001'
+    assert models['synthetic/searchable']['completion_price'] == '0.000002'
+
+
+def test_refresh_excludes_fees_the_cost_bound_cannot_cover(ai, workspace, monkeypatch):
+    models = refreshed(ai, workspace, monkeypatch,
+        # Billed on every call, and every request caps max_price.request at 0.
+        catalog_model('synthetic/per-request', request='0.005'),
+        # Search is built into these, so a search fee is charged on every call.
+        catalog_model('perplexity/synthetic-sonar', web_search='0.005'),
+        catalog_model('synthetic/plain:online', web_search='0.005'),
+        catalog_model('synthetic/short', context=4095),
+        # Dynamic routers report -1: no fixed price to bound.
+        catalog_model('synthetic/router', prompt='-1', completion='-1'),
+        catalog_model('synthetic/kept'))
+    assert set(models) == {'synthetic/kept'}
+
+
+def test_refresh_stores_price_ceilings_for_reasoning_caching_and_long_prompts(ai, workspace, monkeypatch):
+    """Reasoning tokens count against max_tokens but may be priced separately; cache writes
+    and long-prompt tiers can cost more than the base price. Store the highest of each."""
+    models = refreshed(ai, workspace, monkeypatch,
+        catalog_model('synthetic/pricier-reasoning', internal_reasoning='0.000004'),
+        catalog_model('synthetic/cache-write', input_cache_write='0.00000125'),
+        catalog_model('synthetic/tiered', overrides=[{'min_prompt_tokens': 200000, 'prompt': '0.000002', 'completion': '0.000003'}]))
+    assert models['synthetic/pricier-reasoning']['completion_price'] == '0.000004'
+    assert models['synthetic/cache-write']['prompt_price'] == '0.00000125'
+    assert (models['synthetic/tiered']['prompt_price'], models['synthetic/tiered']['completion_price']) == ('0.000002', '0.000003')
+
+
+def test_requests_do_not_cap_image_price_for_text_only_messages(ai, workspace, provider):
+    """max_price filters providers; an image cap of 0 would refuse image-capable providers
+    even though these requests carry only text. The per-request cap stays at 0."""
+    plan = preview(ai, workspace)
+    web_ai.post(ai, workspace.conn, '/api/ai/run', run_body(plan))
+    ai.tasks.close()
+    sent = provider[0][1]['json']
+    assert sent['provider']['max_price'] == {'prompt': 1.0, 'completion': 2.0, 'request': 0}
+    assert all(isinstance(message['content'], str) for message in sent['messages'])

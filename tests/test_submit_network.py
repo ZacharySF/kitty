@@ -396,6 +396,30 @@ def test_a_fill_that_trips_the_network_guard_stops_as_submit_blocked_network(spa
         ("POST", "/trap/submit", "generic.submit", "fail")]
 
 
+# Workday answered HTTP 521 (Cloudflare "Web server is down") to every client during
+# the 2026-11-14 trial: an outage, not an unsupported page or a closed posting.
+SERVER_ERROR_PAGE = "<h1>An error occurred.</h1><h2>Web server is down</h2>"
+
+
+@pytest.mark.parametrize("status", [521, 503])
+def test_an_employer_server_error_is_a_site_error_not_an_unsupported_page(space, tab, trap, status):  # noqa: F811
+    job = _job(space, trap, SERVER_ERROR_PAGE)
+    trap.statuses["/apply"] = status
+    report = fill_job(tab, space.conn, space.settings, space.config, job)
+    assert report.status == "blocked", report.note
+    assert report.note.startswith("site_error:") and f"HTTP {status}" in report.note
+    assert report.cause == "unavailable"                                # not "unsupported controls"
+    assert tuple(space.conn.execute("SELECT cause, outcome FROM apply_attempts WHERE id = ?",
+                                    (report.attempt_id,)).fetchone()) == ("site_error", "failed")
+    assert jobs_core.get_job(space.conn, job.id).closed_at is None     # an outage never closes a posting
+    assert trap.writes() == []
+
+
+def test_error_wording_on_a_page_that_loaded_is_not_a_site_error(space, tab, trap):  # noqa: F811
+    report = fill_job(tab, space.conn, space.settings, space.config, _job(space, trap, SERVER_ERROR_PAGE))
+    assert report.status == "blocked" and not report.note.startswith("site_error:")
+
+
 # ------------------------------------------------------------ orphaned session (proposal-07 Step 2)
 
 
@@ -411,6 +435,52 @@ READY_PAGE = """<form id="application" method="post" action="/trap/submit">
   <label>First Name <input name="first_name" autocomplete="given-name" required></label>
   <label>Resume <input name="resume" type="file" required></label>
   <button type="submit">Submit application</button></form>"""
+
+
+def test_background_reporting_does_not_override_a_successful_fill(space, tab, trap, monkeypatch):  # noqa: F811
+    # Substitute only the reporting service's origin with a local receiver:
+    # the real policy, Firefox interception, form filler and evidence writer run.
+    monkeypatch.setattr(guard, "_CSP_REPORT_ORIGIN", trap.origin, raising=False)
+    monkeypatch.setattr(filler, "detect_ats", lambda url: "workday")
+    body = READY_PAGE + """<script>
+        window.reportDone = fetch('/cdn-cgi/script_monitor/report', {
+            method: 'POST', body: 'synthetic-report'
+        }).then(() => 'sent', () => 'blocked');
+    </script>"""
+    job = _job(space, trap, body)
+    report = fill_job(tab, space.conn, space.settings, space.config, job)
+    assert report.status == "ready", report.note
+    assert _page(tab.main, "() => window.reportDone") == "blocked"
+    assert _page(tab.main, "() => document.querySelector('[name=first_name]').value") == "Pat"
+    assert _page(tab.main, "() => document.querySelector('[name=resume]').files[0].name") == "resume.pdf"
+    assert trap.writes() == []
+    assert report.guard_released and tab.network_released
+    assert jobs_core.get_job(space.conn, job.id).fill_state == "ready"
+    assert space.conn.execute("SELECT outcome FROM apply_attempts WHERE id = ?",
+                              (report.attempt_id,)).fetchone()[0] == "ready"
+    assert [(row["path"], row["decision"]) for row in endpoints.read(space.settings, endpoints.OBSERVED)] == [
+        ("/cdn-cgi/script_monitor/report", "fail")]
+
+
+@pytest.mark.parametrize("review", [False, True])
+def test_reporting_drops_preserve_input_and_cannot_hide_a_later_submit(tab, trap, monkeypatch, review):
+    monkeypatch.setattr(guard, "_CSP_REPORT_ORIGIN", trap.origin, raising=False)
+    frame = _serve(trap, tab, '<label>First name <input name="first"></label>', family="workday")
+    tab.observe_review(review)
+    assert _page(frame, FETCH_ALL, [["POST", "/cdn-cgi/script_monitor/report"]]) == ["failed"]
+    first = _node(frame, '[name="first"]')
+    frame.call("() => document.querySelector('input').focus()")
+    frame.type("Pat", into=first)
+    assert _page(frame, "() => document.querySelector('input').value") == "Pat"
+    assert _page(frame, FETCH_ALL, [["POST", "/wday/cxs/acme/External/job/x/submit"]]) == ["failed"]
+    # Diagnostic history is bounded. Background traffic must not evict the
+    # safety stop and let automation resume after a denied submission.
+    assert _page(frame, FETCH_ALL, [["POST", "/cdn-cgi/script_monitor/report"]] * 205) == ["failed"] * 205
+    assert trap.writes() == []
+    with pytest.raises(guard.SubmitBlockedNetwork, match="workday.submit"):
+        tab.check_network()
+    with pytest.raises(guard.SubmitBlockedNetwork):
+        frame.type("Unsafe continuation", into=first)
 
 
 def _crash_mid_fill(monkeypatch, crash_path: str, ports: list[int]):

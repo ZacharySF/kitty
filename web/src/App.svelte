@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount, tick, untrack } from "svelte";
   import { api, type Bootstrap } from "./lib/api";
-  import { navigation, navigationGroups, isView, notePageLink, viewEnabled, visibleGroups, type View } from "./lib/workspace";
-  import { setActiveModules } from "./lib/modules.svelte";
+  import { isView, navigation, navItem, notePageLink, viewEnabled, viewFromHash, visibleGroups, groupOf, type AnyView, type View } from "./lib/workspace";
+  import { activeModules, setActiveModules } from "./lib/modules.svelte";
   import Icon from "./lib/Icon.svelte";
   import { ICONS } from "./lib/icons";
   import BrandMark from "./lib/BrandMark.svelte";
@@ -46,7 +46,7 @@
   };
   type WorkspaceTab = {
     id: string;
-    view: View;
+    view: AnyView;
     epoch: number;
     initialJobId: number | null;
     scrollY: number;
@@ -66,10 +66,12 @@
   const trail = $derived(activeTab.pane?.breadcrumbs() ?? emptyTrail);
   let workspace = $state<Bootstrap | null>(null);
   const enabled = $derived(workspace?.modules.enabled ?? []);
+  /** Add-on views active in this process (bootstrap `modules.external.views`). */
+  const external = $derived(activeModules.views);
   const applyai = $derived(enabled.includes("applyai"));
   const studyTools = $derived(enabled.includes("workspace"));
   const terminal = $derived(enabled.includes("terminal"));
-  const groups = $derived(visibleGroups(enabled));
+  const groups = $derived(visibleGroups(enabled, external));
   let moduleNotice = $state("");
   let error = $state("");
   let loading = $state(true);
@@ -89,19 +91,19 @@
   let revision = $state(0);
   let guideDialog = $state<HTMLDialogElement>();
   let tabBar: { close: (restoreFocus?: boolean) => void } | undefined = $state();
-  const title = $derived(navigation.find(item => item.id === view)?.label || "Workspace");
+  const title = $derived(navItem(view, external)?.label || "Workspace");
   const tabLabels = $derived(tabs.map(tab => ({
     id: tab.id,
     label: tab.view === "today" ? "Home" : tab.view === "notes" && tab.page ? tab.page.title || "Untitled"
-      : navigation.find(item => item.id === tab.view)?.label || "Workspace",
-    icon: tab.view === "today" ? "kitty" : navigation.find(item => item.id === tab.view)?.icon || "atlas",
+      : navItem(tab.view, external)?.label || "Workspace",
+    icon: tab.view === "today" ? "kitty" : navItem(tab.view, external)?.icon || "atlas",
     status: tab.pane?.saveStatus() ?? null,
   })));
   /** The bar carries only the groups you move between; Settings is reached from search and the tab menu. */
   const barGroups = $derived(groups.filter(group => group.label !== "Settings"));
   /** The Icons module: a page's title carries its view's icon, drawn by CSS as a mask (styles.css). */
-  function viewIcon(view: View): string {
-    const path = ICONS[navigation.find(item => item.id === view)?.icon ?? "atlas"]?.path ?? "";
+  function viewIcon(view: AnyView): string {
+    const path = ICONS[navItem(view, external)?.icon ?? "atlas"]?.path ?? "";
     const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'><path d='${path}'/></svg>`;
     return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
   }
@@ -113,7 +115,7 @@
     { label: "Keyboard shortcuts", detail: "?", run: () => (help = true) },
   ]);
   const schemaLabel = $derived(
-    ({ jobs: "Jobs", notes: "Notes", flashcards: "Flashcards", opportunities: "Opportunities", schema: "Mind maps" } as Partial<Record<View, string>>)[view] || title,
+    ({ jobs: "Jobs", notes: "Notes", flashcards: "Flashcards", opportunities: "Opportunities", schema: "Mind maps" } as Partial<Record<string, string>>)[view] || title,
   );
   const ownsTrail = $derived(trail.section === view);
   const schemaNodes = $derived(ownsTrail ? trail.nodes : []);
@@ -121,7 +123,7 @@
   const fills = $derived(view === "today" || view === "brain");
   // The Brain is a place only with its pack's files here (`missing`: modules on whose pack is not installed).
   const brainView = $derived(viewEnabled("brain", enabled) && !((workspace?.modules as { missing?: string[] } | undefined)?.missing ?? []).includes("brain"));
-  const sectionGroup = $derived(navigationGroups.find(group => group.views.includes(view))?.label ?? "Workspace");
+  const sectionGroup = $derived(groupOf(view, external)?.label ?? "Workspace");
 
   function mayLeaveEditor(tab = activeTab) {
     return !tab.pane?.hasUnsavedChanges() || window.confirm("You have unsaved edits. Leave and discard them?");
@@ -184,15 +186,17 @@
       });
     }
   }
-  function disabledNotice(target: View) {
+  function disabledNotice(target: AnyView) {
+    if (!isView(target))
+      return "That add-on page is not available in this session. Check Settings → Modules: add-on changes apply after you restart rika!.";
     const owner = navigation.find(item => item.id === target);
     const info = workspace?.modules.available.find(item => item.id === owner?.module);
     const pending = owner?.module && workspace?.modules.configured.includes(owner.module);
     return `${owner?.label ?? "That page"} belongs to the ${info?.label ?? owner?.module} module, which is off in this session. ${
       pending ? "It is saved as on and starts after you restart kitty." : "Turn it on in Settings, then restart kitty."}`;
   }
-  function navigate(next: View) {
-    if (workspace && !viewEnabled(next, enabled)) { moduleNotice = disabledNotice(next); return false; }
+  function navigate(next: AnyView) {
+    if (workspace && !viewEnabled(next, enabled, external)) { moduleNotice = disabledNotice(next); return false; }
     if (!mayLeaveEditor()) return false;
     panelFullscreen?.exit();
     moduleNotice = "";
@@ -215,7 +219,7 @@
   }
   function openModuleSettings() { openSettings("modules"); }
   /** Where a group opens: its first page other than home (the brand mark is home). */
-  function groupLanding(group: { views: View[] }) {
+  function groupLanding(group: { views: AnyView[] }) {
     return group.views.find(item => item !== "today") ?? group.views[0];
   }
   /** A group's shortcut opens it as its header button does; on the Brain it finds the group on the map. */
@@ -281,7 +285,7 @@
     try {
       const data = await api<Bootstrap>("/bootstrap");
       if (request !== bootstrapRequest) return;
-      setActiveModules(data.modules.enabled, data.modules.missing);
+      setActiveModules(data.modules.enabled, data.modules.external?.views, data.modules.missing);
       workspace = data;
       revision += 1;
     } catch (cause) {
@@ -311,10 +315,9 @@
       try { sessionStorage.setItem("kitty.notes.open-page", String(linkedPage)); } catch { /* The event still opens it. */ }
       window.dispatchEvent(new CustomEvent("kitty-open-note", { detail: { page_id: linkedPage } }));
     }
-    const view = hash.split("/")[0];
-    let next: View = linkedPage !== null ? "notes" : isView(view) ? view : "today";
+    let next: AnyView = linkedPage !== null ? "notes" : viewFromHash(hash) ?? "today";
     let redirected = false;
-    if (workspace && !viewEnabled(next, enabled)) {
+    if (workspace && !viewEnabled(next, enabled, external)) {
       moduleNotice = disabledNotice(next);
       next = "today";
       redirected = true;
@@ -337,7 +340,7 @@
   // A deep link read before bootstrap may name a view the active modules do not provide.
   $effect(() => {
     if (!workspace) return;
-    const blocked = tabs.filter(tab => !viewEnabled(tab.view, enabled));
+    const blocked = tabs.filter(tab => !viewEnabled(tab.view, enabled, external));
     if (!blocked.length) return;
     untrack(() => {
       for (const tab of blocked) {
@@ -536,7 +539,7 @@
         data-kitty-panel="view" style:--view-icon={viewIcon(tab.view)}
         hidden={tab.id !== activeId} inert={tab.id !== activeId}
       >
-        {#if (workspace && viewEnabled(tab.view, enabled)) || tab.view === "settings" || tab.view === "ai"}
+        {#if (workspace && viewEnabled(tab.view, enabled, external)) || tab.view === "settings" || tab.view === "ai"}
         <WorkspacePane
           bind:this={tab.pane} tabId={tab.id} view={tab.view}
           active={tab.id === activeId} {workspace} {revision}
@@ -551,8 +554,8 @@
           onnotepagetab={id => void newTab("notes", { id, title: "" })}
         />
         {/if}
-        <PageWidgets view={tab.view} idPrefix={`page-${tab.id}`} {revision} editing={pageEditing && tab.id === activeId}
-          onview={next => { if (tab.id === activeId) navigate(next); }} />
+        {#if isView(tab.view)}<PageWidgets view={tab.view} idPrefix={`page-${tab.id}`} {revision} editing={pageEditing && tab.id === activeId}
+          onview={next => { if (tab.id === activeId) navigate(next); }} />{/if}
       </div>
     {/each}
   </main>

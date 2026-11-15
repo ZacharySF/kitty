@@ -46,6 +46,9 @@ pub struct Worker {
     pub digest: Option<crate::bootstrap::DigestSettings>,
     /// The packs the worker has and lacks (`kitty.packs.readiness`).
     pub packs: WorkerPacks,
+    /// The loopback ports of the worker's framed external-module servers, fixed at its start-up
+    /// (`kitty.web_external_modules`); the front's Content-Security-Policy frames them.
+    pub frame_ports: Vec<u16>,
     child: Child,
     /// Held open for the worker's lifetime; closing it tells the worker to stop. Shared with
     /// the desktop owner-pipe relay, which writes the shell's lines into it.
@@ -65,6 +68,8 @@ struct Readiness {
     digest: Option<crate::bootstrap::DigestSettings>,
     #[serde(default)]
     packs: WorkerPacks,
+    #[serde(default)]
+    frame_ports: Vec<u16>,
 }
 
 /// The readiness line's `packs`: those built into the worker program, and those its active
@@ -155,6 +160,7 @@ impl Worker {
             db_path: ready.db_path.into(),
             digest: ready.digest,
             packs: ready.packs,
+            frame_ports: ready.frame_ports,
             child,
             stdin: Arc::new(Mutex::new(Some(stdin))),
             output: Some(stdout),

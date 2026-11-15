@@ -97,6 +97,7 @@ CAUSES: dict[str, tuple[str, str]] = {
     # Explicit exclusions (proposal-05 Step 3): Indeed Apply, Tesla, employer-own portals,
     # Paradox, unresolved Litos, broken redirects. Typed handoffs; never attempted.
     "unsupported_flow": ("unsupported", "Excluded flow (handed to you)"),
+    "site_error": ("failed", "Employer site server error (try again later)"),
     "loading": ("failed", "Page kept loading"),
     "upload_pending": ("failed", "Upload or resume parsing still pending"),
     "stopped": ("failed", "Stopped or out of time"),
@@ -113,6 +114,7 @@ CAUSES: dict[str, tuple[str, str]] = {
 # Ordered (cause, pattern) rules over today's blocker and error strings (casefolded).
 _RULES: tuple[tuple[str, re.Pattern[str]], ...] = tuple((cause, re.compile(pattern)) for cause, pattern in (
     ("closed", r"^closed:"),
+    ("site_error", r"^site_error:"),
     ("owner_took_over", r"^owner:"),
     ("submit_vetoed", r"^vetoed:"),
     ("submit_blocked_network", r"^network:"),

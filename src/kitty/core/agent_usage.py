@@ -2,7 +2,7 @@
 
 Claude Code, Codex and omp each keep a JSON-lines log per session. ``sync`` reads the
 logs of the kinds the user turned on, from where it stopped last time, into two tables
-(migration 058): ``usage_files`` holds one row per log with its cursor and the session's
+(migration 059): ``usage_files`` holds one row per log with its cursor and the session's
 running totals, ``agent_usage`` its requests summed per five minutes, model and role.
 Only numbers, model ids, the session id and the working directory are kept; a path an
 edit tool named is kept as a hash, so files changed can be counted. No prompt, reply,

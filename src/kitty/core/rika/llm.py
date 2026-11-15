@@ -102,8 +102,9 @@ def prepare(app, conn: sqlite3.Connection, model_id: str, messages: list[dict], 
         "stream": True,
         "provider": {"sort": settings["routing"], "data_collection": "deny", "require_parameters": True,
                      "allow_fallbacks": False,
+                     # Text only, so no image cap (it would refuse image-capable providers); see web_ai._ceilings.
                      "max_price": {"prompt": float(prompt * 1_000_000), "completion": float(completion * 1_000_000),
-                                   "request": 0, "image": 0}},
+                                   "request": 0}},
         "usage": {"include": True},
     }
     if tools:

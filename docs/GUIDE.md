@@ -107,8 +107,27 @@ Existing workspaces with no module selection keep every module rika! had before 
 the first open. Math and LearnHarness used to be part of Workspace and Voice part of the
 core: a saved selection from before keeps Workspace but has them off until you turn them
 on. Fresh CLI and desktop workspaces start core-only. The database still uses the existing global
-migrations; disabling does not drop tables or run down-migrations. These are
-built-in modules, not installable third-party extensions.
+migrations; disabling does not drop tables or run down-migrations.
+
+### External modules
+
+Add-on modules come from a GitHub repository's latest release
+([MODULES.md](MODULES.md) is the contract and how to publish one). In **Settings →
+Modules → Add-on modules**, type the repository as `owner/repo` and press **Add**: rika!
+downloads the release's `<id>-<version>.tar.gz`, refuses it unless its SHA-256 matches the
+checksum the release publishes, unpacks it safely into `data/modules/<id>/<version>/` and
+pins that version. As with the built-in modules, **restart rika!** to finish; the new view
+then appears in its header group (first, if the module asks). **Check for updates** shows
+`Update available 0.1.0 → 0.1.1` with an **Update** button; nothing updates by itself.
+**Remove** takes effect at the next start and keeps the module's data in
+`data/modules-data/<id>/`. Private repositories need a GitHub token (Settings → Keys →
+GitHub token). A module that fails to load is listed with its error and never stops
+rika! from starting.
+
+A `python` module runs inside rika! and answers `/api/modules/<id>/…`; its view is a
+script rika! serves from `/modules/<id>/<version>/`. A `process` module is a local web
+server rika! starts when its view opens, on a free loopback port that only this run's
+page and desktop window may frame (like LearnHarness's fixed `127.0.0.1:3210`).
 
 ### Module packs
 
@@ -935,7 +954,8 @@ are in `src/kitty/core/connect/`).
 ### Keys (API keys)
 
 rika! keeps API keys in one place (`src/kitty/core/keys.py`). Each key has a name:
-`OPENROUTER`, `ANTHROPIC`, `USAJOBS`, `BRAVE`, or your own (`A-Z`, `0-9`, `_`). A key
+`OPENROUTER`, `ANTHROPIC`, `USAJOBS`, `BRAVE`, `GITHUB` (a GitHub token, only for installing
+[external modules](#external-modules) from private repositories), or your own (`A-Z`, `0-9`, `_`). A key
 is read from, in order:
 
 1. the OS keyring through the freedesktop Secret Service (gnome-keyring, KeePassXC),
@@ -944,7 +964,7 @@ is read from, in order:
    before; `.private/keys/<NAME>` for the others). Files must be mode 600 and not
    symbolic links;
 3. the environment, so `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `USAJOBS_API_KEY`,
-   `BRAVE_SEARCH_API_KEY` (or a custom `NAME`) in `.env` keep working.
+   `BRAVE_SEARCH_API_KEY`, `GITHUB_TOKEN` (or a custom `NAME`) in `.env` keep working.
 
 New keys go to the keyring when there is one, otherwise to the owner-only file.
 **Settings → Keys** shows each key as set or unset and where it is stored, never its
@@ -1767,6 +1787,11 @@ cost before explicitly approving each request. Reviews are single-use, expire
 after ten minutes, and become invalid when settings change. Notes are not shared
 automatically; output remains a draft. Provider requests disallow data collection,
 and failed requests are not automatically retried. Paid calls are disabled in demo.
+The catalog lists text models whose cost the review can bound. Their listed prices
+are ceilings: the highest of the base, long-prompt, cache-write and reasoning
+token prices. Image and web-search fees never apply, because requests send only
+text and never turn on search. Models with a per-request fee, built-in search
+(Perplexity, `:online`), no fixed price (routers) or under 4096 context are left out.
 
 **Rika** is rika!'s own agent (design: `docs/rika-design.md`). You type to it in
 its panel on home or its drawer (Ctrl+J), and it does the work through the app's own functions.
@@ -2640,8 +2665,23 @@ The guard also holds every request the tab sends while rika! fills it and lets
 through only what the form provider's profile allows (deny lists of submit
 endpoints always; Greenhouse, Lever and SmartRecruiters unknown requests are only
 recorded during the survey, method and path only, in `data/apply-endpoints/`). A
-blocked request stops the fill (`network:` note, cause `submit_blocked_network`)
-and keeps the tab for me to review. If the connection to rika!'s Firefox breaks
+blocked request normally stops the fill (`network:` note, cause
+`submit_blocked_network`) and keeps the tab for me to review. The exact background
+`POST https://csp-reporting.cloudflare.com/cdn-cgi/script_monitor/report` is an
+exception: rika! discards it without stopping preparation, including on Workday
+Review. Its payload is never sent, and the denial is recorded as
+`cloudflare.csp_report`. Employer-hosted lookalikes, other origins or ports,
+navigation requests, unknown mutations and submission endpoints are not exempt.
+A fatal denial remains latched until the tab is rearmed, even if later reporting
+traffic evicts it from the bounded diagnostic history.
+
+The pure request policy decides both whether to send a request and whether a
+denial must stop preparation; browser transport and final readiness consume that
+same decision. Keep these semantics and the behavioral regression cases when
+porting the backend to Rust; this change adds no service, dependency or database
+migration.
+
+If the connection to rika!'s Firefox breaks
 mid-fill, rika! restarts that Firefox itself and fills the job again only when no
 tab is waiting for me; otherwise the job shows one `restart_firefox:` item: finish
 or discard the waiting tabs, then press Restart Firefox in Apply (or run
@@ -2997,6 +3037,12 @@ kitty apply resolve 12 34              # just these jobs, and write the changes
 kitty apply resolve --queued --top 50  # also --track T and --json
 ```
 
+- **Employer site down.** A posting page whose own HTTP status is 500 or higher
+  (for example Workday behind Cloudflare answering 521 "Web server is down") stops
+  at once with a `site_error:` note (cause `site_error`, outcome failed). It is
+  never marked closed and never counted as an unsupported page; the job is simply
+  tried again on a later run. Only the top document's status counts; error wording
+  on a page that loaded normally is not a site error.
 - **Closed postings** are marked closed with the usual posting-verification fields,
   so they leave the queues (a later open observation reopens them). The markers: the
   posting answers HTTP 404 or 410; its title, heading or alert says it is closed ("no
