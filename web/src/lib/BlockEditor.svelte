@@ -1094,7 +1094,7 @@
   .marker { flex-shrink: 0; min-width: 1.2em; color: var(--muted); font-size: 15px; line-height: 1.8; text-align: center; user-select: none; }
   .marker.number { min-width: 1.6em; text-align: right; }
   .toggle-arrow { background: none; border: 0; padding: 0; cursor: pointer; font: inherit; color: var(--muted); }
-  .line input[type="checkbox"] { margin: .45em 2px 0 0; width: 16px; height: 16px; accent-color: var(--accent); flex-shrink: 0; }
+  .line input[type="checkbox"] { margin: .45em 2px 0 0; flex-shrink: 0; }
   .editable { flex: 1; min-width: 0; outline: none; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 15px; line-height: 1.8; color: var(--ink); caret-color: var(--accent); }
   .editable:empty::before { content: attr(data-placeholder); color: var(--muted); opacity: .55; pointer-events: none; }
   .type-text .editable:empty:not(:focus)::before { content: ""; }

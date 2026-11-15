@@ -201,9 +201,6 @@
     color: var(--ink);
     font-size: 12.5px;
   }
-  .check input {
-    accent-color: var(--violet);
-  }
   @media (max-width: 760px) {
     .layout {
       grid-template-columns: minmax(0, 1fr);

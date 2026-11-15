@@ -153,7 +153,7 @@
   .step:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
   .step.done .step-head label { color: var(--muted); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--muted) 60%, transparent); }
   .step-head { display: flex; align-items: center; gap: .5rem; min-height: 24px; }
-  .step-head input { width: auto; margin: 0; padding: 0; accent-color: var(--accent); }
+  .step-head input { margin: 0; }
   .step-head label { flex: 1; display: flex; gap: .5rem; align-items: baseline; margin: 0; font-size: 12.5px; line-height: 1.35; cursor: pointer; }
   .number { width: 14px; flex: none; color: var(--subtle, var(--muted)); font: 500 10px var(--font-ui); text-align: right; }
   .mini { flex: none; width: 22px; height: 22px; padding: 0; border: 1px solid transparent; border-radius: 999px; background: transparent; color: var(--muted); font-size: 13px; }

@@ -1073,9 +1073,6 @@
     gap: 8px;
     font-size: var(--fs-control);
   }
-  .check input {
-    accent-color: var(--accent);
-  }
   .chip-date {
     height: var(--control-h);
     padding: 0 8px;
@@ -1162,7 +1159,6 @@
     background: var(--wash, color-mix(in srgb, var(--ink) 7%, transparent));
   }
   .list-drawer li input {
-    accent-color: var(--accent);
     opacity: 0.55;
   }
   .list-drawer li:hover input,

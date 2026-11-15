@@ -92,8 +92,3 @@
   {#if error}<p class="set-note" role="alert">{error}</p>{/if}
 </Panel>
 
-<style>
-  .keep {
-    accent-color: var(--accent);
-  }
-</style>

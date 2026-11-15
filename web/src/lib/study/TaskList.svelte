@@ -72,7 +72,6 @@
     flex: none;
     width: auto;
     margin: 0;
-    accent-color: var(--accent);
   }
   .title {
     display: -webkit-box;

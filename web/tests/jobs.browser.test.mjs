@@ -163,6 +163,44 @@ describe("Find jobs", () => {
     await context.close();
   });
 
+  test("Scrape shows the brain in place of the list while the sources run, then reloads and says what came in", async () => {
+    const { page, problems, context } = await open("jobs");
+    const results = page.getByRole("region", { name: "Job results" });
+    await results.locator("[data-job-id]").first().waitFor();
+    // The demo never reaches the network: the run and its task are answered here, the rest is the app's.
+    const task = { id: "a".repeat(32), kind: "discovery", status: "running", started_at: new Date().toISOString(), finished_at: null, result: null, error: null };
+    let polls = 0;
+    let listed = 0;
+    await page.route("**/api/sources/run", (route) => route.fulfill({ json: { task } }));
+    await page.route(`**/api/tasks/${task.id}`, (route) => {
+      polls += 1;
+      const done = polls >= 2;
+      return route.fulfill({ json: done ? { ...task, status: "completed", finished_at: new Date().toISOString(),
+        result: { sources: { ashby: { status: "ok", new: 2 }, greenhouse: { status: "ok", new: 1 }, lever: { status: "error", new: 0 } } } } : task });
+    });
+    page.on("request", (request) => { if (request.url().includes("/api/jobs?")) listed += 1; });
+    const before = listed;
+    await page.getByRole("button", { name: "Scrape", exact: true }).click();
+    const loader = page.locator(".scrape-stage").getByRole("status");
+    await loader.waitFor();
+    assert.equal((await loader.innerText()).trim(), "Scraping your job sources…");
+    assert.equal(await loader.locator("canvas, svg").count() > 0, true, "the loader draws no brain");
+    assert.equal(await results.count(), 0, "the list is still shown under the loader");
+    assert.equal(await page.getByRole("button", { name: "Scraping…", exact: true }).isDisabled(), true);
+    await results.locator("[data-job-id]").first().waitFor({ timeout: 15_000 });
+    assert.equal(await page.locator(".scrape-stage").count(), 0);
+    assert.ok(listed > before, "the list was not reloaded after the scrape");
+    assert.match(await page.locator(".action-feedback").innerText(), /3 new jobs from 3 sources; 1 did not finish\./);
+    await page.unroute("**/api/sources/run");
+
+    // A refusal (the demo's own answer here) leaves the list and says why.
+    await page.getByRole("button", { name: "Scrape", exact: true }).click();
+    await page.getByRole("alert").first().waitFor();
+    assert.ok(await results.isVisible(), "the list went away on a refused scrape");
+    assert.deepEqual(problems.filter((problem) => !/403/.test(problem)), []);
+    await context.close();
+  });
+
   test("no native select on Find jobs; the filters popover changes the results", async () => {
     const { page, problems, context } = await open("jobs");
     await page.getByRole("navigation", { name: "Jobs view" }).getByRole("button", { name: "List", exact: true }).click();

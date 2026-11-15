@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
-  import { api, dateLabel, safeUrl, type Bootstrap, type Job } from "./api";
+  import { api, dateLabel, safeUrl, type Bootstrap, type Job, type TaskRecord } from "./api";
   import Icon from "./Icon.svelte";
   import JobDetail from "./JobDetail.svelte";
   import Automation from "./Automation.svelte";
@@ -297,6 +297,41 @@
     selected = null;
     searchTimer = setTimeout(() => void filter(), 180);
   }
+  /**
+   * Scrape: fetch the enabled job sources now. The brain shows in place of the list while
+   * the task runs; then the list reloads and one line says what came in. Only free public
+   * sources run and nothing is submitted, as on Job sources (the same route).
+   */
+  let scraping = $state(false);
+  let scrapeStopped = false;
+  async function scrape() {
+    if (scraping) return;
+    scraping = true;
+    error = "";
+    message = "";
+    try {
+      let task = (await api<{ task: TaskRecord }>("/sources/run", { confirm: true })).task;
+      while (task.status === "running" && !scrapeStopped) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        task = await api<TaskRecord>(`/tasks/${task.id}`);
+      }
+      if (scrapeStopped) return;
+      if (task.status === "failed") throw new Error(task.error || "The scrape did not finish.");
+      const sources = Object.values((task.result as { sources?: Record<string, { new?: number; status?: string }> } | null)?.sources ?? {});
+      const found = sources.reduce((sum, source) => sum + (source.new ?? 0), 0);
+      const incomplete = sources.filter((source) => source.status !== "ok").length;
+      message = `${found === 0 ? "No new jobs" : found === 1 ? "1 new job" : `${found} new jobs`} from ${sources.length} ${sources.length === 1 ? "source" : "sources"}`
+        + (incomplete ? `; ${incomplete} did not finish.` : ".");
+      offset = 0;
+      await load();
+      await onchange();
+    } catch (cause) {
+      if (!scrapeStopped) error = cause instanceof Error ? cause.message : "The scrape did not finish.";
+    } finally {
+      scraping = false;
+    }
+  }
+
   onMount(() => {
     selected = initialJobId;
     void load();
@@ -306,6 +341,7 @@
     return () => {
       clearTimeout(searchTimer);
       request += 1;
+      scrapeStopped = true;
     };
   });
 
@@ -564,6 +600,9 @@
               <button type="button" aria-pressed={presentation === "list"} onclick={() => (presentation = "list")}>List</button>
             </nav>
           {/if}
+          {#if view === "jobs" || view === "inbox"}
+            <button type="button" class="pill" disabled={scraping} title="Look for new jobs on your job sources now" onclick={scrape}>{scraping ? "Scraping…" : "Scrape"}</button>
+          {/if}
           <button type="button" class="pill primary page-action" onclick={onadd}><Icon name="plus" size={14} />Add a job link</button>
         </div>
       </header>
@@ -571,7 +610,9 @@
     {#if view === "jobs"}
       <Dashboard {revision} onopenjob={(id) => onopenjob?.(id)} {onview} {onguide} />
     {/if}
-    {#if presentation === "map"}
+    {#if scraping}
+      <div class="scrape-stage"><Loader kind="view" label="Scraping your job sources…" /></div>
+    {:else if presentation === "map"}
       <div class="map-stage">
         <SectionGraph bare section="jobs" focus={graphFocus} revision={graphRevision} onselect={selectGraphNode}
           ondelete={(node) => { if (node.entity === "job" && typeof node.ref === "number") return bulk("delete", true, [node.ref]); }} listToggle={false} />
@@ -895,6 +936,13 @@
     outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
+  /* While a scrape runs the brain takes the list's place. */
+  .scrape-stage {
+    display: grid;
+    place-items: center;
+    min-height: clamp(320px, calc(100dvh - var(--workbench-top, 0px) - 260px), 640px);
+    border-top: 1px solid var(--hairline);
+  }
   /* The map fills the page surface below the strip; no box of its own. */
   .map-stage {
     position: relative;
@@ -1033,11 +1081,7 @@
     background: var(--surface-raised);
   }
   .row-check {
-    flex-shrink: 0;
     margin: 0 0 0 16px;
-    accent-color: var(--accent);
-    width: 16px;
-    height: 16px;
   }
   @media (max-width: 600px) {
     .jobs-head {

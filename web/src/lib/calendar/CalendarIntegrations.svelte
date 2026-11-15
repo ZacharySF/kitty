@@ -1064,9 +1064,6 @@
     max-width: 100%;
     box-sizing: border-box;
   }
-  input[type="checkbox"] {
-    accent-color: var(--accent);
-  }
   label {
     display: flex;
     align-items: center;
