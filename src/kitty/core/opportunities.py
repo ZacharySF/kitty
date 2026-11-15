@@ -1,4 +1,10 @@
-"""Independent opportunity review and project records; never writes job rows."""
+"""Independent opportunity review and project records; never writes job rows.
+
+The window's opportunity routes are answered by rika-server (server/src/opportunities, the
+same rules over the same tables). What stays here is what other Python code calls
+(discovery's upsert and validation, the monitoring settings) and the reference that port
+is compared with in tests/test_opportunities_parity.py.
+"""
 from __future__ import annotations
 
 import json

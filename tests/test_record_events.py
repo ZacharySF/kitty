@@ -1,6 +1,7 @@
 """record_events: the append-only history of browser mutations through WebApplication.mutate.
 
-The calendar's mutations are answered and recorded by rika-server (tests/test_calendar.py)."""
+The calendar's, study's and the opportunities' mutations are answered and recorded by rika-server
+(tests/test_calendar.py, tests/test_study_parity.py, tests/test_opportunities_parity.py)."""
 from __future__ import annotations
 
 import logging
@@ -52,11 +53,6 @@ def _schema(app, conn):
     return ("schema", "map", str(created["id"]), "create", "/api/schema/create")
 
 
-def _opportunities(app, conn):
-    item = app.mutate(conn, "/api/opportunities", {"title": "Hackathon"})
-    return ("opportunities", "opportunity", str(item["id"]), "create", "/api/opportunities")
-
-
 def _jobs(app, conn):
     job = app.mutate(conn, "/api/jobs/add", {"company": "Acme", "title": "Intern",
                                              "url": "https://example.invalid/acme"})
@@ -70,8 +66,8 @@ def _reminders(app, conn):
     return ("reminders", "reminder", str(reminder["id"]), "create", "/api/reminders")
 
 
-@pytest.mark.parametrize("case", [_notes, 
-                                  _schema, _opportunities, _jobs, _reminders], ids=lambda case: case.__name__[1:])
+@pytest.mark.parametrize("case", [_notes,
+                                  _schema, _jobs, _reminders], ids=lambda case: case.__name__[1:])
 def test_one_real_route_per_section_is_captured(app, workspace, case):
     conn = workspace.conn
     expected = case(app, conn)
@@ -100,8 +96,10 @@ def test_edits_and_deletes_resolve_the_entity_from_path_result_or_body(app, work
     conn = workspace.conn
     note = app.mutate(conn, "/api/notes/notebooks", {"title": "Words"})
     assert events(conn) == [("notes", "notebook", str(note["id"]), "create", "/api/notes/notebooks")]
-    # Routes rika-server answers and records: their rule is still the reference.
+    # Routes rika-server answers and records (the parity tests): their rules are still the reference.
     assert record_events.classify("/api/study/subjects", {"id": 4, "revision": 1, "action": "delete"}, {"deleted": 4}) == ("study", "subject", "4", "delete")
+    assert record_events.classify("/api/opportunities", {"title": "Hackathon"}, {"id": 7, "title": "Hackathon"}) == ("opportunities", "opportunity", "7", "create")
+    assert record_events.classify("/api/opportunities/7/items", {"revision": 1, "title": "Task"}, {"id": 7}) == ("opportunities", "opportunity", "7", "items")
 
 
 def test_non_content_and_failed_mutations_are_not_captured(app, workspace):

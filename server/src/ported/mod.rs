@@ -88,6 +88,7 @@ static GROUPS: &[&Group] = &[
     &crate::goals::GROUP,
     &crate::study::GROUP,
     &crate::flashcards::GROUP,
+    &crate::opportunities::GROUP,
 ];
 
 fn groups() -> impl Iterator<Item = &'static Group> {

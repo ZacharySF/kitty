@@ -547,6 +547,52 @@ selection: base only.
    checks that a note Rika's tool writes and one the route writes are the same rows and
    render the same. The clock for tests is `KITTY_TEST_CLOCK`, a file the shared clock
    re-reads, so a test moves time without restarting the front. Not measured.
+   *Built (opportunities):* the opportunities' own routes are answered by rika-server
+   (`server/src/opportunities/`): `GET /api/opportunities` (the filtered, ranked list with
+   its sources, profile and schedule), `GET /api/opportunities/{id}` and
+   `POST /api/opportunities`, `/import`, `/favorites`, `/{id}`, `/{id}/delete`,
+   `/{id}/project`, `/{id}/items`, `/{id}/project-details` and `/{id}/calendar`, with
+   `kitty.core.opportunities`' values, stored rows, order of checks and refusals.
+   `canonical_url` is Python 3.12's `urllib.parse` and `ipaddress` restated (`url.rs`):
+   `urlsplit` with its bracket and NFKC checks, the netloc's user, host and port as the
+   result's properties read them (an empty user passes, a port that is not 0 to 65535 in
+   ASCII digits is refused), `parse_qsl` unescaping each run of ASCII on its own, and
+   `urlencode(sorted(...))`. `valid_date` keeps `datetime.isoformat()` text; `rank` folds
+   case with CPython's table (`search/text.rs`); `availability` orders times as Python's
+   aware datetimes do, a date lasting through its day in the opportunity's zone; the list
+   is sorted by score, deadline and id. The deadline's calendar event is written by
+   `calendar::core::create_event`. The built-in sources are added in one statement when one
+   is missing, not by eight `INSERT OR IGNORE` on every list as in Python; the rows are the
+   same. Content events are recorded by the front (their rules were already in
+   `ported/events.rs`). The port found one fault in the shared kit: `fromisoformat` took a
+   date followed by a bare separator (`2027-01-11T`) as a date; it is refused now, as
+   CPython refuses it, for the calendar, study and goals too.
+
+   Stay on Python, forwarded: `POST /api/opportunities/settings` (it edits the build file
+   and starts or stops the monitoring scheduler, a thread of the worker), `POST
+   /api/opportunities/discover` (a task on the worker's runner that fetches the public
+   sources with `PoliteHttp`, `icalendar` and the HTML parsers) and `POST
+   /api/opportunities/sources/{id}` (the sources are discovery's). `web_opportunities.py`
+   keeps those and the scheduler; the handlers of the moved routes are deleted.
+   `kitty.core.opportunities` stays whole: discovery calls its validation and
+   `upsert_discovered`, the settings route its settings, and the functions behind the moved
+   routes are what the existing tests (`tests/test_opportunities.py`, the calendar's seed)
+   call and what the port is compared with. `tests/test_opportunities_parity.py` runs one
+   scenario over every moved route, with the refusals between, through the front and
+   through the Python core on two copies of a workspace holding a profile and discovered
+   opportunities with evidence, at the same clock readings, and compares every answer, the
+   rows left in the opportunity and calendar tables and the events recorded; sends a table
+   of 271 awkward URLs (`tests/fixtures/opportunity_urls.json`, which the same test checks
+   against Python and `cargo test` against `url.rs`) and 47 date values through the front
+   against `canonical_url` and `valid_date`; and checks that the three forwarded routes
+   still answer behind the front and that Python answers none of the moved ones. The demo
+   boundary test of `tests/test_opportunities.py` runs through the front (`--demo`).
+
+   Differences: as for the calendar, a zone must be an exact key of the database compiled
+   in. A host outside ASCII is lowered with Rust's Unicode tables, Python 3.12's are
+   Unicode 15.0; the characters `_checknetloc` refuses are that version's nineteen. A body
+   with a lone surrogate escape is refused by the front as malformed JSON, where Python
+   answered that the field holds invalid Unicode (400 both).
 
 ## Rules for every step
 

@@ -1,4 +1,11 @@
-"""Local opportunity extension with opt-in persisted background monitoring.
+"""Opportunity monitoring: its settings, the discovery runs and the public sources.
+
+The list, one opportunity, manual entries, imports, edits, favorites, projects and the
+deadline's calendar event are answered by rika-server (server/src/opportunities). What
+stays here edits the build file (settings), runs a background task that fetches public
+sources (discover) or changes where one is fetched from (sources/<id>).
+:mod:`kitty.core.opportunities` stays: discovery and the settings here call it, and it is
+the reference rika-server is compared with (tests/test_opportunities_parity.py).
 
 Register get/post in WebApplication.extensions, call start(app) after migrations,
 and stop(app) before draining app.tasks. Monitoring runs while the app is open;
@@ -18,16 +25,6 @@ from kitty.db.connection import transaction
 
 
 def get(app, conn, path, query):
-    if path == '/api/opportunities':
-        items = core.list_items(conn, query)
-        config = core.settings(conn)
-        return {'items': items, 'total': len(items), 'sources': providers.sources(conn),
-                'profile': config['profile'], 'schedule': {k: v for k, v in config.items() if k != 'profile'},
-                'statuses': list(core.STATUSES)}
-    match = re.fullmatch(r'/api/opportunities/([1-9][0-9]*)', path)
-    if match:
-        if query: core.fail('Detail does not accept query parameters')
-        return core.detail(conn, int(match[1]))
     return None
 
 
@@ -53,15 +50,7 @@ def _run(app, selected=None):
 
 
 def post(app, conn, path, body):
-    if not path.startswith('/api/opportunities'): return None
-    if path == '/api/opportunities': return core.create(conn, body)
-    if path == '/api/opportunities/import':
-        if set(body) != {'items'}:
-            core.fail('Import requires an items array')
-        return core.import_items(conn, body['items'])
-    if path == '/api/opportunities/favorites':
-        if set(body) != {'selections', 'favorite'}: core.fail('Expected selections and favorite')
-        return core.favorites(conn, body['selections'], body['favorite'])
+    if not path.startswith('/api/opportunities/'): return None
     if path == '/api/opportunities/settings':
         if app.settings.demo and body.get('enabled'): core.fail('External monitoring is disabled in demo', 403)
         result = core.save_settings(conn, body, app.settings.root)
@@ -80,23 +69,7 @@ def post(app, conn, path, body):
             if not isinstance(selected, list) or not 1 <= len(selected) <= len(known) or any(not isinstance(s, str) or s not in known for s in selected): core.fail('Select known public sources')
         return {'task': _run(app, selected)}
     match = re.fullmatch(r'/api/opportunities/sources/([a-z0-9-]+)', path)
-    if match: return providers.save_source(conn, match[1], body)
-    match = re.fullmatch(r'/api/opportunities/([1-9][0-9]*)(?:/(delete|project|items|project-details|calendar))?', path)
-    if not match: return None
-    ident, action = int(match[1]), match[2]
-    if action == 'calendar':
-        if body: core.fail('Calendar export expects an empty object')
-        return {'event': core.export_deadline(conn, ident)}
-    if action == 'delete':
-        if set(body) != {'revision'}: core.fail('Deletion requires revision')
-        return core.remove(conn, ident, body['revision'])
-    if action == 'project':
-        if set(body) != {'revision'}: core.fail('Project creation requires opportunity revision')
-        return core.project(conn, ident, body)
-    if action == 'items': return core.project_item(conn, ident, body)
-    if action == 'project-details': return core.update_project(conn, ident, body)
-    changes = {k: v for k, v in body.items() if k != 'revision'}
-    return core.update(conn, ident, changes, body.get('revision'))
+    return providers.save_source(conn, match[1], body) if match else None
 
 
 def start(app):
