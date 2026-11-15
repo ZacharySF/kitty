@@ -1252,7 +1252,7 @@ PDF are saved. These checks describe saved data, not application readiness.
    saves preserve other profile settings and reject stale edits; leaving with an
    unsaved profile, configuration or answer draft prompts before discarding it.
 2. **Find jobs:** the list scrolls in 100-row batches; selections persist across
-   batches and **Select all matching** covers the whole filter. Sort by best fit,
+   batches and **All N** in the selection bar covers the whole filter. Sort by best fit,
    similarity score, newest, job type (track), company or deadline; **Filters**
    (a popover) holds rank (hover Rank for what A/B/C mean), saved view, source,
    eligibility, status, preparation progress and the checkboxes. Map opens Jobs'
@@ -1632,9 +1632,16 @@ alone as studying: [retrieval-practice research](https://pubmed.ncbi.nlm.nih.gov
 supports actively recalling material.
 
 **Prepare applications** also lists recommended open, unsubmitted A/B jobs.
-**Preparation** (next to Fill) opens a side drawer with alternative groups, job
-limits and browser progress; Fill and Shift+F open it too. With jobs selected,
-**Change selected** sets their progress, rank or category (g and t open it).
+**Progress** (in the page's header) opens a side drawer with alternative groups, job
+limits and browser progress; Fill and Shift+F open it too. The box at the head of the
+filter row ticks every job shown. While jobs are ticked, a bar appears at the bottom of
+the window: how many, **All N** (the whole filter), **Save**, **Change** (their progress,
+rank or category; g and t open it), **Check** (are they still open) and **Fill in N
+forms**; × clears the ticks. On a job map (2D), every point carries its name.
+
+Home's **Edit** also colour-codes widgets: drag one of the six **Colours** onto a widget,
+or press a colour and then a widget (the empty ring clears it). The colours are the active
+theme's own (`ui.home.tones` in the build).
 
 Home is a dashboard: the day's widgets on the left, **Rika** filling the right-hand
 column (see **Rika** above). The widgets sit in two columns when there is room (one in
