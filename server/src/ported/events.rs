@@ -37,6 +37,8 @@ enum Name {
     Fixed(&'static str),
     Group,
     Opportunity,
+    /// `_body_action()`: the body's `action` when it is a word, else "save".
+    Body,
 }
 
 struct Route {
@@ -45,12 +47,20 @@ struct Route {
     action: Name,
     /// `_calendar_undone`: the entity and id come from the history row.
     undone: bool,
+    /// The entity is the singular of the path's first group (`subjects` -> `subject`).
+    grouped: bool,
+    /// `logged`: a new record (no `id` in the body) has its own history and is not captured.
+    own_history_when_new: bool,
 }
 
 /// The `ROUTES` of the sections whose mutations the front answers.
 static ROUTES: LazyLock<Vec<Route>> = LazyLock::new(|| {
-    let route = |pattern: &str, entity, action, undone| Route { pattern: compile(pattern), entity, action, undone };
+    let route = |pattern: &str, entity, action, undone| Route { pattern: compile(pattern), entity, action, undone, grouped: false, own_history_when_new: false };
     vec![
+        Route { grouped: true, ..route(r"/api/study/(subjects|projects|targets|tasks|exams|plan)", "", Name::Body, false) },
+        Route { own_history_when_new: true, ..route(r"/api/study/sessions", "session", Name::Body, false) },
+        route(r"/api/study/guide", "guide", Name::Fixed("save"), false),
+        route(r"/api/study/generate-plan", "plan", Name::Fixed("generate"), false),
         route(r"/api/calendar/calendars/delete", "calendar", Name::Fixed("delete"), false),
         route(r"/api/calendar/calendars", "calendar", Name::Fixed("save"), false),
         route(r"/api/calendar/events/(?P<id>[A-Za-z0-9_-]{1,100})", "event", Name::Fixed("save"), false),
@@ -131,13 +141,17 @@ fn classify(conn: &Connection, path: &str, body: &Map<String, Value>, result: &V
             (entity, path_id, ident, action)
         }
         Some((route, found)) => {
+            if route.own_history_when_new && body.get("id").is_none_or(Value::is_null) {
+                return None;
+            }
             let action = match &route.action {
+                Name::Body => body.get("action").and_then(Value::as_str).map_or_else(|| "save".to_owned(), |action| word(action, "save")),
                 Name::Fixed(action) => (*action).to_owned(),
                 Name::Group => found.get(1).map(|m| m.as_str().to_owned()).unwrap_or_default(),
                 Name::Opportunity => found.get(2).map(|m| m.as_str().to_owned()).unwrap_or_else(|| "save".into()),
             };
             let path_id = found.name("id").map(|m| m.as_str().to_owned());
-            let mut entity = route.entity.to_owned();
+            let mut entity = if route.grouped { found.get(1).map(|m| singular(m.as_str()).to_owned()).unwrap_or_default() } else { route.entity.to_owned() };
             let ident = if route.undone {
                 let history = body.get("id").and_then(Value::as_i64);
                 let row = history.and_then(|id| conn.query_row("SELECT entity, entity_id FROM calendar_history WHERE id = ?", [id],

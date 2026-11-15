@@ -17,6 +17,7 @@ mod builds;
 mod calendar;
 mod goals;
 mod quick_notes;
+mod study;
 mod effects;
 mod front;
 mod keys;

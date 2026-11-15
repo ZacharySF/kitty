@@ -41,6 +41,17 @@ def calendar_event(conn, title):
     return event
 
 
+def study_mutation(conn, path, body):
+    """A study record as rika-server writes it (tests/test_study_parity.py): the same core
+    function, and the `record_events` row the front appends."""
+    from kitty.core import study
+
+    route = path.removeprefix("/api/study/")
+    result = study.save_session(conn, body) if route == "sessions" else study.save_entity(conn, route, body)
+    record_events.capture(conn, path, body, result)
+    return result
+
+
 def assert_contract(result):
     assert set(result) == {"generated_at", "sections", "nodes", "total", "truncated"}
     assert result["generated_at"].endswith(("Z", "+00:00"))
@@ -68,7 +79,7 @@ def seed(app, conn):
         "revision": page["revision"], "title": "Standing waves", "document": page["document"]})
     note = app.mutate(conn, "/api/quick-notes/create", {"body": "Private scratch body"})
     event = calendar_event(conn, "Lab session")
-    subject = app.mutate(conn, "/api/study/subjects", {"name": "Chemistry"})["item"]
+    subject = study_mutation(conn, "/api/study/subjects", {"name": "Chemistry"})["item"]
     job = app.mutate(conn, "/api/jobs/add", {"company": "Acme", "title": "Intern",
                                              "url": "https://example.invalid/acme"})
     return {"notebook": notebook, "page": page, "note": note, "event": event, "subject": subject, "job": job}
@@ -131,8 +142,8 @@ def test_historical_logs_become_edits(app, workspace):
                                              "url": "https://example.invalid/acme"})
     app.mutate(conn, f"/api/jobs/{job['id']}", {"action": "applied", "value": True})
     application = conn.execute("SELECT id FROM applications").fetchone()[0]
-    subject = app.mutate(conn, "/api/study/subjects", {"name": "Chemistry"})["item"]
-    session = app.mutate(conn, "/api/study/sessions", {
+    subject = study_mutation(conn, "/api/study/subjects", {"name": "Chemistry"})["item"]
+    session = study_mutation(conn, "/api/study/sessions", {
         "subject_id": subject["id"], "started_at": "2026-01-01T09:00:00Z", "duration_seconds": 1500,
         "timezone": "UTC", "request_id": uuid.uuid4().hex})["item"]
     result = brain(app, conn)

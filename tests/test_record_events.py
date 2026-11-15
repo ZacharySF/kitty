@@ -50,11 +50,6 @@ def _flashcards(app, conn):
     return ("flashcards", "deck", str(deck["id"]), "create", "/api/flashcards/deck")
 
 
-def _study(app, conn):
-    subject = app.mutate(conn, "/api/study/subjects", {"name": "Chemistry"})["item"]
-    return ("study", "subject", str(subject["id"]), "create", "/api/study/subjects")
-
-
 def _schema(app, conn):
     created = app.mutate(conn, "/api/schema/create", {"title": "Ideas"})
     return ("schema", "map", str(created["id"]), "create", "/api/schema/create")
@@ -78,7 +73,7 @@ def _reminders(app, conn):
     return ("reminders", "reminder", str(reminder["id"]), "create", "/api/reminders")
 
 
-@pytest.mark.parametrize("case", [_notes, _flashcards, _study,
+@pytest.mark.parametrize("case", [_notes, _flashcards,
                                   _schema, _opportunities, _jobs, _reminders], ids=lambda case: case.__name__[1:])
 def test_one_real_route_per_section_is_captured(app, workspace, case):
     conn = workspace.conn
@@ -107,19 +102,15 @@ def test_block_backed_writes_are_left_to_op_log(app, workspace):
 def test_edits_and_deletes_resolve_the_entity_from_path_result_or_body(app, workspace):
     conn = workspace.conn
     deck = app.mutate(conn, "/api/flashcards/deck", {"name": "Words"})["deck"]
-    subject = app.mutate(conn, "/api/study/subjects", {"name": "Art"})["item"]
-    app.mutate(conn, "/api/study/subjects", {"id": subject["id"], "revision": subject["revision"], "action": "delete"})
-    assert events(conn) == [
-        ("flashcards", "deck", str(deck["id"]), "create", "/api/flashcards/deck"),
-        ("study", "subject", str(subject["id"]), "create", "/api/study/subjects"),
-        ("study", "subject", str(subject["id"]), "delete", "/api/study/subjects"),
-    ]
+    assert events(conn) == [("flashcards", "deck", str(deck["id"]), "create", "/api/flashcards/deck")]
+    # A route rika-server answers and records (tests/test_study_parity.py): its rule is still the reference.
+    assert record_events.classify("/api/study/subjects", {"id": 4, "revision": 1, "action": "delete"}, {"deleted": 4}) == ("study", "subject", "4", "delete")
 
 
 def test_non_content_and_failed_mutations_are_not_captured(app, workspace):
     conn = workspace.conn
     app.mutate(conn, "/api/calendar/import/preview", {"format": "csv", "content": "title,date\nLab,2030-01-01\n"})
-    revision = app.get_json(conn, "/api/study", {})["settings"]["revision"]
+    revision = conn.execute("SELECT revision FROM study_settings").fetchone()[0]
     app.mutate(conn, "/api/study/settings", {"revision": revision, "sound": False})
     with pytest.raises(APIError):
         app.mutate(conn, "/api/quick-notes/save", {"id": 999, "revision": 1, "body": "missing"})

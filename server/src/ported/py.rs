@@ -118,6 +118,42 @@ pub fn dumps_sorted(value: &Value) -> String {
     out
 }
 
+/// `json.dumps(value, sort_keys=True, separators=(",", ":"))`.
+pub fn dumps_compact_sorted(value: &Value) -> String {
+    fn go(out: &mut String, value: &Value) {
+        match value {
+            Value::Array(items) => {
+                out.push('[');
+                for (index, item) in items.iter().enumerate() {
+                    if index > 0 {
+                        out.push(',');
+                    }
+                    go(out, item);
+                }
+                out.push(']');
+            }
+            Value::Object(map) => {
+                out.push('{');
+                let mut entries: Vec<(&String, &Value)> = map.iter().collect();
+                entries.sort_by(|a, b| a.0.cmp(b.0));
+                for (index, (key, item)) in entries.into_iter().enumerate() {
+                    if index > 0 {
+                        out.push(',');
+                    }
+                    string(out, key);
+                    out.push(':');
+                    go(out, item);
+                }
+                out.push('}');
+            }
+            scalar => write(out, scalar, true),
+        }
+    }
+    let mut out = String::new();
+    go(&mut out, value);
+    out
+}
+
 /// A JSON number as Python holds it: an `int` or a `float`.
 fn numeric(value: &Value) -> Option<f64> {
     match value {

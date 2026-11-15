@@ -489,7 +489,7 @@ selection: base only.
    Python's order and shape. The writes stay on Python: every change is a block transaction
    (`kitty.core.blocks`), and the block engine has not moved. The route test moved onto the
    front, with a check of the front's answers against `kitty.core.quick_notes`
-   (`tests/test_quick_notes.py`). Not measured.
+   (`tests/test_quick_notes.py`). Measured only after the move (the study entry below).
 
    *Built (goals):* every `/api/goals` route is answered by rika-server (`server/src/goals/`):
    the list, one goal with its links and suggestions, the search for things to link, create,
@@ -501,7 +501,30 @@ selection: base only.
    and runs on the worker's scheduler), and `kitty.core.goals` stays for Rika's tools, the
    brief and the demo seed. `tests/test_goals_parity.py` compares the front with the Python
    core on the same workspace (reads, then each write and the rows it leaves), and
-   `tests/test_web_goals.py` runs through the front. Not measured.
+   `tests/test_web_goals.py` runs through the front. Measured only after the move (the study entry below).
+
+   *Built (study):* the study routes are answered by rika-server (`server/src/study/`): the
+   workspace with its statistics (`stats.rs`), the observed timer and its commands, guides
+   and spaced returns, sessions, the six collections and plan generation. The timer logs one
+   finished phase and starts the next when it is observed, a retried request answers what it
+   answered first (the request fingerprint is Python's, so a retry across the upgrade is
+   not a conflict), and sums are taken in Python's order, so the floating-point totals are
+   the same. Content events for these mutations are recorded by the front
+   (`ported/events.rs` gained the study rules). `POST /api/study/settings` stays on Python:
+   it edits the build file. The Python handlers are deleted; `kitty.core.study` stays for
+   Rika's tools and the build's projection. `tests/test_study_parity.py` runs one scenario
+   over every route, with the refusals between, through the front and through the Python
+   core on two copies of a workspace at the same clock readings (`KITTY_TEST_NOW`), and
+   compares every answer, the rows left and the events recorded.
+
+   Measured on one synthetic workspace (6 subjects, 200 sessions, 40 goals; median of 200
+   fresh-connection GETs; the commit before this port with its Python handlers against this
+   one, release builds, run alternately twice): `GET /api/study/timer` (polled while the
+   Study screen or the Focus widget is open) went from 4.93 / 4.63 ms to 0.55 / 0.48 ms and
+   `GET /api/study` from 8.33 / 8.54 ms to 2.82 / 3.12 ms, while a still-forwarded route
+   (`/api/flashcards`) stayed at 5.1 to 5.5 ms. In the same runs the already-ported
+   `GET /api/goals` took 12.2 to 12.7 ms (each of the 40 goals sums the 200 sessions) and
+   `GET /api/quick-notes` 0.4 ms; their Python times were not measured.
 
 ## Rules for every step
 
