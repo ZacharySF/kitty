@@ -18,6 +18,7 @@ mod calendar;
 mod goals;
 mod quick_notes;
 mod study;
+mod schema;
 mod effects;
 mod front;
 mod keys;
