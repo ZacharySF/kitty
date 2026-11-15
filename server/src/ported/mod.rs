@@ -84,6 +84,7 @@ pub struct Group {
 /// Every ported route group, one line per module.
 static GROUPS: &[&Group] = &[
     &crate::calendar::GROUP,
+    &crate::quick_notes::GROUP,
 ];
 
 fn groups() -> impl Iterator<Item = &'static Group> {

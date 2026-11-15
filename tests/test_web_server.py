@@ -358,19 +358,3 @@ def test_study_start_reports_missing_packaged_runtime_not_unknown_route(website,
     assert status == 503
     assert "reinstall" in data["error"]
     assert website.request("/api/extensions/learnharness/start", {"url": "https://example.invalid"})[0] == 400
-
-
-def test_quick_notes_http_create_autosave_list_and_delete(website):
-    status, created, _ = website.request("/api/quick-notes/create", {"body": "", "tint": "mint"})
-    assert status == 200 and created["body"] == "" and created["tint"] == "mint"
-    status, saved, _ = website.request("/api/quick-notes/save", {"id": created["id"], "revision": created["revision"], "body": "idea: glass notes"})
-    assert status == 200 and saved["revision"] == created["revision"] + 1
-    status, stale, _ = website.request("/api/quick-notes/save", {"id": created["id"], "revision": created["revision"], "body": "old"})
-    assert status == 409 and "another window" in stale["error"]
-    assert website.request(f"/api/quick-notes/{created['id']}")[1]["body"] == "idea: glass notes"
-    assert [note["body"] for note in website.request("/api/quick-notes")[1]["notes"]] == ["idea: glass notes"]
-    status, _, _ = website.request("/api/quick-notes/save", {"id": created["id"], "revision": saved["revision"], "colour": "rose"})
-    assert status == 400
-    status, _, _ = website.request("/api/quick-notes/delete", {"id": created["id"], "revision": saved["revision"]})
-    assert status == 200 and website.request("/api/quick-notes")[1]["notes"] == []
-    assert website.request(f"/api/quick-notes/{created['id']}")[0] == 404

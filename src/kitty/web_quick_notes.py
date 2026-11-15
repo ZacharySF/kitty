@@ -1,7 +1,5 @@
-"""Quick notes API: GET /api/quick-notes[/:id]; POST create, save, delete."""
+"""Quick notes API: POST create, save, delete. The reads are answered by rika-server (server/src/quick_notes)."""
 from __future__ import annotations
-
-import re
 
 from kitty.core import quick_notes
 
@@ -18,16 +16,8 @@ def _error(exc: quick_notes.QuickNoteError):
 
 
 def get(app, conn, path, query):
-    if path != "/api/quick-notes" and not path.startswith("/api/quick-notes/"):
-        return None
-    app._no_query(query)
-    try:
-        if path == "/api/quick-notes":
-            return {"notes": quick_notes.list_notes(conn)}
-        match = re.fullmatch(r"/api/quick-notes/([1-9][0-9]{0,15})", path)
-        return quick_notes.get(conn, int(match[1])) if match else None
-    except quick_notes.QuickNoteError as exc:
-        raise _error(exc) from None
+    """The front answers the reads; nothing reaches the worker."""
+    return None
 
 
 def post(app, conn, path, body):
