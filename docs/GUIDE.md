@@ -1526,23 +1526,27 @@ days (or use Alt+Left/Right); days above 90 planned minutes show a load warning.
 Blocks stay before their exam. **Make a plan** (a popover) saves dated blocks from your own
 dates and durations. Returns are grouped Due / This week / Later: Recalled
 advances through 1, 3, 7, 16 and 35 days; Shaky restarts at one day.
-**Calendar** opens one week with half-hour slots and a day-plan sidebar; events
-are filled blocks in the theme palette. An event or calendar linked to a study
-subject takes that subject's Study colour, shown in the editor as a locked
+**Calendar** opens one week on the current time (08:00 when today is not shown)
+with a day sidebar; an hour is 58px, today's number sits in a filled circle and a
+line with the time beside it marks now. Events are soft tints of their colour with
+a bar in the full colour; tasks carry a small ring. An event or calendar linked to
+a study subject takes that subject's Study colour, shown in the editor as a locked
 **Auto · Subject** chip; unlinked ones pick one of the theme's six palette
 colours (new calendars start on the next one), which recolour with the theme.
 Colours picked before keep their hex, and tasks linked to a subject carry its
-colour too. A floating range pill at the bottom of
-the calendar steps back/forward, returns to today, jumps to a date and switches
-**D**ay, **W**eek, **M**onth, **A**genda, **Y**ear and day **P**lan; each letter's
-tooltip names its key. While the calendar has focus the same letters switch views,
-**J**/**K** step, **T** goes to today and **N** adds. Month shows up to four calendar dots per date; clicking a date fills a
-side day agenda. Year tints every day by booked hours (hover to read, click to
-pin, **Open day** to jump). Plan splits the day's timeline from its open tasks;
-**Plan** drops a task into the next free 30-minute gap (08:00–21:00) as a dashed
-block. The sidebar's mini month shows ISO weeks; hover a week to preview its
-load and click a date to jump there.
-**Adding.** The pill's one **+** opens a quick add: type a phrase such as
+colour too. One header row above the grid holds the range (click it to jump to a
+date), **‹ Today ›**, the views (Day, Week, Month, Agenda, Year, Plan),
+**Calendars** (show or hide calendars, edit or add one, the display time zone) and
+**New event**. While the calendar has focus **D**/**W**/**M**/**A**/**Y**/**P** switch views,
+**J**/**K** step, **T** goes to today and **N** adds. Month lists up to three events per
+date and **+N more**; the picked day's agenda is in the sidebar under the mini
+month. Year shows every day's number in a circle that deepens with booked hours
+(hover to read, click to pin, **Open day** to jump). Plan splits the day's timeline from its open tasks;
+**Plan** drops a task into the next free 30-minute gap (08:00–21:00). The
+sidebar's mini month shows ISO weeks; hover a week to preview its
+load and click a date to jump there. The all-day row's **+** appears when a cell
+is hovered or focused.
+**Adding.** **New event** opens a quick add: type a phrase such as
 `gym tue 6pm 1h` or `lunch with Mira fri 12:30 at Café Rose every week`, pick
 **Event** or **Task**, and Enter saves it; the chip shows the day and time it
 understood. Clicking an empty slot (or Enter on it) opens the same quick add at
