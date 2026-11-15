@@ -131,13 +131,15 @@ def test_edits_are_newest_first_and_deleted_records_read_as_deleted(app, workspa
 
 def test_historical_logs_become_edits(app, workspace):
     conn = workspace.conn
-    state = flashcards.overview(conn)
-    basic = next(item for item in state["types"] if item["kind"] == "basic")
-    note = flashcards.save_note(conn, {"deck_id": state["decks"][0]["id"], "type_id": basic["id"],
+    flashcards.bootstrap(conn)
+    deck = conn.execute("SELECT id FROM flash_decks WHERE name='Default'").fetchone()[0]
+    basic = conn.execute("SELECT id FROM flash_types WHERE kind='basic' ORDER BY id LIMIT 1").fetchone()[0]
+    note = flashcards.save_note(conn, {"deck_id": deck, "type_id": basic,
                                        "fields": {"Front": "front-secret", "Back": "back-secret"}, "tags": []})
-    card = flashcards.start_review(conn)["card"]
-    flashcards.reveal(conn, card["token"])
-    flashcards.grade(conn, card["token"], 3, 1000)
+    card = conn.execute("SELECT id FROM flash_cards WHERE note_id=?", (note["id"],)).fetchone()[0]
+    # A graded review, as rika-server's /api/flashcards/grade logs it (server/src/flashcards).
+    conn.execute("INSERT INTO flash_reviews(card_id,deck_id,rating,reviewed_at,local_day,duration_ms,mode,before_state) "
+                 "VALUES(?,?,3,?,?,1000,'regular','{}')", (card, deck, "2026-01-01T09:00:00+00:00", "2026-01-01"))
     job = app.mutate(conn, "/api/jobs/add", {"company": "Acme", "title": "Intern",
                                              "url": "https://example.invalid/acme"})
     app.mutate(conn, f"/api/jobs/{job['id']}", {"action": "applied", "value": True})

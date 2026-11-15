@@ -224,7 +224,11 @@ impl Dt {
     /// `datetime.now(timezone.utc)`. `KITTY_TEST_NOW` (an ISO timestamp with an offset) is a
     /// test-only clock, as the Python tests monkeypatched the modules' `now`.
     pub fn now_utc() -> Self {
-        if let Some(fixed) = std::env::var("KITTY_TEST_NOW").ok().and_then(|text| fromisoformat(&text)) {
+        // `KITTY_TEST_CLOCK` names a file holding one such timestamp, re-read at every reading:
+        // a test moves time by rewriting it, without restarting the front.
+        let file = std::env::var_os("KITTY_TEST_CLOCK").and_then(|path| std::fs::read_to_string(path).ok());
+        let fixed = file.as_deref().map(str::trim).and_then(fromisoformat).or_else(|| std::env::var("KITTY_TEST_NOW").ok().and_then(|text| fromisoformat(&text)));
+        if let Some(fixed) = fixed {
             if let Ok(fixed) = fixed.astimezone(&Zone::Utc) {
                 return fixed;
             }

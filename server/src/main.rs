@@ -19,6 +19,7 @@ mod goals;
 mod quick_notes;
 mod study;
 mod effects;
+mod flashcards;
 mod front;
 mod keys;
 mod live;
@@ -222,6 +223,10 @@ async fn main() {
     // Hidden and test-only: the bootstrap digest on one database, for tests/test_web_bootstrap.py.
     if std::env::args().nth(1).as_deref() == Some("bootstrap-digest") {
         std::process::exit(bootstrap::digest_command(&std::env::args().skip(2).collect::<Vec<_>>()));
+    }
+    // Hidden and test-only: FSRS reviews on stdin, for tests/test_flashcard_scheduling_parity.py.
+    if std::env::args().nth(1).as_deref() == Some("fsrs-review") {
+        std::process::exit(flashcards::scheduler::review_command());
     }
     // Hidden and test-only: the search index on one database, for tests/test_search_parity.py.
     match std::env::args().nth(1).as_deref() {

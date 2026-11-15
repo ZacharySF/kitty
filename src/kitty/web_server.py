@@ -157,7 +157,7 @@ EXTENSIONS: tuple[tuple[str | None, str], ...] = (
     ("applyai", "web_jobs"), ("applyai", "web_automation"), ("applyai", "web_resumes"),
     ("applyai", "web_profile"), ("applyai", "web_insights"), ("applyai", "web_apply_accounts"),
     ("workspace", "web_calendar"), ("workspace", "web_opportunities"), ("workspace", "web_study"),
-    ("workspace", "web_flashcards"), ("workspace", "web_notes"), ("workspace", "web_documents"),
+    ("workspace", "web_notes"), ("workspace", "web_documents"),
     ("math", "web_math"),
     (None, "web_ai"), (None, "web_usage"),
     ("workspace", "web_schema"), (None, "web_atlas"), ("brain", "web_brain"), ("workspace", "web_backlinks"),
