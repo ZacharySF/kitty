@@ -301,8 +301,14 @@ def framed_module_workspace(tmp_path, monkeypatch):
 
 def test_the_shell_and_the_front_learn_a_framed_modules_port(framed_module_workspace, backend):
     process, origin, _root, secret = backend
-    # The backend's allow-frame line reaches the shell through rika-server's owner-pipe relay.
-    line = owner_line(process)
+    # The backend's allow-frame line reaches the shell through rika-server's owner-pipe relay. It
+    # can arrive with the readiness line, already in the reader's buffer, where select sees nothing.
+    read = []
+    reader = threading.Thread(target=lambda: read.append(process.stdout.readline()), daemon=True)
+    reader.start()
+    reader.join(timeout=10)
+    assert read, "No owner-pipe message"
+    line = json.loads(read[0])
     assert set(line) == {"command", "port"} and line["command"] == "allow-frame"
     frame = f"http://127.0.0.1:{line['port']}"
     status, _headers, body = request(origin, path="/api/modules/rika-proc", secret=secret)
