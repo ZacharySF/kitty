@@ -24,6 +24,7 @@
     onopenjob,
     onadd,
     onhelp,
+    onedit,
     onnewcard,
     onreload,
     onterminal,
@@ -37,6 +38,8 @@
     onopenjob: (id: number) => void;
     onadd: () => void;
     onhelp: () => void;
+    /** Page edit mode on the page in view (home: its own edit mode). */
+    onedit: () => void;
     /** Opens the quick-add flashcard popover; absent when Flashcards is off. */
     onnewcard?: () => void;
     onreload: () => void;
@@ -92,6 +95,7 @@
     // Rika offers one template once; the four stay here.
     { label: "Home templates", meta: "Home", icon: "today", run: () => { templatePicker.open = true; onview("today"); } },
     { label: "Edit home", meta: "Home · move, add or remove widgets", icon: "today", run: () => { homeEditor.on = true; onview("today"); } },
+    { label: "Edit this page", meta: "Action", icon: "settings", run: () => onedit() },
     ...(onnotifications ? [{ label: "Notifications", meta: "Action", icon: "today", run: () => onnotifications() }] : []),
     { label: "Keyboard shortcuts", meta: "Action", icon: "questions", run: () => onhelp() },
     { label: "Reload configuration", meta: "Action", icon: "refresh", run: () => onreload() },

@@ -109,6 +109,16 @@
   $effect(() => {
     if (homeEditor.on && !draft) draft = saved.map((column) => [...column]);
   });
+  // Ctrl + Shift + Space (App): the page edit shortcut opens and closes home's own edit mode.
+  $effect(() => {
+    const toggle = () => {
+      if (!pane.active) return;
+      if (draft) void done();
+      else homeEditor.on = true;
+    };
+    window.addEventListener("kitty:edit-home", toggle);
+    return () => window.removeEventListener("kitty:edit-home", toggle);
+  });
   async function done() {
     failure = "";
     // Plain copies: the draft and the build are reactive proxies, which the save cannot clone.

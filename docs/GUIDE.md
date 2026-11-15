@@ -156,6 +156,20 @@ or the system's reduced-motion setting. The module's code is one stylesheet and 
 (`web/src/lib/animations/`); the base reaches it through `web/src/lib/motion.ts` and loads
 it only when the switch is on.
 
+### Page edit mode
+
+**Ctrl+Shift+Space** (or **Edit this page** in Ctrl Space) arranges the page in view. The
+block under the pointer gets a dashed outline; press it to select it, drag it to move it,
+and drag the bars on its right and bottom edges (or the corner) to resize it. Arrow Up or
+**Parent** selects the block around it. Everything lands on an 8 px grid; hold Alt for
+none. While arranging, nothing on the page answers a press. **Reset block** and **Reset
+page** put things back; **Done** or Esc saves, and so does leaving the page. The result is
+the build's `ui.pages.moves`, one entry per block as `view|dx,dy,width,height|path`, and is
+put back every time that page opens (not in safe mode). A block is found again by its path
+from the page (tags, labels and class names), so a block a later rika! no longer draws is
+kept and not moved. On home the shortcut opens home's own edit mode instead. The code is
+`web/src/lib/pageEdit/`.
+
 ### Builds
 
 `config/build.json` is the workspace's build (`docs/platform-design.md` Q8, Q9): modules,

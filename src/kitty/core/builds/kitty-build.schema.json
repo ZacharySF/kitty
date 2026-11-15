@@ -285,6 +285,14 @@
             "on": {"type": "boolean", "default": false}
           }
         },
+        "pages": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Page edit mode (Ctrl+Shift+Space): the blocks moved or resized on each page.",
+          "properties": {
+            "moves": {"type": "array", "maxItems": 400, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}[|][-]?[0-9]{1,5},[-]?[0-9]{1,5},[0-9]{0,5},[0-9]{0,5}[|][ -~]{1,600}$"}, "description": "One moved block each, as view|dx,dy,width,height|path: the offset and size in px (a size left empty is unchanged), then the block's path inside the page (a block this rika! cannot find is kept and not moved).", "default": []}
+          }
+        },
         "rika": {
           "type": "object",
           "additionalProperties": false,

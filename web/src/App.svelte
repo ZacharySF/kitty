@@ -32,6 +32,7 @@
   import Rika from "./lib/rika/Rika.svelte";
   import { rika } from "./lib/rika/session.svelte";
   import { goalHash } from "./lib/goals/goals";
+  import PageEdit from "./lib/pageEdit/PageEdit.svelte";
 
   type PaneHandle = {
     breadcrumbs: () => WorkspaceTrail;
@@ -77,6 +78,13 @@
   let addJob = $state(false);
   /** The quick-add card popover (Q66), opened by N on Flashcards or Ctrl K "New card". */
   let quickCard = $state<{ deck: number | null } | null>(null);
+  /** Page edit mode (pageEdit/PageEdit.svelte): the page's blocks can be moved and resized. */
+  let pageEditing = $state(false);
+  /** Ctrl + Shift + Space, or "Edit this page" in search: home has its own edit mode. */
+  function togglePageEdit() {
+    if (view === "today") window.dispatchEvent(new CustomEvent("kitty:edit-home"));
+    else pageEditing = !pageEditing;
+  }
   let revision = $state(0);
   let guideDialog = $state<HTMLDialogElement>();
   let tabBar: { close: (restoreFocus?: boolean) => void } | undefined = $state();
@@ -386,15 +394,17 @@
       void focusGroup("Plan");
     }
   }
-  /** Ctrl + Space opens search. Capture phase: element handlers that act on a bare Space never see the chord.
-   *  Ctrl + K stays, since input methods such as fcitx5 take Ctrl + Space inside text fields. */
+  /** Ctrl + Shift + Space arranges the page; Ctrl + Space opens search. Capture phase: element handlers that act on
+   *  a bare Space never see the chords. Ctrl + K stays, since input methods such as fcitx5 take Ctrl + Space inside text fields. */
   function paletteChord(event: KeyboardEvent) {
-    if (!event.ctrlKey || event.altKey || event.shiftKey || event.metaKey || event.code !== "Space") return;
+    if (!event.ctrlKey || event.altKey || event.metaKey || event.code !== "Space") return;
     if (focusContext(event.target as HTMLElement | null) === "terminal") return;
     if (document.querySelector('dialog[open], [role="dialog"][aria-modal="true"]')) return;
     event.preventDefault();
     event.stopPropagation();
-    if (!event.repeat) palette = true;
+    if (event.repeat) return;
+    if (event.shiftKey) togglePageEdit();
+    else palette = true;
   }
   $effect(() => {
     window.addEventListener("keydown", paletteChord, { capture: true });
@@ -547,6 +557,7 @@
 {#if notifySources}<NotificationToasts onopen={openNotice} /><NotificationCenter onopen={openNotice} />{/if}
 {#if workspace}<Rika onnavigate={next => { if (isView(next) && next !== view) navigate(next); }} />{/if}
 {#if buildStore.editorOpen}<BuildEditor onclose={() => (buildStore.editorOpen = false)} />{/if}
+<PageEdit {view} tab={activeId} bind:editing={pageEditing} />
 {#if workspace}<Onboarding {workspace} onview={next => { if (next !== view) navigate(next); }} />{/if}
 {#if guide && applyai}<dialog
     bind:this={guideDialog}
@@ -578,6 +589,7 @@
     onopenjob={openJob}
     onadd={() => { if (applyai) addJob = true; }}
     onhelp={() => (help = true)}
+    onedit={togglePageEdit}
     onnewcard={studyTools ? () => (quickCard = { deck: null }) : undefined}
     onreload={() => void reload()}
     onterminal={terminal ? () => void openTerminal() : undefined}
