@@ -1,30 +1,33 @@
-<script lang="ts">
-  import { onMount } from "svelte";
-
-  /** Kitty's view loader: a cat in text, blinking, over a level meter that sweeps. */
-  const FACES = ["=^.^=", "=^.^=", "=^.^=", "=^-^="];
-  const LEVELS = "▁▂▃▅▆▇▆▅▃▂";
-  let tick = $state(0);
-  onMount(() => {
-    // Reduced motion (the setting or the system's) shows the first frame and stops.
-    if (document.documentElement.dataset.themeMotion === "none" || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const timer = setInterval(() => (tick += 1), 140);
-    return () => clearInterval(timer);
-  });
-  const meter = $derived(Array.from({ length: 10 }, (_, index) => LEVELS[(index + tick) % LEVELS.length]).join(""));
-</script>
-
-<pre class="aero-loader" aria-hidden="true">{FACES[Math.floor(tick / 4) % FACES.length]}
-{meter}</pre>
+<!-- Kitty's view loader: a train passing, as three smeared bars. -->
+<div class="aero-loader" aria-hidden="true"><i></i><i></i><i></i></div>
 
 <style>
   .aero-loader {
-    margin: 6px;
-    color: var(--accent);
-    font-family: var(--font-code);
-    font-size: 15px;
-    line-height: 1.35;
-    text-align: center;
-    text-shadow: 0 0 14px color-mix(in srgb, var(--accent) 60%, transparent);
+    display: grid;
+    gap: 5px;
+    width: 120px;
+    margin: 10px auto;
+    overflow: hidden;
+  }
+  .aero-loader i {
+    height: 4px;
+    background: linear-gradient(90deg, transparent, var(--ink) 35%, var(--ink) 65%, transparent);
+    translate: -110% 0;
+    animation: aero-pass 1.15s cubic-bezier(0.5, 0, 0.2, 1) infinite;
+  }
+  .aero-loader i:nth-child(2) {
+    height: 9px;
+    background: linear-gradient(90deg, transparent, var(--accent) 35%, var(--accent) 65%, transparent);
+    animation-delay: 0.09s;
+  }
+  .aero-loader i:nth-child(3) {
+    animation-delay: 0.18s;
+  }
+  @keyframes aero-pass {
+    to { translate: 110% 0; }
+  }
+  :global(:root[data-theme-motion="none"]) .aero-loader i {
+    animation: none;
+    translate: 0 0;
   }
 </style>

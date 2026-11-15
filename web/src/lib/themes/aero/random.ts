@@ -1,11 +1,24 @@
 /**
- * What Kitty rolls each time it loads: where the light falls, which scraps of text drift
- * behind the glass, what the departure board says. One seed per page load; pure, so Node
- * tests can check that a seed always gives the same scene and that scenes differ.
+ * What Kitty rolls each time it loads: which still is behind the page, how it is framed and
+ * which ink the big type takes. One seed per page load; pure, so Node tests can check that a
+ * seed always gives the same roll and that rolls differ.
  */
-export type Streak = { top: number; left: number; width: number; height: number; tint: "cyan" | "white" | "amber"; alpha: number };
-export type Scrap = { text: string; top: number; left: number; size: number; alpha: number; turned: boolean };
-export type Scene = { streaks: Streak[]; panes: number[]; scraps: Scrap[]; board: string[]; glyph: string; ticker: string };
+export const STILLS = ["platform", "corridor", "beams"] as const;
+export type Still = (typeof STILLS)[number];
+/** The two inks of the sleeve: signal orange and tube yellow. */
+export const INKS = ["#ff5a1f", "#ffd60a"] as const;
+export type Roll = {
+  still: Still;
+  /** Mirrored left to right. */
+  flipped: boolean;
+  /** Where the frame sits over the still, in percent (object-position). */
+  x: number;
+  y: number;
+  /** The ink of the vertical word. */
+  ink: (typeof INKS)[number];
+  /** Which edge the vertical word runs down. */
+  edge: "left" | "right";
+};
 
 /** mulberry32: small, fast and the same in every engine. */
 export function generator(seed: number): () => number {
@@ -19,39 +32,27 @@ export function generator(seed: number): () => number {
   };
 }
 
-const FACES = ["=^.^=", "(=^.^=)", ">^.^<", "=^-^=", "( o.o )", "/\\_/\\", "(=^w^=)", ":3", "~(=^.^)"];
-const WORDS = ["soft club", "last train", "blue hour", "after rain", "platform 3", "window seat", "low battery", "dial tone", "night bus", "vending light",
-  "glass corridor", "no signal", "wet neon", "mint air", "quiet car", "escalator up", "lost and found", "arrivals", "do not lean", "mind the gap"];
-const LINES = ["KITTY LINE", "SOFT CLUB", "LAST TRAIN", "BLUE HOUR", "NIGHT BUS", "GLASS LOOP", "MINT EXPRESS", "AFTER RAIN"];
-const STATES = ["ON TIME", "BOARDING", "DELAYED", "NAPPING", "ARRIVED", "DREAMING", "GATE OPEN"];
-const TEXTURES = ["░▒▓█▓▒░", "▁▂▃▅▆▇▆▅▃▂▁", ":::::::::", "· · · · ·", "<<<    >>>", "+--+--+--+", "||| | || |||| | ||", "∿∿∿∿∿", "/////", "[        ]", "* . * . *"];
-const GLYPHS = [">> ", ":: ", "// ", "=^ ", "~ ", "✦ ", "[ ] ", "<3 ", "░ ", "+ "];
-
-export function scene(seed: number): Scene {
+export function roll(seed: number): Roll {
   const next = generator(seed);
   const pick = <T>(items: readonly T[]): T => items[Math.floor(next() * items.length)];
-  const between = (low: number, high: number) => low + next() * (high - low);
-  const whole = (low: number, high: number) => Math.floor(between(low, high + 1));
-  const clock = () => `${String(whole(0, 23)).padStart(2, "0")}:${String(whole(0, 59)).padStart(2, "0")}`;
-  const hex = () => `0x${whole(4096, 65535).toString(16).toUpperCase()}`;
-  const bar = () => { const filled = whole(1, 9); return `[${"#".repeat(filled)}${"-".repeat(10 - filled)}] ${filled * 10}%`; };
-  const made = [
-    () => pick(FACES), () => pick(TEXTURES), () => pick(WORDS), () => `${pick(WORDS)} ${pick(FACES)}`, () => `${clock()} ${pick(LINES).toLowerCase()}`,
-    hex, bar, () => `gate ${whole(1, 42)} >>`, () => `${between(10, 60).toFixed(3)}N ${between(100, 160).toFixed(3)}E`, () => `now playing: ${pick(WORDS).replace(/ /g, "_")}.wav`,
-    () => `${pick(FACES)} ${pick(FACES)} ${pick(FACES)}`, () => `404 ${pick(["nap", "sun", "exit", "signal"])} not found`,
-  ];
-  const streaks: Streak[] = Array.from({ length: whole(5, 9) }, () => ({
-    top: between(4, 94), left: between(-10, 70), width: between(18, 70), height: between(1, 7),
-    tint: pick(["cyan", "cyan", "white", "amber"] as const), alpha: between(0.05, 0.16),
-  }));
-  const panes = Array.from({ length: whole(4, 8) }, () => between(3, 97)).sort((a, b) => a - b);
-  const scraps: Scrap[] = Array.from({ length: whole(9, 15) }, () => ({
-    text: pick(made)(), top: between(3, 93), left: between(1, 88), size: whole(11, 16), alpha: between(0.09, 0.2), turned: next() < 0.18,
-  }));
-  const rows = Array.from({ length: whole(3, 5) }, () => `| ${clock()}  ${pick(LINES).padEnd(12)}  ${pick(STATES).padEnd(9)} |`);
-  const rule = `+${"-".repeat(rows[0].length - 2)}+`;
   return {
-    streaks, panes, scraps, board: [rule, ...rows, rule], glyph: pick(GLYPHS),
-    ticker: Array.from({ length: 6 }, () => pick(made)()).join("   ✦   "),
+    still: pick(STILLS),
+    flipped: next() < 0.5,
+    x: Math.round(20 + next() * 60),
+    y: Math.round(30 + next() * 40),
+    ink: pick(INKS),
+    edge: next() < 0.75 ? "right" : "left",
   };
+}
+
+/** The camera's date stamp, as compact film cameras burnt it in: '26 11 15. */
+export function stamp(date: Date): string {
+  const two = (value: number) => String(value).padStart(2, "0");
+  return `'${two(date.getFullYear() % 100)} ${two(date.getMonth() + 1)} ${two(date.getDate())}`;
+}
+
+/** The word down the edge: the page you are on, from its address (`#quick-notes/3` → QUICK NOTES). */
+export function word(hash: string): string {
+  const name = hash.replace(/^#/, "").split(/[/?]/)[0].replace(/-/g, " ").trim();
+  return (name === "today" || !name ? "rika!" : name).toUpperCase();
 }

@@ -1034,6 +1034,7 @@
   }
   .filters .select-all {
     flex: none;
+    align-self: center;
     margin: 0 6px 0 3px;
   }
   /* What can be done with the ticked rows, in one piece at the bottom of the window. */

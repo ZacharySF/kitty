@@ -1,73 +1,96 @@
 /* ── Kitty theme module (id: aero) ───────────────────────────────────────────
-   Applies only on :root[data-theme="aero"]. A night concourse behind aqua glass: soft
-   club, transit light, text scraps. Surfaces are cold glass with a lit top edge; the
-   primary is a glossy aqua pill; marks and scraps are rolled on every load (Art.svelte,
-   random.ts). Runs in Chromium and the desktop app's WebKitGTK: no SVG filters. */
+   Applies only on :root[data-theme="aero"]. A record sleeve from about 1999: a cross-processed
+   film still behind everything (Art.svelte), flat panes in the still's own cast with square
+   corners, heavy grotesque type set tight, and two inks: tube yellow for what is active, signal
+   orange for the big word. No glow, no gradients on controls, no rounded glass. */
 
 :root[data-theme="aero"] {
-  --aero-light: rgba(190, 244, 255, 0.5);
-  --aero-edge: rgba(126, 220, 250, 0.24);
-  --aero-glow: rgba(111, 227, 255, 0.35);
-  --aero-glyph: ">> ";
-  --hairline: var(--aero-edge);
-  /* Glass surfaces (engine.css applies them): a cold fill, a lit top edge, a soft drop. */
-  --surface-fill:
-    linear-gradient(170deg, rgba(150, 236, 255, 0.1), rgba(90, 190, 230, 0.03) 42%, rgba(10, 40, 60, 0.05)),
-    color-mix(in srgb, var(--solid-panel) 58%, transparent);
-  --surface-border: var(--aero-edge);
-  --surface-blur: blur(22px) saturate(150%) brightness(0.86);
-  --surface-shadow:
-    inset 0 1px 0 var(--aero-light),
-    inset 1px 0 0 rgba(190, 244, 255, 0.1),
-    inset 0 -16px 28px -22px rgba(0, 12, 20, 0.7),
-    0 18px 50px -20px rgba(0, 10, 18, 0.8);
-  /* A pressed toggle is a lit aqua lens with dark text. */
-  --press-fill: #8beaff;
-  --press-ink: #03202c;
+  --aero-pane: rgb(3 24 17 / 0.8);
+  --hairline: rgb(243 247 238 / 0.18);
+  /* Panes: a flat field of the still's shadow colour; the picture shows through, softened. */
+  --surface-fill: var(--aero-pane);
+  --surface-border: rgb(243 247 238 / 0.16);
+  --surface-blur: blur(9px);
+  --surface-shadow: none;
+  /* A pressed toggle is a white label with dark type, as on the sleeve. */
+  --press-fill: #f3f7ee;
+  --press-ink: #04140f;
+}
+:root[data-theme="aero"][data-aero-still="corridor"] {
+  --aero-pane: rgb(3 26 22 / 0.82);
+}
+:root[data-theme="aero"][data-aero-still="beams"] {
+  --aero-pane: rgb(3 14 66 / 0.8);
 }
 
-/* The primary button: an aqua capsule lit from above. */
+/* Type: bold and tight; page titles and the bar are set in capitals like the sleeve's line. */
+:root[data-theme="aero"] :is(h1, h2, h3, h4, .page-h1) {
+  font-weight: 700;
+  letter-spacing: -0.035em;
+}
+:root[data-theme="aero"] :is(h1, .page-h1) {
+  text-transform: uppercase;
+}
+:root[data-theme="aero"] .workbench-top :is(nav button, nav a) {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  text-transform: uppercase;
+}
+/* Where you are is in yellow, not in a pill. */
+:root[data-theme="aero"] body .workbench-top nav :is(button, a)[aria-current="page"] {
+  background: transparent;
+  box-shadow: none;
+  color: var(--accent);
+}
+
+/* Controls are print blocks: square, flat. */
+:root[data-theme="aero"] body :is(.button, .pill, .br-button, input, textarea, select, [role="combobox"], .switch, .icon-button, kbd, .count-pill) {
+  border-radius: 2px;
+}
 :root[data-theme="aero"] body :is(.button.primary, .pill.primary, .br-button[data-intent="primary"]) {
-  border-color: rgba(190, 244, 255, 0.7);
-  background: linear-gradient(180deg, #b6f3ff, #5fd3f2 48%, #33b4dc);
-  color: #03202c;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75), inset 0 -8px 12px -8px rgba(0, 60, 90, 0.5), 0 0 22px -6px var(--aero-glow);
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #0b0b06;
+  font-weight: 700;
+  box-shadow: none;
 }
 :root[data-theme="aero"] body :is(.button.primary, .pill.primary, .br-button[data-intent="primary"]):disabled {
-  filter: saturate(0.4) brightness(0.7);
-}
-
-/* The top bar is a strip of the same glass, seen through the mesh. */
-:root[data-theme="aero"] .workbench-top::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.16) 0 1px, transparent 1px 3px);
-}
-
-/* Titles glow like signage. */
-:root[data-theme="aero"] :is(h1, h2) {
-  text-shadow: 0 0 22px var(--aero-glow);
+  opacity: 0.45;
 }
 
 :root[data-theme="aero"] ::selection {
-  background: rgba(111, 227, 255, 0.4);
-  color: #f2fdff;
+  background: #ffd60a;
+  color: #0b0b06;
 }
 :root[data-theme="aero"] * {
-  scrollbar-color: rgba(126, 220, 250, 0.4) transparent;
+  scrollbar-color: rgb(243 247 238 / 0.35) transparent;
 }
 
-/* Motif marks (Appearance → Theme motif turns them off): this session's mark before every
-   widget title, and a dotted rule under page headers. */
+/* Motif marks (Appearance → Theme motif turns them off): the sleeve's two squares before
+   every widget title. */
 :root[data-theme="aero"]:not([data-motif="off"]) .home-widget h3::before {
-  content: var(--aero-glyph);
-  color: var(--accent);
-  font-family: var(--font-code);
-  font-weight: 400;
-  opacity: 0.8;
+  content: "";
+  display: inline-block;
+  width: 0.5em;
+  height: 0.5em;
+  margin-right: 0.42em;
+  background: #ff5a1f;
+  box-shadow: 0.62em 0 0 #ff5a1f;
+  translate: 0 -0.08em;
+  margin-inline-end: 1.05em;
 }
-:root[data-theme="aero"]:not([data-motif="off"]) .panel-heading {
-  border-bottom-style: dashed;
+
+/* Home's widgets sit on panes too: over a photograph, bare text would not hold. */
+:root[data-theme="aero"] .board:not(.editing) .slot:not(.toned) {
+  margin: 8px 0;
+  padding: 2px 20px 16px;
+  border-radius: 3px;
+  background: var(--aero-pane);
+  backdrop-filter: blur(9px);
+}
+:root[data-theme="aero"] .board .slot:not(.toned) .home-widget {
+  border-top-color: transparent;
+}
+:root[data-theme="aero"] .board .slot.toned {
+  border-radius: 3px;
 }

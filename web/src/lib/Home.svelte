@@ -374,7 +374,7 @@
     border-radius: 22px;
     background:
       linear-gradient(180deg, color-mix(in srgb, var(--ink) 5%, transparent), transparent 42%),
-      color-mix(in srgb, var(--tone) 20%, var(--void));
+      color-mix(in srgb, var(--tone) 22%, var(--solid-void, #000));
     box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 9%, transparent);
   }
   .slot.toned :global(.home-widget) {
@@ -407,7 +407,7 @@
     border-radius: 999px;
     background:
       linear-gradient(180deg, color-mix(in srgb, var(--ink) 10%, transparent), transparent 55%),
-      color-mix(in srgb, var(--tone) 34%, var(--void));
+      color-mix(in srgb, var(--tone) 36%, var(--solid-void, #000));
     box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 14%, transparent);
     cursor: grab;
   }

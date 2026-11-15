@@ -1,25 +1,22 @@
-// Kitty's rolled scene (themes/aero/random.ts): the same seed gives the same scene, seeds differ, and the art stays quiet.
+// Kitty's roll (themes/aero/random.ts): the same seed gives the same frame, seeds differ, and the words are what they say.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { scene } from '../src/lib/themes/aero/random.ts';
+import { INKS, STILLS, roll, stamp, word } from '../src/lib/themes/aero/random.ts';
 
-test('a seed always rolls the same scene, and different seeds roll different ones', () => {
-  assert.deepEqual(scene(42), scene(42));
-  const rolled = new Set(Array.from({ length: 40 }, (_, seed) => JSON.stringify(scene(seed))));
-  assert.equal(rolled.size, 40);
-  const glyphs = new Set(Array.from({ length: 200 }, (_, seed) => scene(seed).glyph));
-  assert.ok(glyphs.size >= 6, `only ${glyphs.size} different title marks in 200 loads`);
+test('a seed always rolls the same frame; across loads every still, ink and both edges turn up', () => {
+  assert.deepEqual(roll(42), roll(42));
+  const rolls = Array.from({ length: 300 }, (_, seed) => roll(seed));
+  assert.deepEqual(new Set(rolls.map((item) => item.still)), new Set(STILLS));
+  assert.deepEqual(new Set(rolls.map((item) => item.ink)), new Set(INKS));
+  assert.deepEqual(new Set(rolls.map((item) => item.edge)), new Set(['left', 'right']));
+  assert.ok(new Set(rolls.map((item) => JSON.stringify(item))).size > 200);
+  for (const item of rolls) assert.ok(item.x >= 20 && item.x <= 80 && item.y >= 30 && item.y <= 70, JSON.stringify(item));
 });
 
-test('every roll stays inside the contrast budget and on the page', () => {
-  for (let seed = 0; seed < 300; seed += 1) {
-    const rolled = scene(seed);
-    for (const streak of rolled.streaks) assert.ok(streak.alpha <= 0.16 && streak.height <= 7, `seed ${seed}: a streak is too bright or thick`);
-    for (const scrap of rolled.scraps) {
-      assert.ok(scrap.alpha <= 0.2 && scrap.text.length > 0 && !scrap.text.includes('\n'), `seed ${seed}: scrap ${JSON.stringify(scrap.text)}`);
-      assert.ok(scrap.top >= 0 && scrap.top <= 100 && scrap.left >= 0 && scrap.left <= 100);
-    }
-    // The departure board is a box: every row as wide as its rules.
-    assert.equal(new Set(rolled.board.map((row) => row.length)).size, 1, `seed ${seed}: ragged board`);
-  }
+test('the date stamp is the day, two digits each, and the edge word is the page', () => {
+  assert.equal(stamp(new Date(2026, 10, 5)), "'26 11 05");
+  assert.equal(word('#quick-notes/3'), 'QUICK NOTES');
+  assert.equal(word('#jobs?focus=1'), 'JOBS');
+  assert.equal(word('#today'), 'RIKA!');
+  assert.equal(word(''), 'RIKA!');
 });

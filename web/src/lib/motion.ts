@@ -1,7 +1,7 @@
 /**
- * The Animations module, as the base sees it: `<html data-anim="on">` once its pack has
- * loaded (ui.animations.on in the build; build.svelte.ts calls `setAnimations`), and a tween
- * for script-driven moves that falls back to the final value at once. The pack
+ * The Animations module, as the base sees it: `<html data-anim="on">` and its script started
+ * once its pack has loaded (ui.animations.on in the build; build.svelte.ts calls
+ * `setAnimations`), and a tween for script-driven moves that falls back to the final value at once. The pack
  * (./animations) is imported only here and only when the module is on.
  */
 type Pack = typeof import("./animations/index");
@@ -20,7 +20,10 @@ export async function setAnimations(on: boolean): Promise<void> {
       console.warn("rika!: the Animations module did not load", error);
     }
   }
-  document.documentElement.dataset.anim = wanted && pack ? "on" : "off";
+  const live = wanted && pack !== null;
+  document.documentElement.dataset.anim = live ? "on" : "off";
+  if (live) pack!.start();
+  else pack?.end();
 }
 
 /** Whether moves are animated right now. */
