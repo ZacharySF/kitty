@@ -192,6 +192,9 @@ fn start_backend(root: &Path, safe: bool) -> Result<Started, Box<dyn std::error:
     // The Terminal module runs only rika!'s pinned herdr, never one from the environment.
     command.env_remove("KITTY_HERDR");
     if let Some(herdr) = sidecar(directory, "kitty-herdr", staging.as_deref()) { command.env("KITTY_HERDR", herdr); }
+    // The Resume Workshop compiles only through the bundled engine.
+    command.env_remove("KITTY_WORKSHOP");
+    if let Some(engine) = sidecar(directory, "kitty-workshop", staging.as_deref()) { command.env("KITTY_WORKSHOP", engine); }
     command.arg("--workspace").arg(root);
     if safe { command.arg("--safe"); }
     let child = command

@@ -25,6 +25,9 @@ def test_install_launcher_preserves_workspace_and_runtime_environment(tmp_path):
     herdr = build / "kitty-herdr-x86_64-unknown-linux-gnu"
     herdr.write_text('#!/bin/sh\nprintf "herdr\\n"\n')
     herdr.chmod(0o755)
+    workshop = build / "kitty-workshop-x86_64-unknown-linux-gnu"
+    workshop.write_text('#!/bin/sh\nprintf "workshop\\n"\n')
+    workshop.chmod(0o755)
     icon = build / "icon.png"
     icon.write_bytes(b"fixture icon")
     data = tmp_path / "user data"
@@ -40,6 +43,7 @@ def test_install_launcher_preserves_workspace_and_runtime_environment(tmp_path):
                         "LD_LIBRARY_PATH": "/fixture/nix/lib", "GST_PLUGIN_SYSTEM_PATH_1_0": "/fixture/nix/gstreamer"}
     result = subprocess.run([sys.executable, str(ROOT / "scripts/install-desktop.py"),
                              "--binary", str(binary), "--sidecar", str(sidecar), "--herdr", str(herdr),
+                             "--workshop", str(workshop),
                              "--icon", str(icon), "--workspace", str(workspace)], env=env, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     entry = (data / "applications/com.zacharysf.kitty.desktop").read_text()
@@ -56,6 +60,9 @@ def test_install_launcher_preserves_workspace_and_runtime_environment(tmp_path):
     # The desktop app runs rika!'s pinned herdr only from beside its own executable.
     installed_herdr = data / "kitty/application/kitty-herdr"
     assert installed_herdr.read_bytes() == herdr.read_bytes() and os.access(installed_herdr, os.X_OK)
+    # So does the Resume Workshop's Rust engine.
+    installed_workshop = data / "kitty/application/kitty-workshop"
+    assert installed_workshop.read_bytes() == workshop.read_bytes() and os.access(installed_workshop, os.X_OK)
 
 
 def test_install_without_workspace_uses_native_default(tmp_path):
@@ -67,7 +74,7 @@ def test_install_without_workspace_uses_native_default(tmp_path):
     data = tmp_path / "data"
     env = os.environ | {"XDG_DATA_HOME": str(data), "XDG_BIN_HOME": str(tmp_path / "bin")}
     result = subprocess.run([sys.executable, str(ROOT / "scripts/install-desktop.py"), "--binary", str(binary),
-                             "--sidecar", str(binary), "--herdr", str(binary), "--icon", str(icon)],
+                             "--sidecar", str(binary), "--herdr", str(binary), "--workshop", str(binary), "--icon", str(icon)],
                             env=env, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     launch = subprocess.run([str(tmp_path / "bin/kitty-workspace")], env=env, capture_output=True, text=True)

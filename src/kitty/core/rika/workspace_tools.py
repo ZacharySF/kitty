@@ -29,6 +29,7 @@ VIEWS: dict[str, str | None] = {
     "herdr": "terminal", "tern": "terminal", "agent-skills": "terminal",
     "inbox": "applyai", "queue": "applyai", "jobs": "applyai", "pipeline": "applyai", "applications": "applyai",
     "favorites": "applyai", "reminders": "applyai", "sources": "applyai", "resumes": "applyai",
+    "workshop": "applyai",
     "profile": "applyai", "finder": "applyai", "reports": "applyai", "mail": "applyai", "triage": "applyai",
     "questions": "applyai",
 }
@@ -38,6 +39,7 @@ VIEW_ALIASES = {
     "maps": "schema", "canvas": "notes", "notes": "notes", "cards": "flashcards", "terminal": "tern",
     "agent skills": "agent-skills", "all agent skills": "agent-skills",
     "jobs": "jobs", "applications": "pipeline", "documents": "documents", "pdf": "documents", "goal": "goals",
+    "resume workshop": "workshop", "resume editor": "workshop",
 }
 #: Canvas defaults of a new sticky note, matching the Notes view's (web/src/lib/Notes.svelte).
 STICKY = {"color": "#e7dfef", "fill": "#fff2a8", "width": 3, "w": 240, "h": 180, "fontSize": 20}

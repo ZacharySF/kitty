@@ -24,6 +24,10 @@ uv run --locked python desktop/package_learnharness.py
 uv run --locked --with pyinstaller==6.16.0 python desktop/package_backend.py
 # The Terminal module's runtime: the pinned herdr release, checksum-verified.
 uv run --locked python desktop/fetch_herdr.py
+# The Resume Workshop's Rust engine: sandboxed compiles, PDF inspection and imports.
+cargo build --release --locked --manifest-path workshop-engine/Cargo.toml
+triple="$(rustc -vV | sed -n 's/^host: //p')"
+install -D -m 0755 workshop-engine/target/release/kitty-workshop "desktop/binaries/kitty-workshop-$triple"
 # CI delegates the native build/sign/upload to the official Tauri action.
 if [ "$prepare_only" = true ]; then
   exit 0

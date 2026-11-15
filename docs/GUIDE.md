@@ -3014,8 +3014,42 @@ are not rewritten. Rollback restores the prior default, not historical rows.
 
 The [resume improver research](RESUME_IMPROVER_RESEARCH.md) retains primary-source
 comparisons of Jobscan, Teal, Rezi, Resume Worded, Reactive Resume and Google Docs.
-Open-ended rewriting, a visual source editor and cloud-document integration remain
-outside the implemented bounded editor.
+Open-ended rewriting stays outside this bounded improver; the Resume Workshop below
+is the source editor.
+
+### Resume Workshop
+
+**Job search → Resume Workshop** (`#workshop`) edits resume sources beside a live PDF
+preview. Sources are HTML, Typst or LaTeX (multi-file projects and Overleaf ZIP
+exports keep their files and `% !TEX program` choice). PDF and DOCX imports become
+plain editable text with the original kept under `originals/`; scanned PDFs use local
+Tesseract OCR and say so. Every save is an immutable revision with conflict
+protection: an edit from another tab never overwrites your draft. **Export PDF and
+register** adds the compiled revision to the resume library without changing any
+track default or application.
+
+Masters are your base resumes; company and role versions copy a master revision,
+optionally linked to an ApplyAI job. **Many resumes at once** queues one tailored
+version per selected job under a total cost limit; nothing is applied or submitted.
+ApplyAI outcomes are shown per exported revision as observed counts only.
+
+**Rika's cloud help is off by default.** Turning it on in the workshop's privacy
+settings allows company research from public pages and Rika edit proposals through
+the configured OpenRouter model. Each request shows its redacted payload and maximum
+cost first; edits must cite facts you confirmed and are applied only after you
+accept them. In chat, Rika can list, read and prepare workshop edits, never export
+or apply them.
+
+**Compiling is local and sandboxed.** The Rust engine `kitty-workshop`
+(`workshop-engine/`, a desktop sidecar) runs each compiler in bubblewrap with no
+network, an empty environment and no access to your home folder, then reads,
+rasterizes and checks the PDF in pure Rust (hayro). Available engines come from
+`KITTY_<NAME>` absolute paths or `PATH`: `chromium` (HTML), `typst`, `tectonic`
+(needs `KITTY_TECTONIC_BUNDLE`, a local `.ttb`/`.zip` or complete bundle directory;
+downloads are disabled), `pdflatex`, `lualatex`, `bwrap` and `tesseract`. The page
+lists what is missing. A source checkout builds the engine with
+`cargo build --release --manifest-path workshop-engine/Cargo.toml`; `KITTY_WORKSHOP`
+points `kitty-web` at another build.
 
 ## Daily use in Stage 1
 

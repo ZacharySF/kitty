@@ -30,8 +30,13 @@ The private checkpoint records progress, not new authorization.
   or blocked source is not a healthy empty result. Bounded-search absence cannot
   close a posting. Never bypass authentication to expand discovery.
 - Optional paid triage requires explicit cost estimation/approval and a hard cap.
-  Redact contact details before sending resume text. Resume editing is a separate,
-  local deterministic operation: no hosted AI or uploads.
+  Redact contact details before sending resume text. The `kitty resumes` improver
+  stays local and deterministic. Resume Workshop cloud help (Rika edits and company
+  research) is off by default and runs only after an explicit opt-in, with a
+  per-request cost cap, a redacted preview the user confirms before anything is
+  sent, edits that must cite confirmed applicant facts, and a human review before
+  any edit lands. Compiles and document parsing stay local in the sandboxed Rust
+  engine (`workshop-engine/`).
 
 ## Architecture and invariants
 

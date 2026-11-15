@@ -70,8 +70,9 @@ jobs:
             tests/test_external_modules.py tests/test_web_external_modules.py \
             tests/test_web_server.py tests/test_web_jobs.py tests/test_web_tasks.py \
             tests/test_web_profile.py tests/test_web_resumes.py tests/test_web_insights.py \
-            tests/test_web_terminal.py tests/test_herdr_bundle.py
+            tests/test_web_terminal.py tests/test_herdr_bundle.py tests/test_workshop_render.py
           cargo test --manifest-path desktop/Cargo.toml --locked
+          cargo test --manifest-path workshop-engine/Cargo.toml --locked
       - name: Build signed installers
         uses: tauri-apps/tauri-action@v1
         env:

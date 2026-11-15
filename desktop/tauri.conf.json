@@ -20,7 +20,7 @@
     "category": "Productivity",
     "shortDescription": "Private local opportunities, learning and planning workspace",
     "icon": ["icons/icon.png"],
-    "externalBin": ["binaries/kitty-web", "binaries/kitty-herdr"],
+    "externalBin": ["binaries/kitty-web", "binaries/kitty-herdr", "binaries/kitty-workshop"],
     "resources": {
       "third_party/herdr/LICENSE": "licenses/herdr/LICENSE",
       "../third_party/grinstead-snell/LICENSE": "licenses/grinstead-snell/LICENSE",
