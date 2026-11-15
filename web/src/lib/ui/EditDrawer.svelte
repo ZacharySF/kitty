@@ -112,7 +112,7 @@
   }
   .meta {
     color: var(--muted);
-    font-size: 12px;
+    font-size: 13px;
   }
   .body {
     flex: 1;

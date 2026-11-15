@@ -1570,24 +1570,29 @@ describe("calendar redesign", () => {
     return [1, 3, 5].map((i) => parseInt(value.slice(i, i + 2), 16)).join(",");
   }));
 
-  test("week events are filled palette blocks with readable text and a blossom now-marker", async () => {
+  test("week events are soft tints of a palette colour with a full-colour bar and readable text; now is one line with its time in the gutter", async () => {
     const { page, problems, context } = await open("calendar");
     await page.getByRole("region", { name: "Week calendar" }).waitFor();
     await addEvent(page, { title: "Pastel standup", start: at(0, 10), end: at(0, 11) });
     await page.reload();
     const block = page.getByRole("group", { name: "Pastel standup" }).first();
     await block.waitFor();
-    for (const [theme, minimum] of [["kitty", 4.5], ["gruvbox", 3], ["one-dark", 3]]) {
+    for (const [theme, minimum] of [["kitty", 4.5], ["gruvbox", 4.5], ["one-dark", 4.5]]) {
       await setTheme(page, theme);
       const { ratio, alpha } = await textContrast(block);
-      assert.equal(alpha, 1, `${theme}: block is not a solid fill`);
+      assert.equal(alpha, 1, `${theme}: the grid shows through the block`);
       assert.ok(ratio >= minimum, `${theme}: block text contrast ${ratio.toFixed(2)} < ${minimum}`);
     }
-    const { fill } = await textContrast(block);
-    assert.ok((await palette(page)).includes(fill), `block fill ${fill} is not a theme palette colour`);
+    const look = await block.evaluate((node) => {
+      const style = getComputedStyle(node);
+      return { bar: style.borderLeftColor.match(/\d+/g).slice(0, 3).join(","), width: style.borderLeftWidth, radius: style.borderTopRightRadius, outline: style.borderTopWidth };
+    });
+    assert.ok((await palette(page)).includes(look.bar), `block bar ${look.bar} is not a theme palette colour`);
+    assert.notEqual((await textContrast(block)).fill, look.bar, "the block should be a tint of its colour, not a solid fill");
+    assert.deepEqual([look.width, look.radius, look.outline], ["3px", "8px", "0px"]);
     const now = page.getByRole("img", { name: /^Now / });
-    assert.equal(await now.count(), 1, "today has no labelled now-marker");
-    assert.match(await now.textContent(), /✿/, "now-marker has no blossom");
+    assert.equal(await now.count(), 1, "today has no labelled now line");
+    assert.match(await page.locator(".time-axis .now-time").textContent(), /^\d\d:\d\d$/, "the gutter does not show the time beside the now line");
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -1600,8 +1605,8 @@ describe("calendar redesign", () => {
     const d = new Date();
     const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
     const slotButton = (time) => page.getByRole("button", { name: `Create event ${day} ${time}`, exact: true });
-    // A slot (Enter, a click or a drag) prefills the pill's quick add with its time.
-    const quick = page.getByRole("dialog", { name: "Add event or task" });
+    // A slot (Enter, a click or a drag) prefills the header's quick add with its time.
+    const quick = page.getByRole("dialog", { name: "New event" });
     await slotButton("14:00").focus();
     await page.keyboard.press("ArrowDown");
     await page.keyboard.press("Enter");
@@ -1619,7 +1624,7 @@ describe("calendar redesign", () => {
     await page.keyboard.press("Escape");
     await quick.waitFor({ state: "detached" });
     const block = page.getByRole("group", { name: "Move me" });
-    // Native automated drags are flaky in Chromium (and cancel on the tiny ↔ handle); dispatch the same DOM events.
+    // Native automated drags are flaky in Chromium (and cancel on the thin resize edge); dispatch the same DOM events.
     const dragOnto = async (source, target) => {
       const transfer = await page.evaluateHandle(() => new DataTransfer());
       await source.dispatchEvent("dragstart", { dataTransfer: transfer });
@@ -1635,7 +1640,7 @@ describe("calendar redesign", () => {
     await context.close();
   });
 
-  test("month cells show up to four calendar dots and clicking a date fills the side agenda", async () => {
+  test("month cells list up to three one-line events and '+N more', which fills the rail's selected day", async () => {
     const { page, problems, context } = await open("calendar");
     await page.getByRole("region", { name: "Week calendar" }).waitFor();
     const now = new Date();
@@ -1648,37 +1653,44 @@ describe("calendar redesign", () => {
     const cell = grid.getByRole("gridcell", { name: / 20, 5 events$/ }).first();
     await cell.waitFor();
     assert.match(await cell.getAttribute("aria-label"), /5 events/);
-    assert.equal(await cell.locator(".dots > *").count(), 4, "a busy day should show four dots");
-    assert.equal(await grid.getByText("Dot 8").count(), 0, "month cells still list event titles");
-    await cell.click();
-    const agenda = page.getByRole("complementary", { name: "Day agenda" });
-    await agenda.getByRole("heading", { name: "5 events" }).waitFor();
+    const chips = cell.getByRole("button", { name: /^Dot \d+/ });
+    assert.equal(await chips.count(), 3, "a busy day should list three events");
+    assert.match(await chips.first().textContent(), /Dot 8\s*08:00/);
+    assert.ok(await chips.first().evaluate((node) => node.offsetHeight) <= 24, "a month event takes more than one line");
+    // The grid takes the calendar's whole width; the picked day's agenda is in the rail.
+    const [gridBox, mainBox] = [await grid.boundingBox(), await page.locator(".calendar-main").boundingBox()];
+    assert.ok(gridBox.width >= mainBox.width - 2, `the month grid is ${gridBox.width}px of ${mainBox.width}px`);
+    await cell.getByRole("button", { name: "+2 more" }).click();
+    const agenda = page.getByRole("complementary", { name: "Selected date plan" }).getByRole("region", { name: "Selected day" });
     const items = agenda.getByRole("button", { name: /Dot \d+/ });
+    await items.nth(4).waitFor();
     assert.equal(await items.count(), 5);
-    assert.match(await items.nth(2).textContent(), /12:00[\s\S]*Dot 12[\s\S]*Room 5/);
+    assert.match(await items.nth(2).textContent(), /Dot 12[\s\S]*12:00[\s\S]*Room 5/);
     assert.deepEqual(problems, []);
     await context.close();
   });
 
-  test("a floating range pill switches views and D/W/M/A, J/K and T work while the calendar has focus", async () => {
+  test("one header row above the grid: the range, ‹ Today ›, the views as words, Calendars and New event; D/W/M/A, J/K and T work while the calendar has focus", async () => {
     const { page, problems, context } = await open("calendar");
     const week = page.getByRole("region", { name: "Week calendar" });
     await week.waitFor();
     assert.equal(await page.getByRole("combobox", { name: "Calendar view" }).count(), 0, "native view select is still shown");
-    const pill = page.getByRole("toolbar", { name: "Calendar range" });
-    await page.locator(".calendar-main").evaluate((node) => node.scrollIntoView());
-    const box = await pill.boundingBox();
-    const main = await page.locator(".calendar-main").boundingBox();
-    const floor = Math.min(main.y + main.height, 850);
-    assert.ok(box.y + box.height <= floor && box.y >= floor - 70,
-      `range pill (${box.y}) does not float over the visible bottom of the calendar (${floor})`);
-    assert.ok(Math.abs(box.x + box.width / 2 - (main.x + main.width / 2)) < 4, "range pill is not centred over the calendar");
+    const bar = page.getByRole("toolbar", { name: "Calendar range" });
+    // The row sits above the grid, which starts right under it; nothing floats over the grid.
+    const [box, grid] = [await bar.boundingBox(), await week.boundingBox()];
+    assert.ok(box.y + box.height <= grid.y && grid.y - (box.y + box.height) <= 24, `the grid (${grid.y}) does not start right under the header row (${box.y + box.height})`);
+    assert.equal(await bar.evaluate((node) => getComputedStyle(node).position), "static");
+    assert.deepEqual(await bar.getByRole("navigation", { name: "Calendar view" }).getByRole("button").allTextContents(), ["Day", "Week", "Month", "Agenda", "Year", "Plan"]);
+    const order = await bar.getByRole("button").evaluateAll((nodes) => nodes.map((node) => node.textContent.trim()));
+    assert.deepEqual([order.at(-2), order.at(-1)], ["Calendars", "New event"]);
+    assert.equal(await page.getByText("Calendars & display settings").count(), 0, "the settings disclosure still sits above the grid");
     const views = ["Day", "Week", "Month", "Agenda"];
-    for (const name of views) assert.equal(await pill.getByRole("button", { name, exact: true }).getAttribute("aria-keyshortcuts"), name[0]);
-    await pill.getByRole("button", { name: "Month", exact: true }).click();
+    for (const name of views) assert.equal(await bar.getByRole("button", { name, exact: true }).getAttribute("aria-keyshortcuts"), name[0]);
+    await bar.getByRole("button", { name: "Month", exact: true }).click();
     await page.getByRole("grid", { name: "Month calendar" }).waitFor();
-    assert.equal(await pill.getByRole("button", { name: "Month", exact: true }).getAttribute("aria-pressed"), "true");
-    const range = pill.getByRole("button", { name: /Back to today/ });
+    assert.equal(await bar.getByRole("button", { name: "Month", exact: true }).getAttribute("aria-pressed"), "true");
+    assert.equal(await bar.getByRole("heading").count(), 1, "the range is not the row's title");
+    const range = bar.locator(".range");
     await page.getByRole("button", { name: /^Select \d{4}-/ }).first().focus();
     await page.keyboard.press("w");
     await week.waitFor();
@@ -1690,6 +1702,10 @@ describe("calendar redesign", () => {
     await page.keyboard.press("k");
     await page.keyboard.press("t");
     await page.waitForFunction((old) => document.querySelector('[aria-label="Calendar range"] .range')?.textContent === old, thisWeek);
+    await bar.getByRole("button", { name: "Next week" }).click();
+    await page.waitForFunction((old) => document.querySelector('[aria-label="Calendar range"] .range')?.textContent !== old, thisWeek);
+    await bar.getByRole("button", { name: "Today", exact: true }).click();
+    await page.waitForFunction((old) => document.querySelector('[aria-label="Calendar range"] .range')?.textContent === old, thisWeek);
     await page.keyboard.press("d");
     await page.getByRole("region", { name: "Day calendar" }).waitFor();
     await page.keyboard.press("a");
@@ -1697,8 +1713,104 @@ describe("calendar redesign", () => {
     await page.getByRole("searchbox").fill("dwm");
     assert.equal(await page.getByRole("region", { name: "Agenda" }).count(), 1, "typing in search switched views");
     // Shortcuts live in tooltips now that the Shortcuts fold-out is gone.
-    assert.equal(await pill.getByRole("button", { name: "Day", exact: true }).getAttribute("title"), "Day (D)");
-    assert.equal(await pill.getByRole("button", { name: "Add event or task" }).getAttribute("aria-keyshortcuts"), "N");
+    assert.equal(await bar.getByRole("button", { name: "Day", exact: true }).getAttribute("title"), "Day (D)");
+    assert.equal(await bar.getByRole("button", { name: "New event", exact: true }).getAttribute("aria-keyshortcuts"), "N");
+    // Calendars and the display time zone are behind the quiet Calendars button.
+    await bar.getByRole("button", { name: "Calendars", exact: true }).click();
+    const calendars = page.getByRole("dialog", { name: "Calendars" });
+    await calendars.getByRole("checkbox").first().waitFor();
+    await calendars.getByRole("combobox", { name: "Display timezone" }).waitFor();
+    await page.keyboard.press("Escape");
+    await calendars.waitFor({ state: "detached" });
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("the week opens on now with today's number in a filled circle, a one-line zone, hairlines, 58px hours, and an all-day add that shows on hover or focus", async () => {
+    const { page, problems, context } = await open("calendar");
+    const week = page.getByRole("region", { name: "Week calendar" });
+    await week.waitFor();
+    const today = week.getByRole("button", { name: /^Select / }).and(week.locator('[aria-current="date"]'));
+    assert.equal(await today.count(), 1);
+    assert.equal(await week.getByText("Today", { exact: true }).count(), 0, "the header still spells out Today");
+    const mark = await today.evaluate((node) => {
+      const [box, number] = [getComputedStyle(node), getComputedStyle(node.querySelector("strong"))];
+      const ink = getComputedStyle(document.documentElement).getPropertyValue("--ink").trim();
+      const probe = Object.assign(document.createElement("i"), { style: `color:${ink}` });
+      document.body.append(probe);
+      const want = getComputedStyle(probe).color;
+      probe.remove();
+      return { border: box.borderTopWidth, fill: number.backgroundColor === want, round: parseFloat(number.borderTopLeftRadius) >= node.querySelector("strong").offsetHeight / 2 };
+    });
+    assert.deepEqual(mark, { border: "0px", fill: true, round: true });
+    const zone = week.locator(".time-zone");
+    assert.match(await zone.textContent(), /^(GMT|UTC)([+-]\d{1,2}(:\d\d)?)?$/);
+    assert.ok(await zone.evaluate((node) => node.scrollWidth <= node.clientWidth && node.offsetHeight < 60), "the zone wraps in the gutter");
+    // Now is in view: its line, its dot and its time in the gutter.
+    const [line, frame] = [await week.getByRole("img", { name: /^Now / }).boundingBox(), await week.boundingBox()];
+    assert.ok(line.y > frame.y && line.y < frame.y + frame.height, `now (${line.y}) is outside the opened grid (${frame.y}–${frame.y + frame.height})`);
+    const d = new Date();
+    const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const lines = await week.getByRole("group", { name: `${day} 10:00`, exact: true }).evaluate((hour) => {
+      const half = hour.nextElementSibling;
+      return { hour: getComputedStyle(hour).borderTopWidth, half: getComputedStyle(half).borderTopWidth, height: hour.offsetHeight + half.offsetHeight };
+    });
+    assert.deepEqual(lines, { hour: "1px", half: "0px", height: 58 });
+    // The all-day add is hidden until its cell is hovered or it takes focus.
+    const cell = week.getByRole("group", { name: `All-day events and tasks on ${day}` });
+    const add = cell.getByRole("button", { name: `Create all-day event on ${day}` });
+    const shown = () => add.evaluate((node) => getComputedStyle(node).opacity);
+    await page.mouse.move(0, 0);
+    assert.equal(await shown(), "0");
+    await cell.hover();
+    assert.equal(await shown(), "1");
+    await page.mouse.move(0, 0);
+    await add.focus();
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Shift+Tab");
+    assert.equal(await shown(), "1", "the add stays hidden from the keyboard");
+    await page.keyboard.press("Enter");
+    await page.getByRole("dialog", { name: "New event" }).getByText("All day").waitFor();
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("no calendar view draws text under 13px, and the rail is plain sections without boxes", async () => {
+    const { page, problems, context } = await open("calendar");
+    await page.getByRole("region", { name: "Week calendar" }).waitFor();
+    await addEvent(page, { title: "Small type", start: at(0, 10), end: at(0, 10, 30) });
+    await page.evaluate(() => fetch("/api/calendar/tasks", { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1", "X-Kitty-Secret": window.__KITTY_UI_SECRET__ },
+      body: JSON.stringify({ title: "Small task", priority: "normal", status: "todo" }) }));
+    await page.reload();
+    const bar = page.getByRole("toolbar", { name: "Calendar range" });
+    await bar.waitFor();
+    for (const name of ["Week", "Day", "Month", "Agenda", "Year", "Plan"]) {
+      await bar.getByRole("button", { name, exact: true }).click();
+      await page.waitForTimeout(300);
+      const small = await page.locator(".calendar-workspace").evaluate((root) => {
+        const found = new Set();
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          const parent = node.parentElement;
+          if (node.textContent.trim() && parent.getClientRects().length && parseFloat(getComputedStyle(parent).fontSize) < 13)
+            found.add(`${parent.className || parent.tagName}: ${node.textContent.trim().slice(0, 20)}`);
+        }
+        return [...found];
+      });
+      assert.deepEqual(small, [], `${name} view draws text under 13px`);
+    }
+    const rail = page.getByRole("complementary", { name: "Selected date plan" });
+    const boxed = await rail.evaluate((node) => [...node.querySelectorAll("section, .mini, .br-panel, .br-card, .tray-task")].filter((part) => {
+      const style = getComputedStyle(part);
+      return parseFloat(style.borderLeftWidth) > 0 || parseFloat(style.borderRightWidth) > 0 || parseFloat(style.borderBottomWidth) > 0;
+    }).length);
+    assert.equal(boxed, 0, "a rail section is still a bordered box");
+    // The tasks section's heading carries its quiet toggle.
+    const tray = rail.getByRole("region", { name: "Tasks to schedule" });
+    await tray.getByRole("button", { name: "Small task" }).waitFor();
+    await tray.getByRole("button", { name: "Hide", exact: true }).click();
+    assert.equal(await tray.getByRole("button", { name: "Small task" }).count(), 0);
+    assert.equal(await tray.getByRole("button", { name: "Show", exact: true }).getAttribute("aria-expanded"), "false");
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -1711,22 +1823,22 @@ describe("calendar redesign", () => {
     await page.evaluate(() => fetch("/api/calendar/tasks", { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1", "X-Kitty-Secret": window.__KITTY_UI_SECRET__ },
       body: JSON.stringify({ title: "Plan me", priority: "normal", status: "todo" }) }));
     await page.reload();
-    const pill = page.getByRole("toolbar", { name: "Calendar range" });
+    const bar = page.getByRole("toolbar", { name: "Calendar range" });
     const tomorrow = new Date(at(1, 12));
     const iso = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, "0")}-${String(tomorrow.getDate()).padStart(2, "0")}`;
 
     // Mini-month navigator: ISO week numbers, a hover preview and click-to-jump.
     const mini = page.getByRole("grid", { name: /^Mini month/ });
     await mini.waitFor();
-    assert.ok(await mini.getByText(/^W\d{1,2}$/).count() >= 4, "no ISO week numbers");
+    assert.ok(await mini.getByRole("rowheader", { name: /^Week \d{1,2}$/ }).count() >= 4, "no ISO week numbers");
     await mini.getByRole("row").nth(2).hover();
-    await page.getByRole("status", { name: "Week preview" }).getByText(/^week \d+ · \d+ events/).waitFor();
+    await page.getByRole("status", { name: "Week preview" }).getByText(/^Week \d+ · \d+ events?/).waitFor();
     await mini.getByRole("gridcell").filter({ hasText: /^15$/ }).first().click();
     await page.getByRole("region", { name: "Week calendar" }).getByRole("button", { name: /^Select \w+, \w+ 15$/ }).waitFor();
     assert.equal(await mini.getByRole("gridcell", { selected: true }).textContent(), "15");
 
     // Year overview: twelve months; a day reads out its booked time on hover and pins on click.
-    await pill.getByRole("button", { name: "Year", exact: true }).click();
+    await bar.getByRole("button", { name: "Year", exact: true }).click();
     const year = page.getByRole("region", { name: "Year overview" });
     await year.waitFor();
     assert.equal(await year.getByRole("group").count(), 12);
@@ -1737,10 +1849,10 @@ describe("calendar redesign", () => {
     assert.equal(await day.getAttribute("aria-pressed"), "true");
 
     // Today plan: Plan drops the task into the first free half hour after the busy morning.
-    await pill.getByRole("button", { name: "Plan", exact: true }).click();
+    await bar.getByRole("button", { name: "Plan", exact: true }).click();
     await page.getByRole("region", { name: "Day plan" }).waitFor();
-    await pill.getByRole("button", { name: /Back to today/ }).click();
-    await pill.getByRole("button", { name: "Next day" }).click();
+    await bar.getByRole("button", { name: "Today", exact: true }).click();
+    await bar.getByRole("button", { name: "Next day" }).click();
     const plan = page.getByRole("region", { name: "Day plan" });
     await plan.getByText("Plan busy 2").waitFor();
     await plan.getByRole("button", { name: "Plan Plan me" }).click();
@@ -1755,9 +1867,9 @@ describe("calendar redesign", () => {
   test("quick add understands 'lunch with Mira fri 12:30' and More opens the new event in the side drawer", async () => {
     const { page, problems, context } = await open("calendar");
     await page.getByRole("region", { name: "Week calendar" }).waitFor();
-    await page.getByRole("toolbar", { name: "Calendar range" }).getByRole("button", { name: "Add event or task" }).click();
-    const quick = page.getByRole("dialog", { name: "Add event or task" });
-    await quick.getByRole("textbox", { name: "Add event or task" }).fill("lunch with Mira fri 12:30 at Café Rose");
+    await page.getByRole("toolbar", { name: "Calendar range" }).getByRole("button", { name: "New event", exact: true }).click();
+    const quick = page.getByRole("dialog", { name: "New event" });
+    await quick.getByRole("textbox", { name: "New event" }).fill("lunch with Mira fri 12:30 at Café Rose");
     await quick.getByText(/^Fri/).waitFor();
     await quick.getByText("12:30–13:30").waitFor();
     await quick.getByRole("button", { name: /^More/ }).click();

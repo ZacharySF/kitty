@@ -1,16 +1,15 @@
 <script lang="ts">
   import { onMount, untrack, tick } from "svelte";
-  import { Button, Panel } from "@nunera/bracket";
+  import { Button } from "@nunera/bracket";
   import { api, safeUrl, type TaskRecord } from "./api";
   import TaskMapAction from "./TaskMapAction.svelte";
   import CalendarDateTime from "./CalendarDateTime.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
   import { currentTheme, THEME_EVENT } from "./themes";
   import { getTheme } from "./themes/catalog";
-  import { blockText, calendarPaint, itemPaint, nextSlot, subjectOf, type Subject } from "./calendar/palette";
+  import { calendarPaint, itemPaint, nextSlot, subjectOf, type Subject } from "./calendar/palette";
   import ColorField from "./calendar/ColorField.svelte";
-  import DayAgenda, { type AgendaItem } from "./calendar/DayAgenda.svelte";
-  import RangePill, { VIEWS, type CalendarView } from "./calendar/RangePill.svelte";
+  import RangeBar, { VIEWS, type CalendarView } from "./calendar/RangeBar.svelte";
   import YearHeatmap from "./calendar/YearHeatmap.svelte";
   import MiniMonth from "./calendar/MiniMonth.svelte";
   import DayPlan from "./calendar/DayPlan.svelte";
@@ -19,6 +18,7 @@
     type TimedPlacement } from "./calendar/dates";
   import EditDrawer from "./ui/EditDrawer.svelte";
   import Select from "./ui/Select.svelte";
+  import Popover from "./ui/Popover.svelte";
   import CalendarQuickAdd from "./calendar/CalendarQuickAdd.svelte";
   import { wallAt, type QuickKind, type QuickPlan, type QuickSlot } from "./calendar/quickAdd";
   import QuickUnderstood from "./calendar/QuickUnderstood.svelte";
@@ -123,7 +123,8 @@
   let dragMessage = $state("");
   let suppressClickUntil = 0;
   let taskTrayOpen = $state(true);
-  /** Q20: the pill's quick add; a clicked slot or range prefills its time, else the selected day. */
+  let calendarsOpen = $state(false);
+  /** Q20: the header's quick add; a clicked slot or range prefills its time, else the selected day. */
   let quickOpen = $state(false);
   let quickKind = $state<QuickKind>("event");
   let quickPick = $state<QuickSlot | null>(null);
@@ -165,8 +166,12 @@
   const hours = Array.from({ length: 48 }, (_, i) => i);
   let focusedSlot = $state(18);
   let clock = $state(new Date().toISOString());
-  function scrollToMorning(node: HTMLDivElement) {
-    const frame = requestAnimationFrame(() => (node.scrollTop = 8 * 72));
+  /** Height of a half-hour row in px: an hour is 58px. */
+  const SLOT = 29;
+  /** The time grid opens with now in view (a little day above it), or 08:00 when today is not shown. */
+  function scrollToNow(node: HTMLDivElement) {
+    const minute = days.includes(today) ? Math.max(0, currentMinute - 90) : 7 * 60 + 40;
+    const frame = requestAnimationFrame(() => (node.scrollTop = Math.round((minute / 30) * SLOT)));
     return { destroy: () => cancelAnimationFrame(frame) };
   }
   let loadCounter = 0;
@@ -196,8 +201,20 @@
         ? anchor.slice(0, 4)
         : view === "day" || view === "plan"
           ? dateTitle(anchor, { weekday: "long", month: "long", day: "numeric", year: "numeric" })
-          : `${dateTitle(firstDay, { month: "short", day: "numeric" })} – ${dateTitle(days[days.length - 1], { month: "short", day: "numeric", year: "numeric" })}`,
+          : spanTitle(firstDay, days[days.length - 1]),
   );
+  /** "Nov 9 – 15, 2026", naming the month and the year again only where they change. */
+  function spanTitle(from: string, to: string) {
+    const start = dateTitle(from, { month: "short", day: "numeric", ...(from.slice(0, 4) === to.slice(0, 4) ? {} : { year: "numeric" }) });
+    const end = from.slice(0, 7) === to.slice(0, 7)
+      ? `${dateTitle(to, { day: "numeric" })}, ${to.slice(0, 4)}`
+      : dateTitle(to, { month: "short", day: "numeric", year: "numeric" });
+    return `${start} – ${end}`;
+  }
+  /** The display zone on one line: its UTC offset ("GMT-6"). */
+  const zoneShort = $derived(new Intl.DateTimeFormat("en", { timeZone: tz, timeZoneName: "shortOffset" })
+    .formatToParts(new Date(clock)).find((part) => part.type === "timeZoneName")?.value ?? tz);
+  const shortDay = (value: string) => dateTitle(value.slice(0, 10), { month: "short", day: "numeric" });
   function chooseDate(day: string) {
     if (!day) return;
     anchor = day;
@@ -312,11 +329,8 @@
   const calendarColor = (c: Cal) => calendarPaint(c, data.subjects).color;
   /** A task's colour when it is linked to a study subject; unlinked tasks stay muted. */
   const taskColor = (t: Task) => subjectOf(t, data.subjects)?.color;
-  /** Filled-block colours for an event and the text that reads on them. */
-  function blockStyle(e: Event) {
-    const fill = paint(e);
-    return `--block:${fill};--block-ink:${blockText(theme, fill)}`;
-  }
+  /** An event block's colour: its bar, and the tint of its fill. */
+  const blockStyle = (e: Event) => `--block:${paint(e)}`;
   const editorCalendar = $derived(editor ? data.calendars.find((c) => c.id === editor?.calendar_id) : undefined);
   /** The drawer's "Calendar colour" default: the event's calendar paint. */
   const calendarDefault = $derived(editorCalendar ? { ...calendarPaint(editorCalendar, data.subjects), name: editorCalendar.name } : null);
@@ -423,8 +437,6 @@
     view = next;
     anchor = selectedDate;
   }
-  let shortcutFlash = $state("");
-  let flashTimer: ReturnType<typeof setTimeout> | undefined;
   let calendarLayout = $state<HTMLDivElement>();
   /** Single-key shortcuts while focus is inside the calendar: D/W/M/A/Y/P views, J/K step, T today, N add. */
   function calendarKey(event: KeyboardEvent) {
@@ -444,15 +456,12 @@
     }
     else return;
     event.preventDefault();
-    shortcutFlash = key.toUpperCase();
     // The focused cell may vanish with the old view; keep focus in the calendar so keys keep working.
     void tick().then(() => {
       if (calendarLayout && !calendarLayout.contains(document.activeElement)) calendarLayout.focus({ preventScroll: true });
     });
-    clearTimeout(flashTimer);
-    flashTimer = setTimeout(() => (shortcutFlash = ""), 700);
   }
-  /** Opens the pill's quick add at `start` (a day or a wall time), ending at `end` when a range was picked. */
+  /** Opens the header's quick add at `start` (a day or a wall time), ending at `end` when a range was picked. */
   async function openQuick(start: string, end?: string) {
     if (!isActive) return;
     error = "";
@@ -969,7 +978,6 @@
       window.removeEventListener("click", blockDragClick, true);
       window.removeEventListener(THEME_EVENT, syncTheme);
       clearInterval(clockTimer);
-      clearTimeout(flashTimer);
     };
   });
 </script>
@@ -1032,44 +1040,43 @@
     </div>{/if}
   {#if notice}<p role="status" class="notice">{notice}</p>{/if}
   {#if dragMessage}<p class="drop-status" role="status">{dragMessage}</p>{/if}
-  <details class="display-options">
-    <summary>Calendars & display settings</summary>
-    <div class="controls">
-      <label>Display timezone<Select kind="timezone" label="Display timezone" bind:value={tz} /></label>
-    </div>
-  <div class="calendars">
-    {#each data.calendars as c}<label style={`--calendar-color:${calendarColor(c)}`}
-        ><input
-          type="checkbox"
-          checked={!!c.visible}
-          onchange={() => toggleCalendar(c)}
-        /><span class="dot"></span>{c.name}<button
-          aria-label={`Edit ${c.name}`}
-          onclick={() => (calendarEditor = { ...c })}>⚙</button
-        ></label
-      >{/each}<button
-      onclick={() =>
-        (calendarEditor = {
-          name: "",
-          color: nextSlot(data.calendars.length),
-          subject_id: null,
-          timezone: tz,
-          visible: 1,
-        })}>＋ Calendar</button
-    >
-  </div>
-  </details>
   {#if section === "calendar"}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="calendar-layout" bind:this={calendarLayout} tabindex="-1" onkeydown={calendarKey}>
+    <RangeBar heading={rangeHeading} {view} date={anchor}
+      onview={setView} onstep={navigate} ontoday={() => chooseDate(today)} ondate={chooseDate}>
+      {#snippet tools()}
+        <Popover label="Calendars" placement="bottom-end" bind:open={calendarsOpen}>
+          {#snippet trigger(props)}
+            <button type="button" class="quiet-button" {...props}>Calendars</button>
+          {/snippet}
+          <div class="calendars">
+            {#each data.calendars as c (c.id)}
+              <div class="calendar-row" style={`--calendar-color:${calendarColor(c)}`}>
+                <label><input type="checkbox" checked={!!c.visible} onchange={() => toggleCalendar(c)} /><span class="dot"></span>{c.name}</label>
+                <button class="quiet-button" aria-label={`Edit ${c.name}`}
+                  onclick={() => { calendarsOpen = false; calendarEditor = { ...c }; }}>Edit</button>
+              </div>
+            {/each}
+            <button class="quiet-button" onclick={() => {
+              calendarsOpen = false;
+              calendarEditor = { name: "", color: nextSlot(data.calendars.length), subject_id: null, timezone: tz, visible: 1 };
+            }}>New calendar</button>
+            <label class="zone">Time zone<Select kind="timezone" label="Display timezone" bind:value={tz} /></label>
+          </div>
+        </Popover>
+      {/snippet}
+      {#snippet add()}
+        <CalendarQuickAdd label="New event" shortcut="N" {today} at={quickSlot} bind:kind={quickKind} bind:open={quickOpen} onsave={quickSave} />
+      {/snippet}
+    </RangeBar>
     <div class="calendar-main">
     {#if view === "month"}
-      <div class="month-layout">
       <div class="month-grid" role="grid" aria-label="Month calendar">
         {#each days.slice(0, 7) as day}
           <div class="weekday-label" role="columnheader">{dateTitle(day, { weekday: "short" })}</div>
         {/each}
-        {#each days as day}{@const dayEvents = eventsOn(day)}<div
+        {#each days as day}{@const dayEvents = eventsOn(day)}{@const dayTasks = tasksOn(day)}{@const more = dayEvents.length + dayTasks.length - 3}<div
             class="day-cell"
             class:selected={day === selectedDate}
             class:today={day === today}
@@ -1093,44 +1100,34 @@
             ondragover={(e) => allowDrop(day, true, e)}
             ondrop={(e) => dropOn(day, true, e)}
           >
-            <button class="day-head" onclick={() => (selectedDate = day)}
-              aria-label={`Select ${day}`} aria-pressed={day === selectedDate}>{dateTitle(day, { day: "numeric" })}</button>
-            <span class="dots" aria-hidden="true">{#each dayEvents.slice(0, 4) as e (e.id + e.occurrence)}<i style:background={paint(e)}></i>{/each}</span>
+            <div class="day-top">
+              <button class="day-head" onclick={() => (selectedDate = day)}
+                aria-label={`Select ${day}`} aria-pressed={day === selectedDate}>{dateTitle(day, { day: "numeric" })}</button>
+              {#if more > 0}<button class="day-more" onclick={() => (selectedDate = day)}>+{more} more</button>{/if}
+            </div>
+            {#each dayEvents.slice(0, 3) as e (e.id + e.occurrence)}
+              <button class="month-chip" style={`--calendar-color:${paint(e)}`} title={e.title}
+                draggable="true" ondragstart={(event) => drag(e, event)} ondragend={finishDrag}
+                oncontextmenu={(event) => void deleteEventAtPointer(event, e)}
+                onclick={() => { selectedDate = day; openEvent(e); }}>
+                <i class="dot"></i><span class="what">{e.title}</span>{#if !e.all_day}<span class="when">{parts(e.start).time}</span>{/if}
+              </button>
+            {/each}
+            {#each dayTasks.slice(0, Math.max(0, 3 - dayEvents.length)) as t (t.id)}
+              <button class="month-chip" class:completed={t.status === "done"} style:--task-color={taskColor(t)} title={t.title}
+                draggable="true" ondragstart={(event) => dragTask(t, event)} ondragend={finishDrag}
+                oncontextmenu={(event) => void deleteTaskAtPointer(event, t)}
+                onclick={() => { selectedDate = day; taskEditor = { ...t }; }}>
+                <i class="ring"></i><span class="what">{t.title}</span>{#if t.due.length > 10}<span class="when">{parts(t.due).time}</span>{/if}
+              </button>
+            {/each}
           </div>{/each}
       </div>
-      <DayAgenda
-        eyebrow={`${selectedDate === today ? "Today · " : ""}${dateTitle(selectedDate, { weekday: "short", month: "short", day: "numeric" })}`}
-        items={[
-          ...eventsOn(selectedDate).map((e): AgendaItem => ({
-            key: `event:${e.id}:${e.occurrence}`,
-            start: e.all_day ? "All day" : parts(e.start).time,
-            end: e.all_day ? "" : parts(e.end).time,
-            title: e.title + (e.rrule ? " ↻" : ""),
-            place: e.location || data.calendars.find((c) => c.id === e.calendar_id)?.name || "",
-            color: paint(e),
-            open: () => openEvent(e),
-            drag: (event) => drag(e, event),
-            dragend: finishDrag,
-          })),
-          ...tasksOn(selectedDate).map((t): AgendaItem => ({
-            key: `task:${t.id}`,
-            start: t.due.length > 10 ? parts(t.due).time : "Task",
-            end: "",
-            title: t.title,
-            place: t.status === "done" ? "Completed" : t.priority,
-            color: taskColor(t) ?? "var(--muted)",
-            task: true,
-            open: () => (taskEditor = { ...t }),
-            drag: (event) => dragTask(t, event),
-            dragend: finishDrag,
-          })),
-        ]} />
-      </div>
     {:else if view === "week" || view === "day"}
-      <div class="time-scroll" use:scrollToMorning role="region" aria-label={view === "week" ? "Week calendar" : "Day calendar"}>
-        <div class="time-grid" style={`--days:${days.length}`}>
+      <div class="time-scroll" use:scrollToNow role="region" aria-label={view === "week" ? "Week calendar" : "Day calendar"}>
+        <div class="time-grid" style={`--days:${days.length};--slot-height:${SLOT}px`}>
           <div class="time-header">
-            <div class="time-zone" title={tz}>{tz}</div>
+            <div class="time-zone" title={tz}>{zoneShort}</div>
             {#each days as day}
               <div class="time-heading" class:today={day === today} class:selected={day === selectedDate}>
                 <button class="time-date" aria-pressed={day === selectedDate}
@@ -1139,11 +1136,10 @@
                   onclick={() => (selectedDate = day)}>
                   <span>{dateTitle(day, { weekday: "short" })}</span>
                   <strong>{dateTitle(day, { day: "numeric" })}</strong>
-                  {#if day === today}<small>Today</small>{/if}
                 </button>
               </div>
             {/each}
-            <div class="all-day-label">All day<br /><span>& tasks</span></div>
+            <div class="all-day-label">All day</div>
             {#each days as day}
               <div class="all-day-cell" class:selected={day === selectedDate}
                 class:drop-target={dragTarget === `day:${day}`}
@@ -1152,11 +1148,9 @@
                 role="group" aria-label={`All-day events and tasks on ${day}`}
                 ondragover={(event) => allowDrop(day, true, event)}
                 ondrop={(event) => dropOn(day, true, event)}>
-                <button class="all-day-add" onclick={() => void openQuick(day, addDays(day, 1))}
-                  aria-label={`Create all-day event on ${day}`}>＋</button>
                 <div class="all-day-items">
                   {#each eventsOn(day).filter((e) => e.all_day) as e}
-                    <button class="event-chip all-day-event" style={`--calendar-color:${paint(e)}`}
+                    <button class="event-chip all-day-event" style={blockStyle(e)}
                       draggable="true" ondragstart={(event) => drag(e, event)} ondragend={finishDrag}
                       oncontextmenu={(event) => void deleteEventAtPointer(event, e)}
                       onclick={() => { selectedDate = day; openEvent(e); }} title={e.title}>{e.title}</button>
@@ -1166,16 +1160,21 @@
                       draggable="true" ondragstart={(event) => dragTask(t, event)} ondragend={finishDrag}
                       oncontextmenu={(event) => void deleteTaskAtPointer(event, t)}
                       onclick={() => { selectedDate = day; taskEditor = { ...t }; }}
-                      title={t.title}>{t.status === "done" ? "✓" : "☐"} {t.title}</button>
+                      title={t.title}><i class="ring"></i><span class="what">{t.title}</span></button>
                   {/each}
                 </div>
+                <button class="all-day-add" onclick={() => void openQuick(day, addDays(day, 1))}
+                  aria-label={`Create all-day event on ${day}`}>+</button>
               </div>
             {/each}
           </div>
           <div class="time-axis" aria-hidden="true">
-            {#each hours as halfHour}
-              <div class="time-label">{halfHour % 2 === 0 ? `${String(halfHour / 2).padStart(2, "0")}:00` : ""}</div>
+            {#each Array(24) as _, hour}
+              <div class="time-label" class:hidden={hour === 0 || (days.includes(today) && Math.abs(hour * 60 - currentMinute) < 25)}>{String(hour).padStart(2, "0")}:00</div>
             {/each}
+            {#if days.includes(today)}
+              <div class="now-time" style={`top:${currentMinute / 1440 * 100}%`}>{parts(clock).time}</div>
+            {/if}
           </div>
           {#each days as day}
             <div class="time-day" class:today={day === today} class:selected={day === selectedDate}
@@ -1211,19 +1210,19 @@
                       onclick={() => (taskEditor = { ...task })}
                       oncontextmenu={(event) => void deleteTaskAtPointer(event, task)}
                       title={`${task.title} · ${parts(task.due).time}`}>
-                      {parts(task.due).time} · ☐ {task.title}
+                      <i class="ring"></i><span class="what">{task.title}</span><span class="when">{parts(task.due).time}</span>
                     </button>
                   {/each}
                 </div>
               {/each}
               {#if day === today}
                 <div class="now-line" style={`top:${currentMinute / 1440 * 100}%`} role="img"
-                  aria-label={`Now ${parts(clock).time}`}><span class="bloom" aria-hidden="true">✿</span></div>
+                  aria-label={`Now ${parts(clock).time}`}></div>
               {/if}
               {#each weekEvents[day] as placement}
                 {@const e = placement.event}
-                <div class="event-chip timed" draggable="true" role="group" aria-label={e.title}
-                  style={`${blockStyle(e)};top:${placement.start / 1440 * 100}%;height:${Math.min(1440 - placement.start, Math.max(30, placement.end - placement.start)) / 1440 * 100}%;left:${placement.column / placement.columns * 100}%;width:${100 / placement.columns}%`}
+                <div class="event-chip timed" class:short={placement.end - placement.start < 50} draggable="true" role="group" aria-label={e.title}
+                  style={`${blockStyle(e)};top:${placement.start / 1440 * 100}%;height:calc(${Math.min(1440 - placement.start, Math.max(30, placement.end - placement.start)) / 1440 * 100}% - 2px);left:calc(${placement.column / placement.columns * 100}% + 1px);width:calc(${100 / placement.columns}% - 4px)`}
                   ondragstart={(event) => drag(e, event)} ondragend={finishDrag}>
                   <button class="timed-content" title={`${e.title} · ${label(e.start)} – ${label(e.end)}`}
                     oncontextmenu={(event) => void deleteEventAtPointer(event, e)}
@@ -1234,7 +1233,7 @@
                   </button>
                   <button class="resize" draggable="true"
                     ondragstart={(event) => { event.stopPropagation(); drag(e, event, "resize"); }}
-                    aria-label={`Resize ${e.title}`}>↔</button>
+                    aria-label={`Resize ${e.title}`}></button>
                 </div>
               {/each}
             </div>
@@ -1246,7 +1245,6 @@
         onopen={(day) => { chooseDate(day); view = "day"; }} />
     {:else if view === "plan"}
       <DayPlan
-        eyebrow={`${anchor === today ? "Today · " : ""}${dateTitle(anchor, { weekday: "short", month: "short", day: "numeric" })}`}
         now={anchor === today ? currentMinute : null}
         busy={pending > 0}
         events={timedEvents(anchor).map((p) => ({ key: `${p.event.id}:${p.event.occurrence}`, title: p.event.title,
@@ -1258,68 +1256,46 @@
         ontoggle={(id) => { const task = data.tasks.find((t) => t.id === id); if (task) void taskStatus(task, task.status === "done" ? "todo" : "done"); }} />
     {:else}
       <div class="agenda" role="region" aria-label="Agenda">
-        {#each days as day}{#if eventsOn(day).length || tasksOn(day).length}<section
-            >
-              <h2><button class="agenda-date" onclick={() => (selectedDate = day)}>{dateTitle(day, { weekday: "long", month: "short", day: "numeric" })}</button></h2>
-              {#each eventsOn(day) as e}<button
-                  class="agenda-event"
-                  style={`--calendar-color:${paint(e)}`}
-                  onclick={() => openEvent(e)}
-                  ><span
-                    >{e.all_day
-                      ? "All day"
-                      : `${label(e.start)} → ${label(e.end)}`}</span
-                  ><strong>{e.title}</strong><span>{e.location}</span></button
-                >{/each}{#each tasksOn(day) as t}<button
-                  class="agenda-event"
-                  style:--calendar-color={taskColor(t)}
-                  onclick={() => (taskEditor = { ...t })}
-                  ><span>Task · {t.priority} · {t.status}</span><strong
-                    >{t.title}</strong
-                  ></button
-                >{/each}
-            </section>{/if}{/each}{#if !data.events.length && !data.tasks.some((t) => t.due)}<p
-          >
-            Nothing scheduled.
-          </p>{/if}
+        {#each days as day}{#if eventsOn(day).length || tasksOn(day).length}
+          <section class:today={day === today}>
+            <h2><button class="agenda-date" onclick={() => (selectedDate = day)}
+              aria-label={dateTitle(day, { weekday: "long", month: "short", day: "numeric" })}>
+              <strong>{dateTitle(day, { day: "numeric" })}</strong>
+              <span>{dateTitle(day, { weekday: "short" })}, {dateTitle(day, { month: "short" })}</span>
+            </button></h2>
+            <div class="agenda-items">
+              {#each eventsOn(day) as e}
+                <button class="agenda-event" style={`--calendar-color:${paint(e)}`} onclick={() => openEvent(e)}>
+                  <span class="when">{e.all_day ? "All day" : `${parts(e.start).time} – ${parts(e.end).time}`}</span>
+                  <i class="dot"></i>
+                  <strong>{e.title}</strong>
+                  {#if e.location}<span class="where">{e.location}</span>{/if}
+                </button>
+              {/each}
+              {#each tasksOn(day) as t}
+                <button class="agenda-event" class:completed={t.status === "done"} style:--task-color={taskColor(t)} onclick={() => (taskEditor = { ...t })}>
+                  <span class="when">{t.due.length > 10 ? parts(t.due).time : "Task"}</span>
+                  <i class="ring"></i>
+                  <strong>{t.title}</strong>
+                </button>
+              {/each}
+            </div>
+          </section>
+        {/if}{/each}
+        {#if !data.events.length && !data.tasks.some((t) => t.due)}<p class="hint">Nothing scheduled.</p>{/if}
       </div>
     {/if}
-    <RangePill heading={rangeHeading} {view} date={anchor} flash={shortcutFlash}
-      onview={setView} onstep={navigate} ontoday={() => chooseDate(today)} ondate={chooseDate}>
-      {#snippet add()}
-        <CalendarQuickAdd label="Add event or task" round {today} at={quickSlot} bind:kind={quickKind} bind:open={quickOpen} onsave={quickSave} />
-      {/snippet}
-    </RangePill>
     </div>
     <aside class="selected-plan" aria-label="Selected date plan">
       <MiniMonth selected={selectedDate} {today} refresh={loadVersion} {loadBusy} onpick={chooseDate} />
-      <Button size="sm" aria-expanded={taskTrayOpen} aria-controls={`${pane.id}-calendar-task-tray`}
-        onclick={() => (taskTrayOpen = !taskTrayOpen)}>{taskTrayOpen ? "Hide task tray" : "Open task tray"} · {trayTasks.length}</Button>
-      {#if taskTrayOpen}
-        <section id={`${pane.id}-calendar-task-tray`} class="task-tray" aria-label="Tasks to schedule"
-          title="Drag a task onto a time slot to schedule it">
-          <h3>Tasks to schedule</h3>
-          <div class="tray-list">
-            {#each trayTasks as task}
-              <button class="tray-task" draggable="true" style:--task-color={taskColor(task)}
-                ondragstart={(event) => dragTask(task, event)} ondragend={finishDrag}
-                onclick={() => (taskEditor = { ...task })}>
-                <strong>{task.title}</strong>
-                <span>{task.due ? label(task.due, task.due.length === 10) : "Unscheduled"} · {task.priority}</span>
-              </button>
-            {:else}<p class="hint">No unscheduled or selected-day tasks.</p>{/each}
-          </div>
-        </section>
-      {/if}
-      <Panel title={dateTitle(selectedDate, { weekday: "long", month: "short", day: "numeric" })}
-        readout="DAY PLAN">
-        {#if view !== "month"}
+      <section class="rail-section" aria-label="Selected day">
+        <h3>{dateTitle(selectedDate, { weekday: "long", month: "short", day: "numeric" })}</h3>
         {#each eventsOn(selectedDate) as e}
           <button class="plan-event" style={`--calendar-color:${paint(e)}`} onclick={() => openEvent(e)}
             oncontextmenu={(event) => void deleteEventAtPointer(event, e)}>
-            <span>{e.all_day ? "All day" : `${parts(e.start).time} – ${parts(e.end).time}`}</span>
+            <i class="dot"></i>
             <strong>{e.title}</strong>
-            {#if e.location}<span>{e.location}</span>{/if}
+            <span>{e.all_day ? "All day" : `${parts(e.start).time} – ${parts(e.end).time}`}{e.location ? ` · ${e.location}` : ""}</span>
           </button>
         {/each}
         {#each tasksOn(selectedDate) as t}
@@ -1335,10 +1311,30 @@
           </div>
         {/each}
         {#if !eventsOn(selectedDate).length && !tasksOn(selectedDate).length}
-          <div class="day-empty"><p class="hint">Nothing planned.</p></div>
+          <p class="hint">Nothing planned.</p>
         {/if}
+      </section>
+      <section class="rail-section" aria-label="Tasks to schedule" title="Drag a task onto a time slot to schedule it">
+        <header>
+          <h3>Tasks to schedule</h3>
+          {#if trayTasks.length}<span class="count">{trayTasks.length}</span>{/if}
+          <button class="quiet-button" aria-expanded={taskTrayOpen} aria-controls={`${pane.id}-calendar-task-tray`}
+            onclick={() => (taskTrayOpen = !taskTrayOpen)}>{taskTrayOpen ? "Hide" : "Show"}</button>
+        </header>
+        {#if taskTrayOpen}
+          <div id={`${pane.id}-calendar-task-tray`} class="tray-list">
+            {#each trayTasks as task}
+              <button class="tray-task" draggable="true" style:--task-color={taskColor(task)}
+                ondragstart={(event) => dragTask(task, event)} ondragend={finishDrag}
+                onclick={() => (taskEditor = { ...task })}>
+                <i class="ring"></i>
+                <strong>{task.title}</strong>
+                <span>{task.due ? (task.due.length === 10 ? shortDay(task.due) : label(task.due)) : "No date"}{task.priority === "normal" ? "" : ` · ${task.priority}`}</span>
+              </button>
+            {:else}<p class="hint">Nothing to schedule.</p>{/each}
+          </div>
         {/if}
-      </Panel>
+      </section>
     </aside>
     </div>
   {:else if section === "tasks"}
@@ -1805,9 +1801,7 @@
     resize: vertical;
   }
   .toolbar,
-  .controls,
   .tabs,
-  .calendars,
   footer {
     display: flex;
     align-items: center;
@@ -1865,101 +1859,190 @@
     width: 100%;
     min-width: 0;
   }
-  .display-options {
-    margin: 0;
+  /* Quiet words for secondary actions: no box until hovered. */
+  .quiet-button {
+    padding: 4px 10px;
+    border: 0;
+    border-radius: var(--r-control);
+    background: transparent;
     color: var(--muted);
     font-size: 14px;
+    white-space: nowrap;
   }
-  .display-options > .controls,
-  .display-options > .calendars {
-    margin-top: 0.8rem;
+  .quiet-button:hover:not(:disabled),
+  .quiet-button[aria-haspopup][aria-expanded="true"] {
+    background: color-mix(in srgb, var(--ink) 8%, transparent);
+    color: var(--ink);
+  }
+  .calendars {
+    display: grid;
+    gap: 2px;
+    min-width: 250px;
+    padding: 6px;
+    font-size: 14px;
+  }
+  .calendar-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .calendar-row label {
+    flex: 1;
+    min-width: 0;
+    padding: 5px 0;
+  }
+  .calendar-row .quiet-button {
+    font-size: 13px;
+  }
+  .calendars > .quiet-button {
+    justify-self: start;
+    margin-left: -6px;
+  }
+  .calendars .zone {
+    display: grid;
+    gap: 6px;
+    margin-top: 8px;
+    padding-top: 10px;
+    border-top: 1px solid var(--hairline);
+    color: var(--muted);
+    font-size: 13px;
   }
   .calendar-layout {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 260px;
+    grid-template-columns: minmax(0, 1fr) 264px;
     align-items: start;
-    gap: 1rem;
+    gap: 16px 28px;
+  }
+  .calendar-layout:focus {
+    outline: none;
+  }
+  .calendar-layout > :global(.range-bar) {
+    grid-column: 1 / -1;
   }
   .calendar-main,
   .selected-plan {
     min-width: 0;
   }
-  /* The grid sits on the page: no frame around it, the header's hairline above. */
-  .calendar-main {
-    border: 0;
+  /* The rail is plain sections under hairlines: the mini month, the picked day, the tasks to place. */
+  .rail-section {
+    padding: 16px 0 12px;
+    border-top: 1px solid var(--hairline);
   }
-  .plan-event {
+  .rail-section h3 {
+    margin: 0 0 8px;
+    font-size: 16px;
+    line-height: 1.3;
+  }
+  .rail-section header {
     display: flex;
-    flex-direction: column;
-    gap: 0.3rem;
-    text-align: left;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .rail-section header h3 {
+    margin: 0;
+  }
+  .rail-section .count {
+    color: var(--muted);
+    font-size: 14px;
+  }
+  .rail-section header .quiet-button {
+    margin-left: auto;
+    padding: 2px 8px;
+    font-size: 13px;
+  }
+  .rail-section .hint {
+    margin: 0;
+  }
+  .dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--calendar-color);
+  }
+  /* A task's mark: a small ring in its subject colour, filled once it is done. */
+  .ring {
+    flex: none;
+    box-sizing: border-box;
+    width: 11px;
+    height: 11px;
+    border: 1.5px solid var(--task-color, var(--muted));
+    border-radius: 50%;
+  }
+  .completed .ring {
+    background: var(--task-color, var(--muted));
+  }
+  .plan-event,
+  .tray-task {
+    display: grid;
+    grid-template-columns: 11px minmax(0, 1fr);
+    align-items: center;
+    gap: 1px 10px;
     width: 100%;
-    margin: 0.5rem 0;
-    padding: 0.75rem;
-    border-left: 3px solid var(--calendar-color);
+    padding: 6px 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    text-align: left;
+  }
+  .plan-event .dot {
+    justify-self: center;
+  }
+  .plan-event strong,
+  .tray-task strong,
+  .plan-task strong {
+    overflow: hidden;
+    font-size: 14px;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .plan-event span,
+  .tray-task span,
   .plan-task span {
     color: var(--muted);
-    font-size: 0.75rem;
+    font-size: 13px;
+  }
+  .plan-event span,
+  .tray-task span {
+    grid-column: 2;
+  }
+  .plan-event:hover strong,
+  .tray-task:hover strong,
+  .plan-task > button:hover strong {
+    text-decoration: underline;
+    text-underline-offset: 3px;
   }
   .plan-task {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
     align-items: start;
-    gap: 0.5rem;
-    margin-top: 0.75rem;
+    gap: 0 8px;
+    padding: 6px 0;
   }
   .plan-task-map { grid-column: 2; justify-self: start; }
   .plan-task input {
-    margin-top: 0.4rem;
+    margin-top: 2px;
   }
   .plan-task > button {
-    display: flex;
-    flex: 1;
-    flex-direction: column;
-    align-items: start;
-    gap: 0.3rem;
+    display: grid;
+    gap: 1px;
     min-width: 0;
-    text-align: left;
-    overflow-wrap: anywhere;
-  }
-  .completed strong,
-  .task-chip.completed {
-    text-decoration: line-through;
-    color: var(--muted);
-  }
-  .day-empty {
-    padding: 1.2rem 0 0.4rem;
-    font-size: 0.85rem;
-  }
-  .day-empty p {
-    margin-top: 0.4rem;
-    line-height: 1.6;
-  }
-  .time-date,
-  .agenda-date {
-    display: block;
+    padding: 0;
     border: 0;
     background: transparent;
     text-align: left;
-    padding: 0.25rem 0;
-    font-weight: 600;
   }
-  .dot {
-    width: 0.65rem;
-    height: 0.65rem;
-    border-radius: 50%;
-    background: var(--calendar-color);
+  .completed strong,
+  .completed .what {
+    text-decoration: line-through;
+    color: var(--muted);
   }
-  .calendars label {
-    background: var(--surface);
-    padding: 0.2rem 0.4rem;
-    border: 1px solid var(--border);
-    border-radius: 0.4rem;
-  }
-  .calendars button {
-    padding: 0.2rem 0.4rem;
+  .tray-list {
+    display: grid;
+    max-height: 320px;
+    overflow-y: auto;
   }
   .error,
   .notice {
@@ -1973,131 +2056,151 @@
     display: flex;
     justify-content: space-between;
   }
-  .month-layout {
-    display: grid;
-    grid-template-columns: minmax(0, 1.25fr) minmax(220px, 1fr);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    overflow: hidden;
-  }
+  /* Month: seven columns across the whole width, cells split by hairlines. */
   .month-grid {
     display: grid;
     grid-template-columns: repeat(7, minmax(0, 1fr));
-    align-content: start;
-    gap: 2px;
-    padding: 4px 8px 8px;
-  }
-  .day-cell {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 4px;
-    min-height: 56px;
-    min-width: 0;
-    border-radius: 10px;
-    cursor: pointer;
-  }
-  .day-cell:hover {
-    background: color-mix(in srgb, var(--ink) 5%, transparent);
-  }
-  .day-cell.selected {
-    background: var(--ink);
-  }
-  .day-cell.selected .day-head {
-    color: var(--solid-void);
-  }
-  .day-cell.today .day-head {
-    color: var(--accent);
-    font-weight: 700;
-  }
-  .day-cell.selected.today .day-head {
-    color: var(--solid-void);
-  }
-  .day-head {
-    padding: 0.15rem 0.4rem;
-    border: 0;
-    background: transparent;
-    color: var(--ink);
-    font: 500 0.82rem var(--font-ui);
-  }
-  .dots {
-    display: flex;
-    gap: 3px;
-    height: 5px;
-    pointer-events: none;
-  }
-  .dots i {
-    width: 5px;
-    height: 5px;
-    border-radius: 999px;
-  }
-  .outside {
-    opacity: 0.45;
+    grid-template-rows: auto repeat(6, minmax(108px, 1fr));
+    min-height: max(420px, calc(100dvh - 232px));
   }
   .weekday-label {
-    padding: 0.55rem 0.4rem 0.3rem;
-    text-align: center;
-    font: 600 0.7rem var(--font-ui);
-    color: var(--subtle);
+    padding: 0 8px 8px;
+    color: var(--muted);
+    font-size: 13px;
   }
-  .selecting {
-    background: color-mix(
-      in srgb,
-      var(--accent) 22%,
-      var(--surface)
-    ) !important;
+  .day-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+    padding: 6px;
+    border-top: 1px solid var(--hairline);
+    border-left: 1px solid var(--hairline);
   }
-  .event-chip {
+  .day-cell:nth-child(7n + 1) {
+    border-left: 0;
+  }
+  /* The empty part of a cell belongs to the cell (drag to pick days); only its buttons take the pointer. */
+  .day-top {
     display: flex;
     align-items: center;
-    gap: 0.2rem;
-    background: color-mix(in srgb, var(--calendar-color) 14%, var(--surface));
-    border-left: 3px solid var(--calendar-color);
-    margin: 0.25rem 0;
-    border-radius: 0.3rem;
-    min-width: 0;
+    justify-content: space-between;
+    min-height: 26px;
+    margin-bottom: 2px;
+    pointer-events: none;
   }
-  .event-chip > button:first-child {
-    flex: 1;
+  .day-top button {
+    pointer-events: auto;
+  }
+  .day-head {
+    min-width: 26px;
+    height: 26px;
+    padding: 0 4px;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--ink);
+    font-size: 14px;
+    font-variant-numeric: tabular-nums;
+  }
+  .day-cell.selected .day-head {
+    background: color-mix(in srgb, var(--ink) 14%, transparent);
+  }
+  .day-cell.today .day-head {
+    background: var(--ink);
+    color: var(--solid-void, var(--canvas));
+    font-weight: 600;
+  }
+  .outside > * {
+    opacity: 0.4;
+  }
+  .day-more {
+    padding: 0 2px;
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .day-more:hover {
+    color: var(--ink);
+  }
+  .month-chip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    min-width: 0;
+    height: 22px;
+    padding: 0 4px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    font-size: 13px;
+    text-align: left;
+  }
+  .month-chip:hover {
+    background: color-mix(in srgb, var(--ink) 8%, transparent);
+  }
+  .month-chip .dot {
+    width: 7px;
+    height: 7px;
+  }
+  .what {
+    flex: 0 1 auto;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    background: transparent;
-    border: 0;
-    text-align: left;
-    padding: 0.25rem;
-    font-size: 0.78rem;
   }
-  .resize {
-    padding: 0.2rem;
-    border: 0;
-    background: transparent;
-    font-size: 0.75rem;
-  }
-  .task-chip {
-    display: block;
-    text-align: left;
-    width: 100%;
-    font-size: 0.75rem;
-    margin: 0.25rem 0;
+  .when {
+    flex: none;
     color: var(--muted);
-    /* A subject-linked task carries its subject colour as a left rule. */
-    box-shadow: inset 3px 0 0 var(--task-color, transparent);
+    font-variant-numeric: tabular-nums;
+  }
+  .selecting {
+    background: color-mix(in srgb, var(--ink) 12%, transparent) !important;
+  }
+  /* An event: a soft tint of its colour over the page, a bar in the full colour, no outline. */
+  .event-chip {
+    display: flex;
+    min-width: 0;
+    border: 0;
+    border-left: 3px solid var(--block);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--block) 22%, var(--canvas));
+    color: var(--ink);
+  }
+  .event-chip:hover {
+    background: color-mix(in srgb, var(--block) 30%, var(--canvas));
+  }
+  /* A task shares the shape and carries a ring instead of the bar. */
+  .task-chip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    padding: 0 8px;
+    border: 0;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--task-color, var(--ink)) 12%, var(--canvas));
+    color: var(--ink);
+    font-size: 13px;
+    text-align: left;
+  }
+  .task-chip:hover {
+    background: color-mix(in srgb, var(--task-color, var(--ink)) 18%, var(--canvas));
   }
   .time-scroll {
     overflow: auto;
-    max-height: 70vh;
-    min-height: 380px;
+    max-height: max(420px, calc(100dvh - 232px));
     overscroll-behavior: contain;
   }
   .time-grid {
-    --slot-height: 36px;
-    --time-columns: 64px repeat(var(--days), minmax(110px, 1fr));
+    --time-columns: 60px repeat(var(--days), minmax(110px, 1fr));
     display: grid;
     grid-template-columns: var(--time-columns);
-    min-width: calc(var(--days) * 110px + 64px);
+    min-width: calc(var(--days) * 110px + 60px);
+    /* The theme's solid page colour: the sticky header and the event tints sit on the same surface. */
     background: var(--canvas);
   }
   .time-header {
@@ -2106,122 +2209,156 @@
     grid-column: 1 / -1;
     position: sticky;
     top: 0;
-    z-index: 4;
+    z-index: 5;
     background: var(--canvas);
-    border-bottom: 1px solid var(--border);
-    box-shadow: 0 2px 4px color-mix(in srgb, var(--ink) 8%, transparent);
+    border-bottom: 1px solid var(--hairline);
+    /* Covers the sub-pixel seam a fractional scroll leaves above a sticky row. */
+    box-shadow: 0 -2px 0 var(--canvas);
   }
   .time-zone,
   .all-day-label {
-    padding: 0.5rem 0.4rem;
-    color: var(--muted);
-    font-size: 0.65rem;
-    text-align: right;
-    overflow-wrap: anywhere;
-    background: var(--canvas);
-  }
-  .time-zone {
     align-content: center;
-  }
-  .all-day-label span {
-    font-size: 0.6rem;
+    padding-right: 8px;
+    color: var(--subtle);
+    font-size: 13px;
+    text-align: right;
+    white-space: nowrap;
   }
   .time-heading {
-    border-left: 1px solid var(--border);
-    padding: 0.35rem;
     min-width: 0;
+    padding: 6px 4px 10px;
   }
-  .time-heading .time-date {
+  .time-date {
     display: flex;
     align-items: center;
     justify-content: center;
-    flex-direction: column;
+    gap: 4px;
     width: 100%;
-    padding: 0.25rem;
-    border: 1px solid transparent;
-    border-radius: 0.5rem;
-    line-height: 1.2;
+    padding: 0;
+    border: 0;
+    background: transparent;
   }
-  .time-date span,
-  .time-date small {
-    font-size: 0.7rem;
-    font-weight: 400;
+  .time-date span {
     color: var(--muted);
+    font-size: 14px;
   }
   .time-date strong {
     display: grid;
     place-items: center;
-    width: 1.9rem;
-    height: 1.9rem;
-    font-size: 1.15rem;
-    border-radius: 50%;
+    min-width: 32px;
+    height: 32px;
+    border-radius: 999px;
+    font-size: 20px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+  }
+  .time-heading.selected .time-date strong {
+    background: color-mix(in srgb, var(--ink) 14%, transparent);
+  }
+  .time-heading.today .time-date span {
+    color: var(--ink);
   }
   .time-heading.today .time-date strong {
-    background: var(--accent);
-    color: var(--surface);
-  }
-  .time-heading.selected .time-date {
-    border-color: color-mix(in srgb, var(--accent) 28%, transparent);
-    background: color-mix(in srgb, var(--accent) 7%, transparent);
+    background: var(--ink);
+    color: var(--solid-void, var(--canvas));
+    font-weight: 600;
   }
   .all-day-cell {
-    display: flex;
-    align-items: flex-start;
+    position: relative;
     min-width: 0;
-    border-left: 1px solid var(--border);
-    border-top: 1px solid var(--border);
-    padding: 0.2rem;
-    gap: 0.2rem;
+    min-height: 30px;
+    padding: 3px 3px 1px 1px;
+    border-top: 1px solid var(--hairline);
+    border-left: 1px solid var(--hairline);
   }
-  .all-day-cell.selected {
-    background: color-mix(in srgb, var(--accent) 4%, transparent);
+  .all-day-label {
+    border-top: 1px solid var(--hairline);
   }
+  /* The add affordance appears with the pointer or the keyboard, over the cell's right end. */
   .all-day-add {
-    padding: 0.15rem;
-    font-size: 0.75rem;
-    line-height: 1.3;
-    border-color: transparent;
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: var(--canvas);
+    color: var(--muted);
+    font-size: 17px;
+    line-height: 1;
+    opacity: 0;
+  }
+  .all-day-cell:hover .all-day-add,
+  .all-day-add:focus-visible {
+    opacity: 1;
+  }
+  .all-day-add:hover {
+    color: var(--ink);
   }
   .all-day-items {
-    flex: 1;
     min-width: 0;
     max-height: 100px;
     overflow: auto;
   }
   .all-day-event,
   .all-day-items .task-chip {
-    display: block;
     width: 100%;
-    text-align: left;
-    padding: 0.25rem;
-    margin: 0 0 0.2rem;
-    font-size: 0.72rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    height: 24px;
+    margin: 0 0 2px;
+    font-size: 13px;
     white-space: nowrap;
   }
+  .all-day-event {
+    display: block;
+    padding: 0 8px;
+    overflow: hidden;
+    font-weight: 600;
+    text-align: left;
+    text-overflow: ellipsis;
+  }
+  /* Hour labels sit on their lines; the one under the now time steps aside for it. */
   .time-axis {
-    background: var(--canvas);
+    position: relative;
+  }
+  .time-label,
+  .now-time {
+    padding-right: 8px;
+    font-size: 13px;
+    line-height: 1;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
   }
   .time-label {
-    height: var(--slot-height);
     box-sizing: border-box;
-    text-align: right;
-    padding: 0.15rem 0.45rem;
-    color: var(--muted);
-    font-size: 0.68rem;
+    height: calc(2 * var(--slot-height));
+    color: var(--subtle);
+    transform: translateY(-0.5em);
+  }
+  .time-label.hidden {
+    visibility: hidden;
+  }
+  .now-time {
+    position: absolute;
+    right: 0;
+    color: var(--ink);
+    font-weight: 600;
+    transform: translateY(-50%);
   }
   .time-day {
     position: relative;
     height: calc(48 * var(--slot-height));
     min-width: 0;
-    border-left: 1px solid var(--border);
+    border-left: 1px solid var(--hairline);
   }
   .time-cell {
     box-sizing: border-box;
     height: var(--slot-height);
     position: relative;
-    border-top: 1px dashed color-mix(in srgb, var(--border) 55%, transparent);
+  }
+  .time-cell.hour-start {
+    border-top: 1px solid var(--hairline);
   }
   .drop-target {
     background: color-mix(in srgb, var(--accent) 20%, var(--surface));
@@ -2231,22 +2368,10 @@
     background: color-mix(in srgb, var(--danger, #d14b5a) 16%, var(--surface));
     box-shadow: inset 0 0 0 2px var(--danger, #d14b5a);
   }
-  .drop-status { position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%); z-index: 40; max-width: calc(100vw - 2rem); margin: 0; padding: 0.6rem 0.9rem; pointer-events: none; color: var(--ink); background: var(--surface-raised); border: 1px solid var(--accent); border-radius: 6px; box-shadow: var(--overlay-shadow); }
-  .task-tray { margin: 0.7rem 0 1rem; padding: 0.8rem; border: 1px solid var(--border); border-radius: 8px; }
-  .task-tray h3 { margin: 0; }
-  .tray-list { display: grid; gap: 0.4rem; max-height: 320px; overflow-y: auto; margin-top: 0.6rem; }
-  .tray-task { display: grid; gap: 0.25rem; text-align: left; width: 100%; padding: 0.6rem; box-shadow: inset 3px 0 0 var(--task-color, transparent); }
-  .tray-task span { font-size: 0.75rem; color: var(--muted); }
-  .timed-task { position: absolute; z-index: 4; left: 2px; right: 2px; max-width: calc(100% - 4px); text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.7rem; }
+  .drop-status { position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%); z-index: 40; max-width: calc(100vw - 2rem); margin: 0; padding: 0.6rem 0.9rem; pointer-events: none; color: var(--ink); background: var(--surface-raised); border: 1px solid var(--hairline); border-radius: 6px; font-size: 14px; }
+  .timed-task { position: absolute; z-index: 4; left: 1px; right: 3px; height: calc(var(--slot-height) - 2px); }
   [draggable="true"] { cursor: grab; }
   [draggable="true"]:active { cursor: grabbing; }
-  .time-cell.hour-start {
-    border-top: 1px solid var(--border);
-  }
-  /* A tint of the page, not a filled column: the grid lines stay visible through it. */
-  .time-day.today {
-    background: color-mix(in srgb, var(--accent) 4%, transparent);
-  }
   .slot-button {
     position: absolute;
     inset: 0;
@@ -2258,7 +2383,7 @@
   }
   .slot-button:hover,
   .slot-button:focus-visible {
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    background: color-mix(in srgb, var(--ink) 6%, transparent);
   }
   .slot-button:focus-visible {
     outline-offset: -2px;
@@ -2267,83 +2392,161 @@
   .timed {
     position: absolute;
     z-index: 1;
-    margin: 0;
     box-sizing: border-box;
-    border: 0;
-    border-radius: 9px;
-    background: var(--block);
-    color: var(--block-ink);
-    box-shadow: 0 1px 0 color-mix(in srgb, var(--ink) 25%, transparent) inset;
     overflow: hidden;
-    align-items: stretch;
   }
   .timed > .timed-content {
     display: flex;
+    flex: 1;
     flex-direction: column;
     align-items: flex-start;
-    white-space: normal;
+    gap: 1px;
     min-width: 0;
-    padding: 0.15rem 0.25rem;
-    line-height: 1.15;
+    padding: 5px 8px;
     overflow: hidden;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
     color: inherit;
+    line-height: 1.25;
+    text-align: left;
   }
   .timed-content strong,
   .timed-content span {
-    display: block;
-    width: 100%;
+    max-width: 100%;
     overflow: hidden;
+    font-size: 13px;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 0.72rem;
+  }
+  .timed-content strong {
+    font-weight: 600;
   }
   .timed-content span {
-    font-size: 0.65rem;
-    margin-top: 0.1rem;
-    opacity: 0.72;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
   }
+  /* Under 50 minutes there is one line: the title, then the time. */
+  .timed.short > .timed-content {
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    padding: 0 8px;
+  }
+  .timed.short strong {
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+  .timed.short span {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  /* The bottom edge resizes. */
   .timed .resize {
-    align-self: flex-end;
-    font-size: 0.6rem;
-    padding: 0.1rem;
-    color: inherit;
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 6px;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    cursor: ns-resize;
   }
-  .timed:hover {
-    box-shadow: 0 6px 16px color-mix(in srgb, var(--block) 35%, transparent);
-  }
+  /* Now: one line across today with a dot where it starts; its time is in the gutter. */
   .now-line {
     position: absolute;
     left: 0;
     right: 0;
-    border-top: 1.5px dashed var(--c1);
     z-index: 3;
+    border-top: 2px solid var(--ink);
+    transform: translateY(-1px);
     pointer-events: none;
   }
-  .now-line .bloom {
+  .now-line::before {
+    content: "";
     position: absolute;
-    left: -6px;
-    top: -9px;
-    color: var(--c1);
-    font-size: 13px;
-    line-height: 1;
-    text-shadow: 0 0 6px var(--c1);
+    left: -5px;
+    top: -6px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--ink);
   }
   .agenda section {
-    padding: 0.8rem 0;
-    border-bottom: 1px solid var(--border);
+    display: grid;
+    grid-template-columns: 150px minmax(0, 1fr);
+    gap: 0 16px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .agenda h2 {
+    margin: 0;
+  }
+  .agenda-date {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+  .agenda-date strong {
+    display: grid;
+    place-items: center;
+    min-width: 32px;
+    height: 32px;
+    border-radius: 999px;
+    font-size: 20px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+  }
+  .agenda .today .agenda-date strong {
+    background: var(--ink);
+    color: var(--solid-void, var(--canvas));
+    font-weight: 600;
+  }
+  .agenda-date span {
+    color: var(--muted);
+    font-size: 14px;
+    font-weight: 400;
   }
   .agenda-event {
     display: flex;
-    gap: 0.8rem;
-    text-align: left;
     align-items: center;
+    gap: 10px;
     width: 100%;
-    margin: 0.4rem 0;
-    border-left: 3px solid var(--calendar-color, var(--accent));
+    min-height: 32px;
+    padding: 4px 8px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    font-size: 15px;
+    text-align: left;
   }
-  .agenda-event span {
-    font-size: 0.85rem;
+  .agenda-event:hover {
+    background: color-mix(in srgb, var(--ink) 6%, transparent);
+  }
+  .agenda-event .when {
+    width: 112px;
+    font-size: 14px;
+  }
+  .agenda-event strong {
+    min-width: 0;
+    overflow: hidden;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .agenda-event .where {
     color: var(--muted);
+    font-size: 14px;
+    white-space: nowrap;
+  }
+  .agenda > .hint {
+    margin: 0;
+    padding: 12px 0;
   }
   .task-columns {
     display: flex;
@@ -2377,7 +2580,7 @@
     margin-right: auto;
   }
   .task-card p {
-    font-size: 0.78rem;
+    font-size: 13px;
     color: var(--muted);
     margin: 0.5rem 0;
   }
@@ -2387,7 +2590,7 @@
     gap: 0.25rem;
   }
   .tags span {
-    font-size: 0.7rem;
+    font-size: 13px;
     padding: 0.15rem 0.3rem;
     background: var(--surface-raised);
     border-radius: 0.3rem;
@@ -2407,7 +2610,7 @@
     min-width: 8rem;
     background: var(--accent);
     color: var(--surface);
-    font-size: 0.75rem;
+    font-size: 13px;
     padding: 0.35rem;
     white-space: nowrap;
   }
@@ -2416,11 +2619,6 @@
     border: 1px solid var(--warning);
     border-radius: 0.5rem;
     margin: 0.6rem 0;
-  }
-  small {
-    display: block;
-    color: var(--muted);
-    margin-top: 0.3rem;
   }
   details {
     margin: 0.8rem 0;
@@ -2563,7 +2761,7 @@
     color: var(--ink);
   }
   .stepper b {
-    font: 600 0.8rem var(--font-ui);
+    font: 600 13px var(--font-ui);
   }
   .steppers .arrow {
     color: var(--subtle);
@@ -2571,7 +2769,7 @@
   .drawer-dates {
     display: grid;
     gap: 6px;
-    font-size: 0.8rem;
+    font-size: 13px;
   }
   .drawer-dates .inline {
     display: flex;
@@ -2614,7 +2812,7 @@
     border-radius: 999px;
     background: transparent;
     color: var(--muted);
-    font-size: 0.75rem;
+    font-size: 13px;
   }
   .chips button[aria-pressed="true"] {
     border-color: var(--accent);
@@ -2627,16 +2825,12 @@
     }
   }
   @media (max-width: 760px) {
-    .month-layout {
+    .agenda section {
       grid-template-columns: minmax(0, 1fr);
+      gap: 6px;
     }
-    .controls label {
-      flex-wrap: wrap;
-    }
-    .agenda-event {
-      align-items: start;
-      flex-direction: column;
-      gap: 0.2rem;
+    .agenda-event .where {
+      display: none;
     }
     .toolbar {
       align-items: start;
@@ -2644,8 +2838,8 @@
     .header-actions {
       margin-left: 0;
     }
-    .day-cell {
-      min-height: 44px;
+    .month-grid {
+      grid-template-rows: auto repeat(6, minmax(72px, 1fr));
     }
     .modal-backdrop {
       padding: 0.3rem;

@@ -40,6 +40,10 @@
   const pickedRow = $derived(rows.findIndex((row) => row.includes(selected)));
   const focusRow = $derived(hoverRow !== null ? rows[hoverRow] : pickedRow >= 0 ? rows[pickedRow] : null);
   const minutes = (day: string) => load[day]?.minutes ?? 0;
+  const focusEvents = $derived(focusRow?.reduce((sum, day) => sum + (load[day]?.events ?? 0), 0) ?? 0);
+  const focusMinutes = $derived(focusRow?.reduce((sum, day) => sum + minutes(day), 0) ?? 0);
+  /** The picked week's chart keeps its room while another week is previewed, so the rail below does not jump. */
+  const pickedBusy = $derived(pickedRow >= 0 && rows[pickedRow].some((day) => minutes(day) > 0));
   const weekdays = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
 </script>
 
@@ -57,7 +61,7 @@
     {#each rows as row, r (row[0])}
       <div class="row" class:hot={hoverRow === r} class:picked={r === pickedRow} role="row"
         tabindex="-1" onmouseenter={() => (hoverRow = r)} onmouseleave={() => (hoverRow = null)}>
-        <span class="wk" role="rowheader">W{isoWeek(row[0])}</span>
+        <span class="wk" role="rowheader" aria-label={`Week ${isoWeek(row[0])}`}>{isoWeek(row[0])}</span>
         {#each row as day (day)}
           <button class="d" class:out={day.slice(0, 7) !== month} class:today={day === today}
             class:busy={(load[day]?.events ?? 0) >= 3} role="gridcell" aria-selected={day === selected}
@@ -68,52 +72,56 @@
     {/each}
   </div>
   {#if focusRow}
-    <div class="peek" role="status" aria-label="Week preview">
-      <span class="eyebrow">week {isoWeek(focusRow[0])} · {focusRow.reduce((sum, day) => sum + (load[day]?.events ?? 0), 0)} events · {duration(focusRow.reduce((sum, day) => sum + minutes(day), 0))}</span>
-      <div class="bars" aria-hidden="true">
-        {#each focusRow as day, i (day)}
-          <div class="bar" class:today={day === today}>
-            <i style:height={`${Math.min(1, minutes(day) / 420) * 100}%`}></i>
-            <span>{weekdays[i][0]}</span>
-          </div>
-        {/each}
-      </div>
+    <div class="peek" class:roomy={pickedBusy} role="status" aria-label="Week preview">
+      <span class="sum">Week {isoWeek(focusRow[0])} · {focusEvents === 1 ? "1 event" : `${focusEvents} events`}{focusMinutes ? ` · ${duration(focusMinutes)}` : ""}</span>
+      {#if focusMinutes}
+        <div class="bars" aria-hidden="true">
+          {#each focusRow as day, i (day)}
+            <div class="bar" class:today={day === today}>
+              <i style:height={`${Math.min(1, minutes(day) / 420) * 100}%`}></i>
+              <span>{weekdays[i][0]}</span>
+            </div>
+          {/each}
+        </div>
+      {/if}
     </div>
   {/if}
 </div>
 
 <style>
+  /* A plain section of the rail: no frame, hairlines only. */
   .mini {
     display: grid;
-    gap: 6px;
-    padding: 10px 12px 12px;
-    border: 1px solid var(--border);
-    border-radius: 0.8rem;
-    background: color-mix(in srgb, var(--solid-panel) 55%, transparent);
+    gap: 8px;
+    padding-bottom: 14px;
   }
   header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    gap: 2px;
   }
   header strong {
-    font: 700 0.95rem var(--font-ui);
+    margin-right: auto;
+    font: 600 16px/1.3 var(--font-ui);
   }
   .nav {
-    width: 24px;
-    height: 24px;
-    padding: 0;
-    border: 1px solid var(--hairline);
+    width: 28px;
+    height: 28px;
+    padding: 0 0 2px;
+    border: 0;
     border-radius: 999px;
     background: transparent;
     color: var(--muted);
+    font-size: 20px;
+    line-height: 1;
   }
   .nav:hover {
+    background: color-mix(in srgb, var(--ink) 8%, transparent);
     color: var(--ink);
   }
   .grid {
     display: grid;
-    grid-template-columns: 28px repeat(7, minmax(0, 1fr));
+    grid-template-columns: 30px repeat(7, minmax(0, 1fr));
     row-gap: 2px;
   }
   .row {
@@ -124,20 +132,22 @@
     display: grid;
     place-items: center;
     color: var(--subtle);
-    font: 500 0.55rem var(--font-ui);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font: 400 13px var(--font-ui);
+    font-variant-numeric: tabular-nums;
+  }
+  .wd {
+    height: 26px;
   }
   .d {
     position: relative;
     isolation: isolate;
-    height: 26px;
+    height: 30px;
     padding: 0;
     border: 0;
     border-radius: 0;
     background: transparent;
     color: var(--ink);
-    font-size: 0.72rem;
+    font-size: 13px;
     font-variant-numeric: tabular-nums;
     cursor: pointer;
   }
@@ -145,13 +155,10 @@
     border-radius: 999px 0 0 999px;
   }
   .row.hot > * {
-    background: color-mix(in srgb, var(--ink) 6%, transparent);
+    background: color-mix(in srgb, var(--ink) 5%, transparent);
   }
   .row.picked > * {
-    background: color-mix(in srgb, var(--c1) 22%, transparent);
-  }
-  .row.picked .wk {
-    color: var(--ink);
+    background: color-mix(in srgb, var(--ink) 9%, transparent);
   }
   .row > .d:last-child {
     border-radius: 0 999px 999px 0;
@@ -167,55 +174,65 @@
     width: 3px;
     height: 3px;
     border-radius: 999px;
-    background: var(--c1);
+    background: currentColor;
     transform: translateX(-50%);
   }
-  .d.today {
-    color: var(--solid-void);
-    font-weight: 700;
-  }
+  /* The day's own mark is a circle: soft for the picked day, filled for today. */
+  .d[aria-selected="true"]::before,
   .d.today::before {
     content: "";
     position: absolute;
-    inset: 2px calc(50% - 11px);
+    inset: 2px calc(50% - 13px);
     z-index: -1;
     border-radius: 999px;
-    background: var(--accent);
+    background: color-mix(in srgb, var(--ink) 16%, transparent);
+  }
+  .d.today {
+    color: var(--solid-void);
+    font-weight: 600;
+  }
+  .d.today::before {
+    background: var(--ink);
   }
   .peek {
     display: grid;
-    gap: 6px;
-    padding-top: 8px;
+    gap: 8px;
+    padding-top: 12px;
     border-top: 1px solid var(--hairline);
   }
-  .peek .eyebrow {
+  .peek.roomy {
+    align-content: start;
+    min-height: 106px;
+  }
+  .sum {
     color: var(--muted);
+    font-size: 13px;
   }
   .bars {
     display: grid;
     grid-template-columns: repeat(7, minmax(0, 1fr));
     gap: 6px;
-    height: 54px;
+    height: 64px;
   }
   .bar {
     display: grid;
     grid-template-rows: 1fr auto;
     justify-items: center;
-    gap: 2px;
+    gap: 4px;
   }
   .bar i {
     align-self: end;
     width: 100%;
     max-width: 18px;
     min-height: 2px;
-    border-radius: 4px 4px 2px 2px;
-    background: color-mix(in srgb, var(--c3) 70%, transparent);
+    border-radius: 3px 3px 1px 1px;
+    background: color-mix(in srgb, var(--ink) 30%, transparent);
   }
   .bar.today i {
-    background: var(--accent);
+    background: var(--ink);
   }
   .bar span {
     color: var(--subtle);
-    font: 500 0.55rem var(--font-ui);
+    font: 400 13px/1 var(--font-ui);
   }
 </style>

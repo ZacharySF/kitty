@@ -1,6 +1,7 @@
 // Calendar colours (Q54) in a real browser against an in-memory stand-in for the
 // calendar API (tests/calendarHarness.js; synthetic data): subject-linked events take
 // the study subject's colour and lock it; unlinked ones pick a theme palette slot.
+// A block is a soft tint of its colour; the bar on its left is the colour itself.
 // Run with Node >=22 and a matching Playwright Chromium:
 // PLAYWRIGHT_BROWSERS_PATH=<Nix playwright-driver.browsers store path> \
 // PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true node --test tests/calendarColors.browser.test.mjs
@@ -41,6 +42,8 @@ async function calendar(theme = "kitty") {
 }
 const block = (page, title) => page.getByRole("group", { name: title, exact: true });
 const fill = (locator) => locator.evaluate((node) => getComputedStyle(node).backgroundColor);
+/** An event block's colour: the bar on its left edge. */
+const bar = (locator) => locator.evaluate((node) => getComputedStyle(node).borderLeftColor);
 /** The computed colour a CSS colour (e.g. `var(--c3)`) resolves to on this page's theme. */
 const resolved = (page, css) => page.evaluate((value) => {
   const probe = document.createElement("i");
@@ -66,9 +69,10 @@ async function until(check, what) {
 for (const theme of ["kitty", "gruvbox"]) {
   test(`subject-linked events take the subject colour; unlinked ones their palette slot (${theme})`, async () => {
     const { page, problems, context } = await calendar(theme);
-    assert.equal(await fill(block(page, "Optics lecture")), "rgb(49, 162, 188)", "Physics’ colour from Study");
-    assert.equal(await fill(block(page, "Lunch with Mira")), await resolved(page, "var(--c3)"));
-    assert.equal(await fill(block(page, "Club night")), "rgb(18, 58, 188)", "an existing hex calendar colour still renders");
+    assert.equal(await bar(block(page, "Optics lecture")), "rgb(49, 162, 188)", "Physics’ colour from Study");
+    assert.equal(await bar(block(page, "Lunch with Mira")), await resolved(page, "var(--c3)"));
+    assert.equal(await bar(block(page, "Club night")), "rgb(18, 58, 188)", "an existing hex calendar colour still renders");
+    assert.notEqual(await fill(block(page, "Optics lecture")), "rgb(49, 162, 188)", "the block should be a tint of its colour, not a solid fill");
     assert.notEqual(await resolved(page, "var(--c3)"), "rgb(109, 93, 252)");
     assert.deepEqual(problems, []);
     await context.close();
@@ -92,18 +96,18 @@ test("an unlinked event picks a palette slot live and saves the slot, or links a
   assert.equal(await colours(page).getByRole("radio", { name: "Theme colour 3" }).getAttribute("aria-checked"), "true");
   await colours(page).getByRole("radio", { name: "Theme colour 5" }).click();
   const c5 = await resolved(page, "var(--c5)");
-  await until(async () => (await fill(block(page, "Lunch with Mira"))) === c5, "the block shows the picked slot live");
+  await until(async () => (await bar(block(page, "Lunch with Mira"))) === c5, "the block shows the picked slot live");
   await drawer(page).getByRole("button", { name: "Save changes" }).click();
   await until(async () => (await posted(page, "/calendar/events/picked")).length === 1, "the edit is saved");
   assert.equal((await posted(page, "/calendar/events/picked"))[0].changes.color, "c5");
-  await until(async () => (await fill(block(page, "Lunch with Mira"))) === c5, "the saved block keeps the slot");
+  await until(async () => (await bar(block(page, "Lunch with Mira"))) === c5, "the saved block keeps the slot");
 
   await open(page, "Lunch with Mira");
   await drawer(page).getByRole("combobox", { name: "Study subject" }).click();
   await page.getByRole("listbox", { name: "Study subject" }).getByRole("option", { name: "Physics" }).click();
   await assert.doesNotReject(drawer(page).getByText("Auto · Physics").waitFor());
   assert.equal(await colours(page).count(), 0);
-  await until(async () => (await fill(block(page, "Lunch with Mira"))) === "rgb(49, 162, 188)", "linking recolours live");
+  await until(async () => (await bar(block(page, "Lunch with Mira"))) === "rgb(49, 162, 188)", "linking recolours live");
   await drawer(page).getByRole("button", { name: "Save changes" }).click();
   await until(async () => (await posted(page, "/calendar/events/picked")).length === 2, "the link is saved");
   assert.equal((await posted(page, "/calendar/events/picked"))[1].changes.subject_id, 7);
@@ -113,8 +117,8 @@ test("an unlinked event picks a palette slot live and saves the slot, or links a
 
 test("a new calendar starts on the next palette slot, never a fixed hex", async () => {
   const { page, problems, context } = await calendar();
-  await page.getByText("Calendars & display settings").click();
-  await page.getByRole("button", { name: "＋ Calendar" }).click();
+  await page.getByRole("button", { name: "Calendars", exact: true }).click();
+  await page.getByRole("dialog", { name: "Calendars" }).getByRole("button", { name: "New calendar" }).click();
   const dialog = page.getByRole("dialog", { name: "Calendar settings" });
   const swatches = dialog.getByRole("radiogroup", { name: "Colour" });
   assert.equal(await swatches.getByRole("radio", { name: "Theme colour 3" }).getAttribute("aria-checked"), "true");

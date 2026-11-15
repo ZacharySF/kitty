@@ -1153,7 +1153,7 @@
     background: var(--canvas);
     padding: 0.8rem;
     border-radius: 0.4rem;
-    font-size: 0.75rem;
+    font-size: 13px;
     max-height: 28rem;
     overflow: auto;
   }

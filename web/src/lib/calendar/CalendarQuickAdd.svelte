@@ -6,14 +6,14 @@
 
   /**
    * Q20 A: the calendar's one create affordance. A typed phrase ("gym tue 6pm 1h")
-   * becomes an event or a task; a clicked slot prefills the time. `round` is the +
-   * on the range pill; otherwise QuickAdd's own "+ label" action.
+   * becomes an event or a task; a clicked slot prefills the time. The trigger is
+   * QuickAdd's own "+ label" primary action.
    */
   let {
     label,
     today,
     at,
-    round = false,
+    shortcut = "",
     kind = $bindable("event"),
     open = $bindable(false),
     onsave,
@@ -22,7 +22,8 @@
     today: string;
     /** Where the add starts: the selected day, or a clicked slot or range. */
     at: QuickSlot;
-    round?: boolean;
+    /** The single key that opens it, named in the button's tooltip. */
+    shortcut?: string;
     kind?: QuickKind;
     open?: boolean;
     /** `more` opens the created item in the drawer. Return false to keep the popover open. */
@@ -43,37 +44,25 @@
   }
 </script>
 
-<QuickAdd {label} bind:open bind:value={text} placement={round ? "top-end" : "bottom-end"}
+<QuickAdd {label} bind:open bind:value={text} placement="bottom-end"
   placeholder={kind === "event" ? "gym tue 6pm 1h" : "pay rent fri"} onsave={save} onmore={more}>
   {#snippet trigger(props)}
-    {#if round}
-      <button type="button" class="round-add" aria-label={label} title={`${label} (N)`} aria-keyshortcuts="N" {...props}><Icon name="plus" size={15} /></button>
-    {:else}
-      <button type="button" class="pill primary page-action" {...props}><Icon name="plus" size={14} />{label}</button>
-    {/if}
+    <button type="button" class="pill primary page-action" title={shortcut ? `${label} (${shortcut})` : undefined}
+      aria-keyshortcuts={shortcut || undefined} {...props}><Icon name="plus" size={14} />{label}</button>
   {/snippet}
   {#snippet chips()}
-    <Select label="Kind" bind:value={kind} options={[{ value: "event", label: "Event" }, { value: "task", label: "Task" }]} />
+    <span class="calendar-kind"><Select label="Kind" bind:value={kind} options={[{ value: "event", label: "Event" }, { value: "task", label: "Task" }]} /></span>
     <span class="when" title={plan.where ? `at ${plan.where}` : undefined}><Icon name="calendar" size={12} />{when}{#if span}<b>{span}</b>{/if}</span>
   {/snippet}
 </QuickAdd>
 
 <style>
-  .round-add {
-    display: inline-grid;
-    place-items: center;
-    width: 28px;
-    height: 28px;
-    padding: 0;
-    border: 1px solid transparent;
-    border-radius: 999px;
-    background: var(--ink);
-    color: var(--solid-void);
-    cursor: pointer;
+  /* The calendar draws no text under 13px, its quick add included. */
+  .calendar-kind {
+    display: contents;
   }
-  .round-add:hover,
-  .round-add[aria-expanded="true"] {
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ink) 18%, transparent);
+  :global(:root body .kitty-popover.quick-add:has(.calendar-kind) :is(kbd, .br-btn)) {
+    font-size: 13px;
   }
   .when {
     display: inline-flex;
@@ -84,10 +73,10 @@
     border: 1px solid var(--hairline);
     border-radius: 999px;
     color: var(--ink);
-    font: 500 var(--fs-control) var(--font-ui);
+    font: 500 max(13px, var(--fs-control)) var(--font-ui);
     white-space: nowrap;
   }
   .when b {
-    font: 600 var(--fs-control) var(--font-ui);
+    font: 600 max(13px, var(--fs-control)) var(--font-ui);
   }
 </style>
