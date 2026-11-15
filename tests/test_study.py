@@ -1,14 +1,11 @@
 """Deterministic consumer behavior for local timers, records and dated plans."""
 from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor
-from types import SimpleNamespace
 
 import pytest
 
 from kitty.core import study
 from kitty.db import connect
-from kitty import web_study
-from kitty.web_server import APIError
 
 UTC = timezone.utc
 BASE = datetime(2026, 10, 14, 9, 0, tzinfo=UTC)
@@ -316,20 +313,6 @@ def test_streaks_skip_empty_days_and_weeks_instead_of_counting_login(workspace):
     assert later['daily_streak'] == 0 and later['weekly_streak'] == 0
 
 
-def test_web_extension_allows_local_demo_actions_and_exposes_conflicts(workspace):
-    conn = workspace.conn
-    app = SimpleNamespace(settings=SimpleNamespace(demo=True), _no_query=lambda query: None)
-    created = web_study.post(app, conn, '/api/study/subjects', {'name': 'Synthetic demo subject'})['item']
-    assert web_study.get(app, conn, '/api/study', {})['subjects'][0]['id'] == created['id']
-    web_study.post(app, conn, '/api/study/subjects', {'id': created['id'], 'revision': created['revision'], 'name': 'Revised'})
-    with pytest.raises(APIError) as conflict:
-        web_study.post(app, conn, '/api/study/subjects', {'id': created['id'], 'revision': created['revision'], 'name': 'Stale'})
-    assert conflict.value.status == 409
-    with pytest.raises(APIError) as invalid:
-        web_study.get(app, conn, '/api/study', {'unknown': '1'})
-    assert invalid.value.status == 400
-
-
 def test_settings_round_trip_keeps_active_phase_duration_and_uses_new_next_phase(workspace):
     conn = workspace.conn
     short_focus(workspace)
@@ -413,19 +396,6 @@ def test_month_history_handles_leap_year_and_year_navigation(workspace):
     assert january['next'] == '2026-02-01'
     december = study.statistics(conn, now=BASE, history_period='month', history_date='2026-12-15')['history']
     assert december['next'] == '2027-01-01'
-
-
-def test_history_period_api_rejects_unknown_period_and_invalid_date(workspace):
-    conn = workspace.conn
-    app = SimpleNamespace(_no_query=lambda query: None)
-    for query in ({'period': 'year'}, {'period': 'month', 'date': '2026-02-30'}):
-        with pytest.raises(APIError) as invalid:
-            web_study.get(app, conn, '/api/study', query)
-        assert invalid.value.status == 400
-    result = web_study.get(app, conn, '/api/study', {'period': 'month', 'date': '2026-02-20', 'timezone': 'UTC'})
-    assert result['stats']['history']['start'] == '2026-02-01'
-    assert result['stats']['history']['end'] == '2026-03-01'
-    assert len(result['stats']['history']['days']) == 28
 
 
 def test_priming_pause_reload_and_skip_guard_never_create_focus_time(workspace):
@@ -518,7 +488,5 @@ def test_spaced_returns_climb_the_ladder_when_recalled_and_reset_when_shaky(work
     assert unscheduled['subject_id'] is None
     with pytest.raises(ValueError):
         study.review_return(conn, {'session_id': blank['session_id'], 'revision': unscheduled['revision'], 'result': 'recalled'}, now=BASE)
-    app = SimpleNamespace(_no_query=lambda query: None)
-    routed = web_study.post(app, conn, '/api/study/returns',
-                            {'session_id': started['session_id'], 'revision': saved['revision'], 'result': 'shaky'})
+    routed = study.review_return(conn, {'session_id': started['session_id'], 'revision': saved['revision'], 'result': 'shaky'})
     assert routed['guide']['return_step'] == 0

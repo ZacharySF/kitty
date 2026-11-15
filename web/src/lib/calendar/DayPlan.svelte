@@ -1,7 +1,7 @@
 <script module lang="ts">
-  /** `style` sets `--block` / `--block-ink`, the filled colours of the event (subject, palette slot or calendar). */
+  /** `style` sets `--block`, the event's colour (subject, palette slot or calendar): its bar and the tint of its fill. */
   export type PlanEvent = { key: string; title: string; start: number; end: number; column: number; columns: number; style: string; open: () => void };
-  /** `color` is the task's study subject colour; unlinked tasks use the accent. */
+  /** `color` is the task's study subject colour; unlinked tasks stay neutral. */
   export type PlanTask = { id: string; title: string; priority: string; done: boolean; at: number | null; color?: string; open: () => void };
 </script>
 
@@ -9,8 +9,7 @@
   import { PLAN_END, PLAN_LENGTH, PLAN_START } from "./plan";
 
   /** Today split: the day's timeline next to its tasks; Plan drops a task into the next free gap. */
-  let { eyebrow, now = null, events, tasks, busy = false, onplan, onunplan, ontoggle }: {
-    eyebrow: string;
+  let { now = null, events, tasks, busy = false, onplan, onunplan, ontoggle }: {
     /** Current minute when the day is today. */
     now?: number | null;
     events: PlanEvent[];
@@ -20,42 +19,40 @@
     onunplan: (id: string) => void;
     ontoggle: (id: string) => void;
   } = $props();
-  const HOUR = 44;
+  const HOUR = 58;
   const hours = Array.from({ length: (PLAN_END - PLAN_START) / 60 }, (_, i) => PLAN_START / 60 + i);
   const top = (m: number) => ((Math.max(PLAN_START, Math.min(PLAN_END, m)) - PLAN_START) / 60) * HOUR;
   const clock = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
   const done = $derived(tasks.filter((t) => t.done).length);
+  const live = $derived(now !== null && now >= PLAN_START && now <= PLAN_END ? now : null);
 </script>
 
 <section class="plan" aria-label="Day plan">
-  <header>
-    <div>
-      <span class="eyebrow">{eyebrow}</span>
-      <h3>Day plan</h3>
-    </div>
-    <span class="ring" style:--p={tasks.length ? done / tasks.length : 0} role="img" aria-label={`${done} of ${tasks.length} tasks done`}>
-      <b>{done}/{tasks.length}</b>
-    </span>
-  </header>
-  <div class="split">
-    <div class="timeline" style:height={`${hours.length * HOUR}px`}>
-      {#each hours as hr (hr)}<span class="hr" style:top={`${top(hr * 60)}px`}>{String(hr).padStart(2, "0")}</span>{/each}
-      {#each events as e (e.key)}
-        {#if e.end > PLAN_START && e.start < PLAN_END}
-          <button class="blk" class:past={now !== null && e.end < now} style={e.style}
-            style:top={`${top(e.start)}px`} style:height={`${Math.max(16, top(e.end) - top(e.start) - 1)}px`}
-            style:left={`calc(${(e.column / e.columns) * 100}% + 2px)`} style:width={`calc(${100 / e.columns}% - 3px)`}
-            onclick={e.open}>{clock(e.start)} {e.title}</button>
-        {/if}
-      {/each}
-      {#each tasks.filter((t) => t.at !== null) as t (t.id)}
-        <button class="blk task" style:--task={t.color} style:top={`${top(t.at ?? 0)}px`} style:height={`${(PLAN_LENGTH / 60) * HOUR - 1}px`}
-          onclick={t.open}>☐ {t.title}</button>
-      {/each}
-      {#if now !== null && now >= PLAN_START && now <= PLAN_END}
-        <div class="now" style:top={`${top(now)}px`} aria-hidden="true"><i>{clock(now)}</i></div>
+  <div class="timeline" style:height={`${hours.length * HOUR}px`}>
+    {#each hours as hr (hr)}
+      <span class="hr" class:hidden={live !== null && Math.abs(hr * 60 - live) < 25} style:top={`${top(hr * 60)}px`}>{clock(hr * 60)}</span>
+    {/each}
+    {#each events as e (e.key)}
+      {#if e.end > PLAN_START && e.start < PLAN_END}
+        <button class="blk" class:past={now !== null && e.end < now} style={e.style}
+          style:top={`${top(e.start)}px`} style:height={`${Math.max(26, top(e.end) - top(e.start) - 2)}px`}
+          style:left={`calc(${(e.column / e.columns) * 100}% + 1px)`} style:width={`calc(${100 / e.columns}% - 4px)`}
+          onclick={e.open}><strong>{e.title}</strong><span>{clock(e.start)}</span></button>
       {/if}
-    </div>
+    {/each}
+    {#each tasks.filter((t) => t.at !== null) as t (t.id)}
+      <button class="blk task" style:--task={t.color} style:top={`${top(t.at ?? 0)}px`} style:height={`${(PLAN_LENGTH / 60) * HOUR - 2}px`}
+        onclick={t.open}><i class="ring"></i><strong>{t.title}</strong></button>
+    {/each}
+    {#if live !== null}
+      <div class="now" style:top={`${top(live)}px`} aria-hidden="true"><i>{clock(live)}</i></div>
+    {/if}
+  </div>
+  <div class="side">
+    <header>
+      <h3>Tasks</h3>
+      {#if tasks.length}<span>{done} of {tasks.length} done</span>{/if}
+    </header>
     <ul class="tasks">
       {#each tasks as t (t.id)}
         <li class:done={t.done}>
@@ -63,15 +60,12 @@
             <input type="checkbox" checked={t.done} disabled={busy} onchange={() => ontoggle(t.id)} />
             <span>{t.title}</span>
           </label>
-          <div class="meta">
-            <small class="prio {t.priority}">{t.priority}</small>
-            <small>{PLAN_LENGTH}m</small>
-            {#if !t.done}
-              <button class="planbtn" class:set={t.at !== null} disabled={busy}
-                aria-label={t.at !== null ? `Unplan ${t.title} (${clock(t.at)})` : `Plan ${t.title}`}
-                onclick={() => (t.at !== null ? onunplan(t.id) : onplan(t.id))}>{t.at !== null ? `→ ${clock(t.at)}` : "Plan"}</button>
-            {/if}
-          </div>
+          <small>{t.priority === "normal" ? "" : `${t.priority} · `}{PLAN_LENGTH}m</small>
+          {#if !t.done}
+            <button class="planbtn" class:set={t.at !== null} disabled={busy}
+              aria-label={t.at !== null ? `Unplan ${t.title} (${clock(t.at)})` : `Plan ${t.title}`}
+              onclick={() => (t.at !== null ? onunplan(t.id) : onplan(t.id))}>{t.at !== null ? clock(t.at) : "Plan"}</button>
+          {/if}
         </li>
       {:else}
         <li class="empty">No open tasks for this day.</li>
@@ -81,79 +75,83 @@
 </section>
 
 <style>
+  /* The day's hours beside its tasks, in the grid's language: hairlines, soft blocks, one now line. */
   .plan {
     display: grid;
-    gap: 10px;
-    padding: 12px 14px 4rem;
-  }
-  header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-  header .eyebrow {
-    color: var(--violet);
-  }
-  h3 {
-    margin: 0;
-    font: 700 1.2rem var(--font-ui);
-  }
-  .ring {
-    display: grid;
-    place-items: center;
-    width: 40px;
-    height: 40px;
-    border-radius: 999px;
-    background:
-      radial-gradient(closest-side, var(--solid-void) 76%, transparent 78%),
-      conic-gradient(var(--accent) calc(var(--p) * 360deg), color-mix(in srgb, var(--ink) 10%, transparent) 0);
-  }
-  .ring b {
-    font: 600 0.65rem var(--font-mono);
-  }
-  .split {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
-    gap: 14px;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: start;
+    gap: 32px;
+    padding-top: 8px;
   }
   .timeline {
     position: relative;
-    margin-left: 26px;
-    background-image: linear-gradient(to bottom, color-mix(in srgb, var(--ink) 10%, transparent) 1px, transparent 1px);
-    background-size: 100% 44px;
+    margin-left: 60px;
+    border-left: 1px solid var(--hairline);
+    background-image: linear-gradient(to bottom, var(--hairline) 1px, transparent 1px);
+    background-size: 100% 58px;
+  }
+  .hr,
+  .now i {
+    position: absolute;
+    left: -60px;
+    width: 52px;
+    font: 400 13px/1 var(--font-ui);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    transform: translateY(-50%);
   }
   .hr {
-    position: absolute;
-    left: -26px;
     color: var(--subtle);
-    font: 500 0.6rem var(--font-mono);
-    transform: translateY(-40%);
+  }
+  .hr.hidden {
+    visibility: hidden;
   }
   .blk {
     position: absolute;
-    left: 2px;
-    width: calc(100% - 3px);
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
     overflow: hidden;
-    padding: 2px 6px;
+    padding: 4px 8px;
     border: 0;
-    border-radius: 6px;
-    background: var(--block);
-    color: var(--block-ink);
-    font-size: 0.72rem;
-    line-height: 1.25;
+    border-left: 3px solid var(--block);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--block) 22%, var(--canvas));
+    color: var(--ink);
+    font-size: 13px;
+    line-height: 1.3;
     text-align: left;
     white-space: nowrap;
-    text-overflow: ellipsis;
     cursor: pointer;
+  }
+  .blk strong {
+    min-width: 0;
+    overflow: hidden;
+    font-weight: 600;
+    text-overflow: ellipsis;
+  }
+  .blk span {
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
   }
   .blk.past {
     opacity: 0.55;
   }
   .blk.task {
-    border: 1.5px dashed var(--task, var(--accent));
-    background: color-mix(in srgb, var(--task, var(--accent)) 12%, transparent);
-    color: var(--ink);
+    left: 1px;
+    width: calc(100% - 4px);
+    align-items: center;
+    border-left: 0;
+    background: color-mix(in srgb, var(--task, var(--ink)) 12%, var(--canvas));
     animation: drop 240ms ease-out;
+  }
+  .ring {
+    flex: none;
+    box-sizing: border-box;
+    width: 11px;
+    height: 11px;
+    border: 1.5px solid var(--task, var(--muted));
+    border-radius: 50%;
   }
   @keyframes drop {
     from {
@@ -163,85 +161,105 @@
   }
   .now {
     position: absolute;
-    left: -4px;
+    left: 0;
     right: 0;
-    border-top: 1.5px dashed var(--c1);
+    z-index: 2;
+    border-top: 2px solid var(--ink);
+    transform: translateY(-1px);
+    pointer-events: none;
+  }
+  .now::before {
+    content: "";
+    position: absolute;
+    left: -5px;
+    top: -6px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--ink);
   }
   .now i {
-    position: absolute;
-    right: 0;
-    top: -13px;
-    color: var(--c1);
-    font: 600 0.6rem var(--font-mono);
+    top: -1px;
+    color: var(--ink);
     font-style: normal;
+    font-weight: 600;
+  }
+  header {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--hairline);
+  }
+  h3 {
+    margin: 0;
+    font: 600 16px/1.3 var(--font-ui);
+  }
+  header span {
+    color: var(--muted);
+    font-size: 14px;
   }
   .tasks {
     display: grid;
-    align-content: start;
-    gap: 6px;
     margin: 0;
     padding: 0;
     list-style: none;
   }
   li {
-    display: grid;
-    gap: 3px;
-    padding: 7px 9px;
-    border: 1px solid var(--hairline);
-    border-left: 2px solid var(--accent);
-    border-radius: 8px;
-    background: color-mix(in srgb, var(--solid-panel) 55%, transparent);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 44px;
+    border-bottom: 1px solid var(--hairline);
   }
   li.empty {
-    border-left-color: var(--hairline);
     color: var(--muted);
-    font-size: 0.8rem;
+    font-size: 14px;
   }
   label {
     display: flex;
-    gap: 7px;
-    align-items: flex-start;
-    font-size: 0.82rem;
+    flex: 1;
+    gap: 10px;
+    align-items: center;
+    min-width: 0;
+    font-size: 15px;
     line-height: 1.3;
   }
   label input {
     flex: none;
-    margin: 2px 0 0;
+    margin: 0;
   }
   li.done label span {
     color: var(--muted);
     text-decoration: line-through;
   }
-  .meta {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding-left: 20px;
-  }
-  .meta small {
-    color: var(--subtle);
-    font: 500 0.6rem var(--font-mono);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-  }
-  .prio.high {
-    color: var(--warning);
+  small {
+    flex: none;
+    color: var(--muted);
+    font-size: 13px;
   }
   .planbtn {
-    margin-left: auto;
-    padding: 1px 9px;
+    flex: none;
+    padding: 4px 12px;
     border: 1px solid var(--hairline);
     border-radius: 999px;
     background: transparent;
     color: var(--ink);
-    font: 500 0.62rem var(--font-mono);
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    font: 500 13px var(--font-ui);
+    font-variant-numeric: tabular-nums;
     cursor: pointer;
   }
+  .planbtn:hover:not(:disabled) {
+    border-color: var(--muted);
+  }
   .planbtn.set {
-    border-color: var(--accent);
-    color: var(--accent);
+    border-color: transparent;
+    background: color-mix(in srgb, var(--ink) 12%, transparent);
+  }
+  @media (max-width: 760px) {
+    .plan {
+      grid-template-columns: minmax(0, 1fr);
+    }
   }
   @media (prefers-reduced-motion: reduce) {
     .blk.task {

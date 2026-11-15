@@ -1,4 +1,3 @@
--- python after: kitty.core.search:build
 -- The full-text search index (kitty.core.search; paper §16: checked derived views).
 --
 -- `search_docs` holds one row per searchable record: blocks (kind 'block', written by
@@ -12,8 +11,9 @@
 -- Triggers on the other source tables queue the changed record in `search_pending` in the
 -- writer's own transaction (pure SQL: no application function has to be registered for a
 -- write to succeed); kitty.core.search.sync folds the queue before every query and check,
--- so every answer covers every committed write. The python step builds the index for the
--- existing data.
+-- so every answer covers every committed write. The existing records are queued the same way
+-- at the end, so the first query builds their documents: no application step runs here, and
+-- a fresh database has nothing to build (docs/rust-core-design.md, the migration runner).
 CREATE TABLE search_docs (
     id INTEGER PRIMARY KEY,
     kind TEXT NOT NULL,
@@ -163,3 +163,15 @@ CREATE TRIGGER search_companies_update AFTER UPDATE OF display_name ON companies
 WHEN old.display_name IS NOT new.display_name BEGIN
     INSERT OR IGNORE INTO search_pending(kind, ref) SELECT 'job', id FROM jobs WHERE company_id = new.id;
 END;
+
+-- Every record that existed before the index, blocks included (`sync` makes a block's
+-- document from its projection row, and none for a block that is not searchable).
+INSERT OR IGNORE INTO search_pending(kind, ref) SELECT 'block', id FROM blocks WHERE deleted_at IS NULL;
+INSERT OR IGNORE INTO search_pending(kind, ref) SELECT 'study_subject', id FROM study_subjects;
+INSERT OR IGNORE INTO search_pending(kind, ref) SELECT 'study_project', id FROM study_projects;
+INSERT OR IGNORE INTO search_pending(kind, ref) SELECT 'study_task', id FROM study_tasks;
+INSERT OR IGNORE INTO search_pending(kind, ref) SELECT 'calendar_event', id FROM calendar_events WHERE deleted = 0;
+INSERT OR IGNORE INTO search_pending(kind, ref) SELECT 'calendar_task', id FROM calendar_tasks WHERE deleted = 0;
+INSERT OR IGNORE INTO search_pending(kind, ref) SELECT 'flashcard_deck', id FROM flash_decks WHERE archived = 0;
+INSERT OR IGNORE INTO search_pending(kind, ref) SELECT 'flashcard_note', id FROM flash_notes WHERE archived = 0;
+INSERT OR IGNORE INTO search_pending(kind, ref) SELECT 'job', id FROM jobs;

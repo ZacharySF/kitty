@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
-from terminal_support import make_root, site
+from terminal_support import front_site, make_root, site
 
 from kitty.core import calendar, goals, notes
 from kitty.core.rika import brief
@@ -47,7 +47,8 @@ def settings(tmp_path, no_network, mail):
 
 @pytest.fixture
 def demo(settings, no_network):
-    with site(settings) as running:
+    # The goal routes are answered by rika-server; the brief's by the worker behind it.
+    with front_site(settings) as running:
         yield running
     assert no_network == []
 

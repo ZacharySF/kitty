@@ -1,5 +1,5 @@
 <!-- Browser fixture for tests/brain.browser.test.mjs: one workspace tab holding the Brain stage,
-     the real home, or a section graph, so home and the graphs beside it can be checked. -->
+     the real Brain view, or a section graph, so the view and the graphs beside it can be checked. -->
 <script lang="ts">
   import BrainStage from "../src/lib/brain/BrainStage.svelte";
   import GraphNavigator from "../src/lib/GraphNavigator.svelte";

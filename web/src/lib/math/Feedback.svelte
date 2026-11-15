@@ -72,7 +72,7 @@
   }
   .icon {
     color: var(--tone);
-    font: 700 15px/1.4 var(--font-mono);
+    font: 700 15px/1.4 var(--font-ui);
   }
   .body {
     display: grid;

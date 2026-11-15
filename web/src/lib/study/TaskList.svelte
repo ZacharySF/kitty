@@ -72,7 +72,6 @@
     flex: none;
     width: auto;
     margin: 0;
-    accent-color: var(--accent);
   }
   .title {
     display: -webkit-box;
@@ -87,7 +86,7 @@
     flex: none;
     margin-left: auto;
     color: var(--muted);
-    font: 500 10px var(--font-mono);
+    font: 500 10px var(--font-ui);
   }
   .flag {
     color: var(--warning);

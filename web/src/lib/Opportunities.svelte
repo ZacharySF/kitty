@@ -223,15 +223,14 @@
     return days >= 0 && days <= 21;
   };
   /**
-   * Full-bleed: the surface runs from where it starts down to the Rika bar. Notices above it
+   * Full-bleed: the surface runs from where it starts down to the window's foot. Notices above it
    * (the demo pill) come and go, so the height is measured, not a fixed offset.
    */
   function fillWindow(node: HTMLElement) {
     const measure = () => {
       if (!node.offsetParent) return;
-      const bar = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--rika-space")) || 0;
       const top = node.getBoundingClientRect().top + window.scrollY;
-      node.style.height = `${Math.max(420, Math.floor(innerHeight - top - bar - 14))}px`;
+      node.style.height = `${Math.max(420, Math.floor(innerHeight - top - 14))}px`;
     };
     let frame = 0;
     const schedule = () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(measure); };
@@ -921,7 +920,7 @@
   /* Q21: one full-bleed surface; the map fills it and everything else floats over it. */
   .opportunities {
     position: relative;
-    height: calc(100dvh - var(--workbench-top, 0px) - var(--rika-space, 0px) - 34px);
+    height: calc(100dvh - var(--workbench-top, 0px) - 34px);
     min-height: 420px;
     overflow: hidden;
     border-radius: var(--r-panel);
@@ -1009,7 +1008,7 @@
     padding: 1px 5px;
     border-radius: 999px;
     background: color-mix(in srgb, var(--ink) 12%, transparent);
-    font: 500 10.5px/1.4 var(--font-mono);
+    font: 500 10.5px/1.4 var(--font-ui);
     text-align: center;
   }
   :global(.kitty-popover.opportunity-filters) {
@@ -1066,16 +1065,13 @@
   }
   .field textarea.json {
     min-height: 220px;
-    font: 12px/1.5 var(--font-mono);
+    font: 12px/1.5 var(--font-code);
   }
   .check {
     display: inline-flex;
     align-items: center;
     gap: 8px;
     font-size: var(--fs-control);
-  }
-  .check input {
-    accent-color: var(--accent);
   }
   .chip-date {
     height: var(--control-h);
@@ -1163,7 +1159,6 @@
     background: var(--wash, color-mix(in srgb, var(--ink) 7%, transparent));
   }
   .list-drawer li input {
-    accent-color: var(--accent);
     opacity: 0.55;
   }
   .list-drawer li:hover input,
@@ -1221,7 +1216,7 @@
   .due {
     flex-shrink: 0;
     color: var(--muted);
-    font: 10.5px var(--font-mono);
+    font: 10.5px var(--font-ui);
     letter-spacing: 0.06em;
     text-transform: uppercase;
   }
@@ -1273,7 +1268,7 @@
   }
   .kind {
     color: var(--muted);
-    font: 10.5px var(--font-mono);
+    font: 10.5px var(--font-ui);
     text-transform: uppercase;
   }
   .item-notes {
@@ -1321,7 +1316,7 @@
     min-width: 0;
   }
   .source .status {
-    font: 10.5px var(--font-mono);
+    font: 10.5px var(--font-ui);
   }
   .url-row {
     display: flex;

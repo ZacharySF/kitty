@@ -90,7 +90,7 @@ test('a goal deep link names its goal and round-trips', () => {
   assert.equal(goalFromHash('#settings/modules'), null);
 });
 
-test('Goals is a core Plan view right after the atlas home', () => {
+test('Goals is a core Plan view right after home', () => {
   const goals = navigation.find(item => item.id === 'goals');
   assert.deepEqual(goals && { label: goals.label, module: goals.module }, { label: 'Goals', module: null });
   assert.equal(viewEnabled('goals', []), true);

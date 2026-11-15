@@ -10,7 +10,7 @@ from kitty.web_server import APIError, WebApplication
 
 @pytest.fixture
 def app(workspace, tmp_path):
-    instance = WebApplication(workspace.settings, workspace.config, tmp_path)
+    instance = WebApplication(workspace.settings, workspace.config, tmp_path, ui_session="ui-test")
     yield instance
     instance.automation.close()
 

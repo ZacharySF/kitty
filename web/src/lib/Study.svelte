@@ -452,7 +452,7 @@
     return () => pane.setStatus(null);
   });
 
-  /** Sizes the session page to the window above the Rika bar, so it never scrolls. */
+  /** Sizes the session page to the window, so it never scrolls. */
   function fill(node: HTMLElement) {
     let frame = 0;
     const size = () => {
@@ -676,7 +676,7 @@
   }
   .edge .count {
     color: var(--muted);
-    font: 500 10.5px var(--font-mono);
+    font: 500 10.5px var(--font-ui);
   }
   .left-open .edge.left {
     left: var(--drawer-w);

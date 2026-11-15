@@ -111,13 +111,13 @@
 {command} --skill</pre>
       <p>Read herdr's skill before controlling panes. To view this same session from a terminal outside herdr:</p>
       <pre>env -u HERDR_ENV {command}</pre>
-      <p>Tabs and agent states appear live here and on the Rika bar. CLI access grants full shell access as your user.</p>
+      <p>Tabs and agent states appear live here and in Rika. CLI access grants full shell access as your user.</p>
     </section>
   {/if}
 </div>
 
 <style>
-  .agent-tools { flex: none; padding: 3px 8px; border-bottom: 1px solid var(--hairline); font: 10.5px var(--font-mono); color: var(--muted); }
+  .agent-tools { flex: none; padding: 3px 8px; border-bottom: 1px solid var(--hairline); font: 10.5px var(--font-ui); color: var(--muted); }
   .agent-actions, .row, .field, .notice { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
   form { display: grid; gap: 4px; padding: 4px 0; }
   p { margin: 4px 0; }

@@ -67,8 +67,7 @@ def test_module_off_has_no_route_process_or_socket(tmp_path, herdr):
 def test_enabled_terminal_starts_nothing_until_a_page_attaches(tmp_path, herdr):
     settings = make_root(tmp_path, ("terminal",))
     with site(settings) as running:
-        status, boot = running.request("/api/bootstrap")
-        assert status == 200 and boot["modules"]["enabled"] == ["terminal"]
+        assert running.request("/api/ai/status")[0] == 200 and running.app.modules == ("terminal",)
         running.token()
     # Issuing a token is not an attach; closing must not run herdr or create its socket.
     assert herdr.invocations() == []
@@ -230,12 +229,12 @@ def test_default_or_invalid_session_name_never_launches_herdr(tmp_path, herdr, m
 
 
 def test_missing_bundled_runtime_is_reported(tmp_path, herdr, monkeypatch):
+    """Without a pinned herdr (its pack not installed) every herdr route says how to get it."""
     monkeypatch.delenv("KITTY_HERDR")
     settings = make_root(tmp_path, ("terminal",))
     with site(settings) as running:
-        status, _headers, connection, rest = running.connect(running.token())
-        connection.close()
-        assert status == 503 and b"herdr runtime" in rest
+        status, body = running.request("/api/terminal/session", {})
+        assert status == 409 and body["error"] == "herdr isn't installed: download it in Settings > Modules, then restart rika!"
     assert herdr.invocations() == []
 
 
@@ -356,9 +355,9 @@ def test_activity_reports_herdr_agent_states_per_workspace(tmp_path, herdr):
         {"id": "w1", "label": "api", "status": "working", "focused": True, "agents": [
             {"pane": "w1:p1", "name": "Agent", "status": "working", "kind": "omp",
              "task": "π > Synthetic task: tidy the fixture", "line": "run pytest -k fixture · 4 passed", "revision": 3,
-             "guarantee": "none"},
+             "guarantee": "none", "usage": None},
             {"pane": "w1:p2", "name": "Codex", "status": "blocked", "kind": "codex", "task": "",
-             "line": "needs permission: read the synthetic notes", "revision": 1, "guarantee": "none"},
+             "line": "needs permission: read the synthetic notes", "revision": 1, "guarantee": "none", "usage": None},
         ]},
         # herdr states rika! does not know are shown as unknown, never passed through.
         {"id": "w2", "label": "docs", "status": "unknown", "focused": False, "agents": []},

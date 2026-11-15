@@ -1,10 +1,13 @@
 mod appimage_update;
+mod autostart;
+mod notifications;
 mod owner;
 mod update_lifecycle;
 mod updates;
 mod workspace_path;
 
 use std::{
+    ffi::OsString,
     fs,
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
@@ -21,7 +24,31 @@ use tauri::{
     webview::{NewWindowResponse, PermissionKind, PermissionResponse},
     Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
+use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use url::Url;
+
+/// rika-server stopped before its readiness line: the reason for the user and what it wrote.
+#[derive(Debug)]
+struct StartupFailed {
+    reason: String,
+    details: String,
+}
+
+impl std::fmt::Display for StartupFailed {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.reason)
+    }
+}
+
+impl std::error::Error for StartupFailed {}
+
+/// The reason to show for a front that stopped before readiness: the last line it wrote to
+/// stderr (rika-server ends a start-up failure with `rika-server: <reason>`).
+fn startup_failure(stderr: &str) -> String {
+    stderr.lines().rev().map(str::trim).find(|line| !line.is_empty())
+        .map(|line| line.strip_prefix("rika-server: ").unwrap_or(line).to_owned())
+        .unwrap_or_else(|| "rika-server stopped before it was ready".into())
+}
 
 struct Backend(Option<Child>);
 
@@ -47,6 +74,9 @@ struct Desktop {
     background: AtomicBool,
     background_item: CheckMenuItem<tauri::Wry>,
     background_available: bool,
+    /// Start at login (autostart.rs): the user's systemd unit folder, when it can be set here.
+    autostart_dir: Option<PathBuf>,
+    autostart: AtomicBool,
     update_item: MenuItem<tauri::Wry>,
     lifecycle: Mutex<update_lifecycle::Lifecycle>,
     preferences: PathBuf,
@@ -127,6 +157,24 @@ fn quick_note_target(url: &Url, origin: &Url) -> Option<String> {
     (id_ok && same_origin && url.path() == "/" && url.query().is_none()).then(|| fragment.to_string())
 }
 
+/// Start at login on or off; the switch then shows what is really on disk.
+fn set_autostart(app: &tauri::AppHandle, enabled: bool) {
+    let state = app.state::<Desktop>();
+    if let Some(dir) = &state.autostart_dir {
+        if let Some(program) = autostart::program(std::env::var_os("APPIMAGE"), std::env::current_exe()) {
+            let _ = autostart::set(dir, &program, enabled);
+        }
+        state.autostart.store(autostart::enabled(dir), Ordering::SeqCst);
+    }
+    // A login that opens rika! hidden is for reminders: closing the window must then keep it running.
+    if enabled && state.autostart.load(Ordering::SeqCst) { set_background(app, true); } else { report_desktop(app); }
+}
+
+/// `--background` (the start-at-login unit): open with the window hidden in the tray.
+fn wants_background(args: &[String]) -> bool {
+    args.iter().skip(1).any(|arg| arg == "--background")
+}
+
 fn wants_quick_note(args: &[String]) -> bool {
     args.iter().skip(1).any(|arg| arg == "--quick-note")
 }
@@ -170,34 +218,97 @@ fn open_quick_note(app: &tauri::AppHandle, fragment: String) {
     });
 }
 
-/// A bundled executable beside the desktop binary. Tauri dev and cargo smoke
-/// binaries use the target-suffixed staging copy; installed bundles always use
-/// their own sibling executable, never a checkout.
-fn sidecar(directory: &Path, name: &str, staging: Option<&Path>) -> Option<PathBuf> {
-    let packaged = directory.join(name);
-    if packaged.is_file() { return Some(packaged); }
-    staging.map(|folder| folder.join(format!("{name}-{}", env!("KITTY_TARGET_TRIPLE"))))
-        .filter(|path| path.is_file())
+/// Where the desktop binary's own bundle installs the backend, relative to the binary's
+/// directory (`/usr/bin` in the .deb, `usr/bin` inside the AppImage): an unpacked
+/// PyInstaller directory (tauri.conf.json `files`), started in place on every launch.
+/// Outside `usr/lib`, so linuxdeploy never rewrites its libraries.
+#[cfg(not(windows))]
+const BACKEND: &str = "libexec/kitty-workspace/kitty-web/kitty-web";
+
+/// The backend executable from this binary's bundle. Tauri dev and cargo smoke binaries
+/// use the staging folder's `kitty-web/` directory; installed bundles always use their
+/// own copy, never a checkout or PATH.
+#[cfg(not(windows))]
+fn backend(directory: &Path, staging: Option<&Path>) -> Option<PathBuf> {
+    bundled(directory.parent()?.join(BACKEND), staging.map(|folder| folder.join("kitty-web/kitty-web")))
 }
 
 type Started = (Backend, Url, String, mpsc::Receiver<owner::Command>, Frames);
 
+/// On Windows the installer puts the same unpacked PyInstaller directory beside the
+/// desktop executable, as `kitty-web\kitty-web.exe`.
+#[cfg(windows)]
+fn backend(directory: &Path, staging: Option<&Path>) -> Option<PathBuf> {
+    bundled(directory.join("kitty-web").join("kitty-web.exe"), staging.map(|folder| folder.join("kitty-web").join("kitty-web.exe")))
+}
+
+/// A bundled sidecar executable beside the desktop binary (Tauri `externalBin`), or the
+/// target-suffixed staging copy.
+fn sidecar(directory: &Path, name: &str, staging: Option<&Path>) -> Option<PathBuf> {
+    let suffix = std::env::consts::EXE_SUFFIX;
+    bundled(directory.join(format!("{name}{suffix}")), staging.map(|folder| folder.join(format!("{name}-{}{suffix}", env!("KITTY_TARGET_TRIPLE")))))
+}
+
+fn bundled(packaged: PathBuf, staged: Option<PathBuf>) -> Option<PathBuf> {
+    if packaged.is_file() { return Some(packaged); }
+    staged.filter(|path| path.is_file())
+}
+
+/// rika-server's command line (server/src/main.rs `--desktop`): it serves the backend's
+/// bundled website itself, migrates the workspace at `root` and starts `backend` behind it
+/// with exactly these arguments.
+fn front_arguments(backend: &Path, root: &Path, safe: bool) -> Vec<OsString> {
+    // PyInstaller's onedir keeps its data beside the executable in `_internal` (sys._MEIPASS).
+    let website = backend.parent().unwrap_or(Path::new("")).join("_internal/website");
+    let mut arguments: Vec<OsString> = ["--desktop", "--port", "0", "--static-dir"].map(OsString::from).into();
+    arguments.push(website.into());
+    arguments.extend(["--root".into(), root.into()]);
+    arguments.extend(["--worker-program".into(), backend.into(), "--worker-arg".into(), "--workspace".into(), "--worker-arg".into(), root.into()]);
+    if safe { arguments.extend(["--worker-arg".into(), "--safe".into()]); }
+    arguments
+}
+
+/// Starts rika-server, which starts the backend behind it and relays the owner pipe both
+/// ways: its readiness line carries rika-server's own origin and UI secret, and the worker's
+/// allow-frame lines follow it verbatim.
 fn start_backend(root: &Path, safe: bool) -> Result<Started, Box<dyn std::error::Error>> {
     let executable = std::env::current_exe()?;
     let directory = executable.parent().ok_or("Desktop executable has no directory")?;
     let staging = cfg!(debug_assertions).then(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries"));
-    let binary = sidecar(directory, "kitty-web", staging.as_deref())
-        .ok_or("The bundled kitty-web executable is missing")?;
-    let mut command = Command::new(binary);
-    // The Terminal module runs only rika!'s pinned herdr, never one from the environment.
+    let binary = backend(directory, staging.as_deref())
+        .ok_or("The bundled kitty-web backend is missing")?;
+    let front = sidecar(directory, "rika-server", staging.as_deref())
+        .ok_or("The bundled rika-server is missing")?;
+    let mut command = Command::new(front);
+    // The Terminal module runs only rika!'s pinned herdr, never one from the environment:
+    // rika-server hands the worker the signed `herdr` pack's binary (server/src/packs.rs).
     command.env_remove("KITTY_HERDR");
-    if let Some(herdr) = sidecar(directory, "kitty-herdr", staging.as_deref()) { command.env("KITTY_HERDR", herdr); }
-    command.arg("--workspace").arg(root);
-    if safe { command.arg("--safe"); }
+    command.args(front_arguments(&binary, root, safe));
     let child = command
-        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn()?;
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
     let mut backend = Backend(Some(child));
     let output = backend.0.as_mut().unwrap().stdout.take().ok_or("Backend readiness pipe unavailable")?;
+    let errors = backend.0.as_mut().unwrap().stderr.take().ok_or("Backend error pipe unavailable")?;
+    // What the front writes to stderr before readiness is kept for a start-up failure; after
+    // readiness it is read and dropped, as /dev/null took it before.
+    let written = Arc::new(Mutex::new(Some(String::new())));
+    let (closed, errors_closed) = mpsc::channel::<()>();
+    let keep = written.clone();
+    thread::spawn(move || {
+        for line in BufReader::new(errors).lines().map_while(Result::ok) {
+            if let Some(text) = keep.lock().as_mut() {
+                text.push_str(&line);
+                text.push('\n');
+                // Only the end matters (the reason is the last line): keep at most 64 KiB of it.
+                if text.len() > 64 * 1024 {
+                    let cut = text.len() - 32 * 1024;
+                    let cut = (cut..text.len()).find(|&at| text.is_char_boundary(at)).unwrap_or(text.len());
+                    text.drain(..cut);
+                }
+            }
+        }
+        let _ = closed.send(());
+    });
     let (send, receive) = mpsc::sync_channel(1);
     let (commands, receiver) = mpsc::channel();
     let frames = Frames::default();
@@ -229,6 +340,14 @@ fn start_backend(root: &Path, safe: bool) -> Result<Started, Box<dyn std::error:
             return Err(error.into());
         }
     };
+    if line.is_empty() {
+        // The front exited before readiness: its stderr says why.
+        if let Some(mut child) = backend.0.take() { let _ = child.wait(); }
+        let _ = errors_closed.recv_timeout(Duration::from_secs(2));
+        let details = written.lock().take().unwrap_or_default();
+        return Err(Box::new(StartupFailed { reason: startup_failure(&details), details }));
+    }
+    written.lock().take();
     // The readiness line also carries the UI secret; it is never logged or written anywhere.
     let (origin, secret) = owner::readiness(&line).ok_or("Invalid backend readiness message")?;
     let origin = Url::parse(&origin)?;
@@ -237,6 +356,23 @@ fn start_backend(root: &Path, safe: bool) -> Result<Started, Box<dyn std::error:
         return Err("Backend did not bind a private loopback origin".into());
     }
     Ok((backend, origin, secret, receiver, frames))
+}
+
+/// A start-up that never reached readiness: the reason in an error dialog (the app exits when
+/// it is dismissed) and the front's whole stderr in `.private/startup-error.log` and on ours.
+fn report_startup_failure(app: &tauri::AppHandle, root: &Path, error: &(dyn std::error::Error + 'static)) {
+    let (reason, details) = match error.downcast_ref::<StartupFailed>() {
+        Some(failed) => (failed.reason.clone(), failed.details.clone()),
+        None => (error.to_string(), format!("{error}\n")),
+    };
+    let log = root.join(".private/startup-error.log");
+    let logged = fs::write(&log, &details).is_ok();
+    eprint!("{details}");
+    let mut message = format!("rika! could not start.\n\n{reason}");
+    if logged { message.push_str(&format!("\n\nThe full report is in {}.", log.display())); }
+    let handle = app.clone();
+    app.dialog().message(message).title("rika!").kind(MessageDialogKind::Error)
+        .show(move |_| handle.exit(1));
 }
 
 fn show(app: &tauri::AppHandle) {
@@ -248,6 +384,11 @@ fn show(app: &tauri::AppHandle) {
 }
 
 fn request_quit(app: &tauri::AppHandle) {
+    request_stop(app, false);
+}
+
+/// Save and stop the backend, then leave; `restart` reopens rika! (a module change applies).
+fn request_stop(app: &tauri::AppHandle, restart: bool) {
     let state = app.state::<Desktop>();
     match state.lifecycle.lock().begin_quit() {
         update_lifecycle::QuitDecision::Stop => {},
@@ -261,13 +402,14 @@ fn request_quit(app: &tauri::AppHandle) {
     thread::spawn(move || {
         app.state::<Desktop>().backend.lock().stop();
         app.state::<Desktop>().lifecycle.lock().stopped();
-        app.exit(0);
+        if restart { updates::relaunch(&app); } else { app.exit(0); }
     });
 }
 
 fn report_desktop(app: &tauri::AppHandle) {
     let state = app.state::<Desktop>();
-    let line = owner::state_line(state.background.load(Ordering::SeqCst), state.background_available);
+    let line = owner::state_line(state.background.load(Ordering::SeqCst), state.background_available,
+                                 state.autostart.load(Ordering::SeqCst), state.autostart_dir.is_some());
     if let Some(input) = state.backend.lock().0.as_mut().and_then(|child| child.stdin.as_mut()) {
         let _ = input.write_all(line.as_bytes());
         let _ = input.flush();
@@ -287,12 +429,45 @@ fn set_background(app: &tauri::AppHandle, enabled: bool) {
     report_desktop(app);
 }
 
-fn desktop_command(app: &tauri::AppHandle, command: owner::Command) {
+/// The desktop entry rika! is installed under (scripts/install-desktop.py): names the app
+/// and its icon to the notification server.
+pub const DESKTOP_ENTRY: &str = "com.zacharysf.kitty";
+
+/// A click on a system notification: raise the window (with the server's activation token,
+/// which Wayland needs) and hand the notice to the page, which opens, snoozes or clears it.
+fn notice_invoked(app: &tauri::AppHandle, key: String, action: String, token: Option<String>) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let Some(window) = handle.get_webview_window("main") else { return };
+        if action == "default" {
+            // The token is the notification server's (D-Bus): only Linux has one to give.
+            #[cfg(target_os = "linux")]
+            if let (Some(token), Ok(gtk_window)) = (&token, window.gtk_window()) {
+                use gtk::prelude::GtkWindowExt;
+                gtk_window.set_startup_id(token);
+            }
+            let _ = &token;
+            show(&handle);
+        }
+        let detail = serde_json::json!({ "key": key, "action": action });
+        let _ = window.eval(format!("window.dispatchEvent(new CustomEvent('kitty:notice', {{ detail: {detail} }}))"));
+    });
+}
+
+fn desktop_command(app: &tauri::AppHandle, notices: Option<&notifications::Notices>, command: owner::Command) {
     match command {
+        owner::Command::Notify { key, title, body, actions } => {
+            if let Some(notices) = notices { notices.notify(&key, &title, &body, actions); }
+        }
+        owner::Command::CloseNotices(keys) => {
+            if let Some(notices) = notices { notices.close(&keys); }
+        }
         owner::Command::CheckUpdates => updates::check(app),
         owner::Command::NewQuickNote => open_quick_note(app, "quick-note".into()),
         owner::Command::KeepRunning(enabled) => set_background(app, enabled),
+        owner::Command::Autostart(enabled) => set_autostart(app, enabled),
         owner::Command::Quit => request_quit(app),
+        owner::Command::Restart => request_stop(app, true),
         owner::Command::OpenSkill(path) => open_skill(&path),
         // Applied by the backend reader thread itself (start_backend); never queued here.
         owner::Command::AllowFrame(_) => {}
@@ -300,11 +475,13 @@ fn desktop_command(app: &tauri::AppHandle, command: owner::Command) {
 }
 
 /// GTK's DPI setting when it has none: 96 DPI in GTK's 1/1024 units.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 const NEUTRAL_XFT_DPI: i32 = 96 * 1024;
 
 /// The DPI to set, if any. On Wayland GTK has no XSETTINGS, so `gtk-xft-dpi` stays -1 and
 /// WebKitGTK derives a negative device-pixel ratio from it (a blank, compressed page on
 /// fractional-scale outputs). A real value is left alone.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn dpi_override(current: i32) -> Option<i32> {
     (current <= 0).then_some(NEUTRAL_XFT_DPI)
 }
@@ -321,7 +498,9 @@ fn neutral_xft_dpi() {
 }
 
 fn main() {
-    // Applies to new private files only; never changes selected existing files.
+    // Applies to new private files only; never changes selected existing files. (Windows has
+    // no umask: files under the user's profile are already the user's alone.)
+    #[cfg(unix)]
     unsafe { libc::umask(0o077); }
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
@@ -340,7 +519,13 @@ fn main() {
                 .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
                 .and_then(|value| value["background"].as_bool()).unwrap_or(false);
             let safe = wants_safe_mode(&std::env::args().collect::<Vec<_>>());
-            let (backend, origin, secret, commands, frames) = start_backend(&root, safe)?;
+            let (backend, origin, secret, commands, frames) = match start_backend(&root, safe) {
+                Ok(started) => started,
+                Err(error) => {
+                    report_startup_failure(app.handle(), &root, error.as_ref());
+                    return Ok(());
+                }
+            };
             let window_script = owner::window_script(&origin, &secret);
             let show_item = MenuItem::with_id(app, "show", "Show rika!", true, None::<&str>)?;
             let note_item = MenuItem::with_id(app, "quick-note", "New quick note", true, None::<&str>)?;
@@ -355,10 +540,16 @@ fn main() {
                 background_item.set_checked(false)?;
                 background_item.set_enabled(false)?;
             }
+            // Start at login needs the tray too: a hidden window with no tray could not be shown again.
+            let autostart_dir = autostart::unit_dir(std::env::var_os("XDG_CONFIG_HOME"), std::env::var_os("HOME"))
+                .filter(|dir| background_available && autostart::available(Some(dir)));
+            let autostart_on = autostart_dir.as_deref().is_some_and(autostart::enabled);
+            let hidden = background_available && wants_background(&std::env::args().collect::<Vec<_>>());
             app.manage(Desktop {
                 backend: Mutex::new(backend),
                 background: AtomicBool::new(background && background_available),
                 background_item, background_available,
+                autostart_dir, autostart: AtomicBool::new(autostart_on),
                 update_item: update,
                 lifecycle: Mutex::new(update_lifecycle::Lifecycle::default()), preferences,
                 root: root.clone(), origin: origin.clone(), frames: frames.clone(), window_script: window_script.clone(),
@@ -371,6 +562,7 @@ fn main() {
             let note_app = app.handle().clone();
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(origin))
                 .title("rika!").inner_size(1280.0, 850.0).min_inner_size(760.0, 500.0)
+                .visible(!hidden)
                 .transparent(true)
                 .initialization_script(TRANSPARENT_MARKER)
                 .initialization_script(window_script)
@@ -421,8 +613,10 @@ fn main() {
             });
             let handle = app.handle().clone();
             thread::spawn(move || {
+                let clicked = handle.clone();
+                let notices = notifications::Notices::connect(Arc::new(move |key, action, token| notice_invoked(&clicked, key, action, token)));
                 for command in commands {
-                    desktop_command(&handle, command);
+                    desktop_command(&handle, notices.as_ref(), command);
                 }
             });
             if wants_quick_note(&std::env::args().collect::<Vec<_>>()) {
@@ -522,17 +716,55 @@ mod tests {
     #[test]
     fn sidecars_come_only_from_the_bundle_or_the_debug_staging_folder() {
         let folder = std::env::temp_dir().join(format!("kitty-sidecar-test-{}", std::process::id()));
-        let (bundle, staging) = (folder.join("bundle"), folder.join("binaries"));
+        let (bundle, staging) = (folder.join("bundle/bin"), folder.join("binaries"));
         fs::create_dir_all(&bundle).unwrap();
         fs::create_dir_all(&staging).unwrap();
-        assert_eq!(sidecar(&bundle, "kitty-herdr", Some(&staging)), None);
-        let staged = staging.join(format!("kitty-herdr-{}", env!("KITTY_TARGET_TRIPLE")));
+        assert_eq!(sidecar(&bundle, "rika-server", None), None);
+        let staged = staging.join(format!("rika-server-{}", env!("KITTY_TARGET_TRIPLE")));
         fs::write(&staged, b"staged").unwrap();
-        assert_eq!(sidecar(&bundle, "kitty-herdr", Some(&staging)), Some(staged));
-        assert_eq!(sidecar(&bundle, "kitty-herdr", None), None);
-        fs::write(bundle.join("kitty-herdr"), b"bundled").unwrap();
-        assert_eq!(sidecar(&bundle, "kitty-herdr", Some(&staging)), Some(bundle.join("kitty-herdr")));
+        assert_eq!(sidecar(&bundle, "rika-server", Some(&staging)), Some(staged));
+        fs::write(bundle.join("rika-server"), b"bundled").unwrap();
+        assert_eq!(sidecar(&bundle, "rika-server", Some(&staging)), Some(bundle.join("rika-server")));
+
+        // The backend is an unpacked directory: never a file beside the binary (the old
+        // onefile location) and never a directory standing in for its executable.
+        fs::write(bundle.join("kitty-web"), b"old onefile").unwrap();
+        fs::create_dir_all(staging.join("kitty-web")).unwrap();
+        assert_eq!(backend(&bundle, Some(&staging)), None);
+        let staged = staging.join("kitty-web/kitty-web");
+        fs::write(&staged, b"staged").unwrap();
+        assert_eq!(backend(&bundle, Some(&staging)), Some(staged));
+        assert_eq!(backend(&bundle, None), None);
+        let packaged = folder.join("bundle/libexec/kitty-workspace/kitty-web/kitty-web");
+        fs::create_dir_all(&packaged).unwrap();
+        assert_eq!(backend(&bundle, None), None);
+        fs::remove_dir(&packaged).unwrap();
+        fs::write(&packaged, b"bundled").unwrap();
+        assert_eq!(backend(&bundle, Some(&staging)), Some(bundle.parent().unwrap().join(BACKEND)));
         fs::remove_dir_all(&folder).unwrap();
+    }
+    #[test]
+    fn the_front_serves_the_bundled_website_and_starts_exactly_this_backend() {
+        let backend = Path::new("/usr/libexec/kitty-workspace/kitty-web/kitty-web");
+        let root = Path::new("/home/someone/rika workspace");
+        let expected = |safe: &[&str]| {
+            let mut arguments = vec!["--desktop", "--port", "0",
+                "--static-dir", "/usr/libexec/kitty-workspace/kitty-web/_internal/website",
+                "--root", "/home/someone/rika workspace",
+                "--worker-program", "/usr/libexec/kitty-workspace/kitty-web/kitty-web",
+                "--worker-arg", "--workspace", "--worker-arg", "/home/someone/rika workspace"];
+            arguments.extend_from_slice(safe);
+            arguments.into_iter().map(OsString::from).collect::<Vec<_>>()
+        };
+        assert_eq!(front_arguments(backend, root, false), expected(&[]));
+        assert_eq!(front_arguments(backend, root, true), expected(&["--worker-arg", "--safe"]));
+    }
+    #[test]
+    fn a_start_up_failure_shows_the_fronts_last_line() {
+        let stderr = "Traceback ...\nUnable to open the local website. Check the port.\nrika-server: open the workspace once with rika! 0.3.36\n\n";
+        assert_eq!(startup_failure(stderr), "open the workspace once with rika! 0.3.36");
+        assert_eq!(startup_failure("worker said no\n"), "worker said no");
+        assert_eq!(startup_failure(""), "rika-server stopped before it was ready");
     }
     #[test]
     fn quick_note_launch_flag_is_exact() {

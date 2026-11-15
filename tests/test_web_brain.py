@@ -9,7 +9,7 @@ import uuid
 import pytest
 
 from kitty import web_brain
-from kitty.core import blocks, flashcards
+from kitty.core import blocks, calendar, flashcards, record_events
 from kitty.web_server import APIError, WebApplication
 
 NODE_KEYS = {"id", "kind", "section", "type", "label", "at", "parent"}
@@ -17,7 +17,9 @@ NODE_KEYS = {"id", "kind", "section", "type", "label", "at", "parent"}
 
 @pytest.fixture
 def app(workspace, tmp_path):
-    application = WebApplication(workspace.settings, workspace.config, tmp_path)
+    # /api/brain is the brain module's (kitty.web_server.ROUTE_MODULES).
+    config = dataclasses.replace(workspace.config, modules=(*workspace.config.modules, "brain"))
+    application = WebApplication(workspace.settings, config, tmp_path, ui_session="ui-test")
     yield application
     application.close()
 
@@ -28,6 +30,26 @@ def brain(app, conn, **query):
 
 def by_id(result):
     return {node["id"]: node for node in result["nodes"]}
+
+
+def calendar_event(conn, title):
+    """A calendar event as rika-server makes one (server/src/calendar/): the event and its
+    history through the same core function, and the `record_events` row the front appends."""
+    event = calendar.create_event(conn, {"title": title, "start": "2030-01-02T09:00:00Z", "end": "2030-01-02T10:00:00Z",
+                                         "timezone": "UTC", "all_day": False})
+    record_events.append(conn, record_events.Event("calendar", "event", event["id"], "create"), "/api/calendar/events")
+    return event
+
+
+def study_mutation(conn, path, body):
+    """A study record as rika-server writes it (tests/test_study_parity.py): the same core
+    function, and the `record_events` row the front appends."""
+    from kitty.core import study
+
+    route = path.removeprefix("/api/study/")
+    result = study.save_session(conn, body) if route == "sessions" else study.save_entity(conn, route, body)
+    record_events.capture(conn, path, body, result)
+    return result
 
 
 def assert_contract(result):
@@ -56,10 +78,8 @@ def seed(app, conn):
     app.mutate(conn, f"/api/notes/pages/{page['id']}", {
         "revision": page["revision"], "title": "Standing waves", "document": page["document"]})
     note = app.mutate(conn, "/api/quick-notes/create", {"body": "Private scratch body"})
-    event = app.mutate(conn, "/api/calendar/events", {
-        "title": "Lab session", "start": "2030-01-02T09:00:00Z", "end": "2030-01-02T10:00:00Z",
-        "timezone": "UTC", "all_day": False})
-    subject = app.mutate(conn, "/api/study/subjects", {"name": "Chemistry"})["item"]
+    event = calendar_event(conn, "Lab session")
+    subject = study_mutation(conn, "/api/study/subjects", {"name": "Chemistry"})["item"]
     job = app.mutate(conn, "/api/jobs/add", {"company": "Acme", "title": "Intern",
                                              "url": "https://example.invalid/acme"})
     return {"notebook": notebook, "page": page, "note": note, "event": event, "subject": subject, "job": job}
@@ -111,19 +131,21 @@ def test_edits_are_newest_first_and_deleted_records_read_as_deleted(app, workspa
 
 def test_historical_logs_become_edits(app, workspace):
     conn = workspace.conn
-    state = flashcards.overview(conn)
-    basic = next(item for item in state["types"] if item["kind"] == "basic")
-    note = flashcards.save_note(conn, {"deck_id": state["decks"][0]["id"], "type_id": basic["id"],
+    flashcards.bootstrap(conn)
+    deck = conn.execute("SELECT id FROM flash_decks WHERE name='Default'").fetchone()[0]
+    basic = conn.execute("SELECT id FROM flash_types WHERE kind='basic' ORDER BY id LIMIT 1").fetchone()[0]
+    note = flashcards.save_note(conn, {"deck_id": deck, "type_id": basic,
                                        "fields": {"Front": "front-secret", "Back": "back-secret"}, "tags": []})
-    card = flashcards.start_review(conn)["card"]
-    flashcards.reveal(conn, card["token"])
-    flashcards.grade(conn, card["token"], 3, 1000)
+    card = conn.execute("SELECT id FROM flash_cards WHERE note_id=?", (note["id"],)).fetchone()[0]
+    # A graded review, as rika-server's /api/flashcards/grade logs it (server/src/flashcards).
+    conn.execute("INSERT INTO flash_reviews(card_id,deck_id,rating,reviewed_at,local_day,duration_ms,mode,before_state) "
+                 "VALUES(?,?,3,?,?,1000,'regular','{}')", (card, deck, "2026-01-01T09:00:00+00:00", "2026-01-01"))
     job = app.mutate(conn, "/api/jobs/add", {"company": "Acme", "title": "Intern",
                                              "url": "https://example.invalid/acme"})
     app.mutate(conn, f"/api/jobs/{job['id']}", {"action": "applied", "value": True})
     application = conn.execute("SELECT id FROM applications").fetchone()[0]
-    subject = app.mutate(conn, "/api/study/subjects", {"name": "Chemistry"})["item"]
-    session = app.mutate(conn, "/api/study/sessions", {
+    subject = study_mutation(conn, "/api/study/subjects", {"name": "Chemistry"})["item"]
+    session = study_mutation(conn, "/api/study/sessions", {
         "subject_id": subject["id"], "started_at": "2026-01-01T09:00:00Z", "duration_seconds": 1500,
         "timezone": "UTC", "request_id": uuid.uuid4().hex})["item"]
     result = brain(app, conn)
@@ -144,9 +166,7 @@ def test_historical_logs_become_edits(app, workspace):
 
 def test_calendar_history_before_capture_began_is_kept_without_double_counting(app, workspace):
     conn = workspace.conn
-    event = app.mutate(conn, "/api/calendar/events", {
-        "title": "Lab", "start": "2030-01-02T09:00:00Z", "end": "2030-01-02T10:00:00Z",
-        "timezone": "UTC", "all_day": False})
+    event = calendar_event(conn, "Lab")
     conn.execute("INSERT INTO calendar_history(entity, entity_id, before_json, after_json, created_at)"
                  " VALUES ('event', ?, '{}', '{}', '2001-01-01T00:00:00+00:00')", (event["id"],))
     result = brain(app, conn)
@@ -159,13 +179,13 @@ def test_calendar_history_before_capture_began_is_kept_without_double_counting(a
 
 def test_disabled_modules_are_neither_listed_nor_returned(workspace, tmp_path):
     conn = workspace.conn
-    full = WebApplication(workspace.settings, workspace.config, tmp_path)
+    full = WebApplication(workspace.settings, workspace.config, tmp_path, ui_session="ui-test")
     try:
         seed(full, conn)
     finally:
         full.close()
-    config = dataclasses.replace(workspace.config, modules=("workspace",))
-    app = WebApplication(workspace.settings, config, tmp_path)
+    config = dataclasses.replace(workspace.config, modules=("workspace", "brain"))
+    app = WebApplication(workspace.settings, config, tmp_path, ui_session="ui-test")
     try:
         result = brain(app, conn)
     finally:

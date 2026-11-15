@@ -1,4 +1,7 @@
-"""record_events: the append-only history of browser mutations through WebApplication.mutate."""
+"""record_events: the append-only history of browser mutations through WebApplication.mutate.
+
+The calendar's, study's and the opportunities' mutations are answered and recorded by rika-server
+(tests/test_calendar.py, tests/test_study_parity.py, tests/test_opportunities_parity.py)."""
 from __future__ import annotations
 
 import logging
@@ -12,7 +15,7 @@ from kitty.web_server import ROUTE_MODULES, APIError, WebApplication
 
 @pytest.fixture
 def app(workspace, tmp_path):
-    application = WebApplication(workspace.settings, workspace.config, tmp_path)
+    application = WebApplication(workspace.settings, workspace.config, tmp_path, ui_session="ui-test")
     yield application
     application.close()
 
@@ -43,31 +46,19 @@ def _notes(app, conn):
     return ("notes", "notebook", str(notebook["id"]), "create", "/api/notes/notebooks")
 
 
-def _flashcards(app, conn):
-    deck = app.mutate(conn, "/api/flashcards/deck", {"name": "Biology"})["deck"]
-    return ("flashcards", "deck", str(deck["id"]), "create", "/api/flashcards/deck")
-
-
-def _calendar(app, conn):
-    event = app.mutate(conn, "/api/calendar/events", {
-        "title": "Lab", "start": "2030-01-02T09:00:00Z", "end": "2030-01-02T10:00:00Z",
-        "timezone": "UTC", "all_day": False})
-    return ("calendar", "event", event["id"], "create", "/api/calendar/events")
-
-
-def _study(app, conn):
-    subject = app.mutate(conn, "/api/study/subjects", {"name": "Chemistry"})["item"]
-    return ("study", "subject", str(subject["id"]), "create", "/api/study/subjects")
 
 
 def _schema(app, conn):
-    created = app.mutate(conn, "/api/schema/create", {"title": "Ideas"})
-    return ("schema", "map", str(created["id"]), "create", "/api/schema/create")
+    """The maps' own mutations are rika-server's (tests/test_schema_parity.py); linking backlinks is Python's."""
+    from kitty.core import schema_maps
 
-
-def _opportunities(app, conn):
-    item = app.mutate(conn, "/api/opportunities", {"title": "Hackathon"})
-    return ("opportunities", "opportunity", str(item["id"]), "create", "/api/opportunities")
+    created = schema_maps.create(conn, {"title": "Ideas"})
+    created = schema_maps.add_node(conn, {"map_id": created["id"], "revision": created["revision"], "label": "Waves"})
+    path = "/api/schema/backlinks/apply"
+    app.mutate(conn, path, {"map_id": created["id"], "revision": created["revision"], "node_ids": [created["graph"]["nodes"][0]["id"]]})
+    # A route the front answers and records: its rule is still the reference.
+    assert record_events.classify("/api/schema/create", {"title": "Ideas"}, created) == ("schema", "map", str(created["id"]), "create")
+    return ("schema", "map", str(created["id"]), "link", path)
 
 
 def _jobs(app, conn):
@@ -83,8 +74,8 @@ def _reminders(app, conn):
     return ("reminders", "reminder", str(reminder["id"]), "create", "/api/reminders")
 
 
-@pytest.mark.parametrize("case", [_notes, _flashcards, _calendar, _study,
-                                  _schema, _opportunities, _jobs, _reminders], ids=lambda case: case.__name__[1:])
+@pytest.mark.parametrize("case", [_notes,
+                                  _schema, _jobs, _reminders], ids=lambda case: case.__name__[1:])
 def test_one_real_route_per_section_is_captured(app, workspace, case):
     conn = workspace.conn
     expected = case(app, conn)
@@ -111,29 +102,18 @@ def test_block_backed_writes_are_left_to_op_log(app, workspace):
 
 def test_edits_and_deletes_resolve_the_entity_from_path_result_or_body(app, workspace):
     conn = workspace.conn
-    deck = app.mutate(conn, "/api/flashcards/deck", {"name": "Words"})["deck"]
-    subject = app.mutate(conn, "/api/study/subjects", {"name": "Art"})["item"]
-    app.mutate(conn, "/api/study/subjects", {"id": subject["id"], "revision": subject["revision"], "action": "delete"})
-    assert events(conn) == [
-        ("flashcards", "deck", str(deck["id"]), "create", "/api/flashcards/deck"),
-        ("study", "subject", str(subject["id"]), "create", "/api/study/subjects"),
-        ("study", "subject", str(subject["id"]), "delete", "/api/study/subjects"),
-    ]
-
-
-def test_calendar_undo_is_attributed_to_the_undone_event(app, workspace):
-    conn = workspace.conn
-    event = app.mutate(conn, "/api/calendar/events", {
-        "title": "Seminar", "start": "2030-01-03T09:00:00Z", "end": "2030-01-03T10:00:00Z",
-        "timezone": "UTC", "all_day": False})
-    app.mutate(conn, "/api/calendar/undo", {"id": event["undo_id"]})
-    assert events(conn)[-1] == ("calendar", "event", event["id"], "undo", "/api/calendar/undo")
+    note = app.mutate(conn, "/api/notes/notebooks", {"title": "Words"})
+    assert events(conn) == [("notes", "notebook", str(note["id"]), "create", "/api/notes/notebooks")]
+    # Routes rika-server answers and records (the parity tests): their rules are still the reference.
+    assert record_events.classify("/api/study/subjects", {"id": 4, "revision": 1, "action": "delete"}, {"deleted": 4}) == ("study", "subject", "4", "delete")
+    assert record_events.classify("/api/opportunities", {"title": "Hackathon"}, {"id": 7, "title": "Hackathon"}) == ("opportunities", "opportunity", "7", "create")
+    assert record_events.classify("/api/opportunities/7/items", {"revision": 1, "title": "Task"}, {"id": 7}) == ("opportunities", "opportunity", "7", "items")
 
 
 def test_non_content_and_failed_mutations_are_not_captured(app, workspace):
     conn = workspace.conn
-    app.mutate(conn, "/api/calendar/time", {"value": "2030-01-01T09:00", "timezone": "UTC"})
-    revision = app.get_json(conn, "/api/study", {})["settings"]["revision"]
+    app.mutate(conn, "/api/calendar/import/preview", {"format": "csv", "content": "title,date\nLab,2030-01-01\n"})
+    revision = conn.execute("SELECT revision FROM study_settings").fetchone()[0]
     app.mutate(conn, "/api/study/settings", {"revision": revision, "sound": False})
     with pytest.raises(APIError):
         app.mutate(conn, "/api/quick-notes/save", {"id": 999, "revision": 1, "body": "missing"})
@@ -158,8 +138,8 @@ def test_a_capture_failure_never_fails_the_request(app, workspace, monkeypatch, 
 
     monkeypatch.setattr(record_events, "append", broken)
     with caplog.at_level(logging.WARNING, logger="kitty.core.record_events"):
-        deck = app.mutate(workspace.conn, "/api/flashcards/deck", {"name": "Kept"})["deck"]
-    assert deck["name"] == "Kept"
+        job = app.mutate(workspace.conn, "/api/jobs/add", {"company": "Acme", "title": "Kept", "url": "https://example.invalid/kept"})
+    assert job["id"]
     assert events(workspace.conn) == []
     assert any("not recorded" in record.message for record in caplog.records)
 
@@ -178,8 +158,8 @@ def test_every_route_prefix_is_classified():
     assert prefixes <= declared
     assert not set(record_events.SECTION_PREFIXES) & set(record_events.NON_CONTENT_PREFIXES)
     for path in ("/api/reload", "/api/modules", "/api/account/onboarding", "/api/ai/settings",
-                 "/api/notes/preferences", "/api/notes/pages/3/viewport", "/api/flashcards/grade",
-                 "/api/flashcards/review", "/api/study/timer", "/api/calendar/google/sync",
+                 "/api/notes/preferences", "/api/notes/pages/3/viewport",
+                 "/api/study/timer", "/api/calendar/google/sync",
                  "/api/opportunities/settings", "/api/opportunities/discover", "/api/terminal/session"):
         assert record_events.classify(path, {}, {"id": 1}) is None, path
     assert record_events.classify("/api/documents/import", {}, {"task": "a" * 32}) is None

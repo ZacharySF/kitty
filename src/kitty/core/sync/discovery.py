@@ -191,32 +191,36 @@ class Discovery:
         self._browser: Any = None
         self._info: Any = None
         self._lock = threading.Lock()
+        #: Held by start, update and close: registration (mDNS probing takes about 1.75 s) runs
+        #: on a background thread, and nothing may re-announce or tear down half-registered state.
+        self._life = threading.Lock()
         self._seen: dict[str, Seen] = {}  # keyed by service name
         self._closed = False
 
     def start(self) -> None:
         """Register our service and browse; network failures set ``error`` instead."""
-        if self._zc is not None or self._closed:
-            return
-        try:
-            from zeroconf import ServiceBrowser, Zeroconf
+        with self._life:
+            if self._zc is not None or self._closed:
+                return
+            try:
+                from zeroconf import ServiceBrowser, Zeroconf
 
-            if self._factory is not None:
-                zc = self._factory(interfaces=self._interfaces)
-            elif self._interfaces is not None:
-                zc = Zeroconf(interfaces=self._interfaces)
-            else:
-                zc = Zeroconf()
-            self._zc = zc
-            self._info = self._build_info()
-            zc.register_service(self._info)
-            if isinstance(zc, Zeroconf):
-                self._browser = ServiceBrowser(zc, SERVICE, handlers=[self._on_change])
-            else:  # test doubles deliver browse events through on_change directly
-                self._browser = zc.browse(SERVICE, self._on_change)
-        except Exception as exc:  # noqa: BLE001 - any network failure makes discovery inert
-            self.error = f"mDNS unavailable: {exc}" if str(exc) else f"mDNS unavailable: {type(exc).__name__}"
-            self._shutdown()
+                if self._factory is not None:
+                    zc = self._factory(interfaces=self._interfaces)
+                elif self._interfaces is not None:
+                    zc = Zeroconf(interfaces=self._interfaces)
+                else:
+                    zc = Zeroconf()
+                self._zc = zc
+                self._info = self._build_info()
+                zc.register_service(self._info)
+                if isinstance(zc, Zeroconf):
+                    self._browser = ServiceBrowser(zc, SERVICE, handlers=[self._on_change])
+                else:  # test doubles deliver browse events through on_change directly
+                    self._browser = zc.browse(SERVICE, self._on_change)
+            except Exception as exc:  # noqa: BLE001 - any network failure makes discovery inert
+                self.error = f"mDNS unavailable: {exc}" if str(exc) else f"mDNS unavailable: {type(exc).__name__}"
+                self._shutdown()
 
     def update(self, *, name: str | None = None, pairing: bool | None = None, port: int | None = None) -> None:
         """Re-announce with a changed name, pairing flag or port."""
@@ -228,14 +232,15 @@ class Discovery:
             if not valid_port(port):
                 raise ValueError("port must be in 1..65535")
             self._port = port
-        if self._zc is None or self._info is None:
-            return
-        info = self._build_info(service_name=self._info.name)
-        try:
-            self._zc.update_service(info)
-            self._info = info
-        except Exception as exc:  # noqa: BLE001
-            self.error = f"mDNS update failed: {exc}"
+        with self._life:
+            if self._zc is None or self._info is None:
+                return
+            info = self._build_info(service_name=self._info.name)
+            try:
+                self._zc.update_service(info)
+                self._info = info
+            except Exception as exc:  # noqa: BLE001
+                self.error = f"mDNS update failed: {exc}"
 
     def seen(self) -> list[Seen]:
         """Other devices currently visible, freshest first."""
@@ -248,9 +253,10 @@ class Discovery:
         return sorted(best.values(), key=lambda s: s.seen_at, reverse=True)
 
     def close(self) -> None:
-        """Unregister and stop; idempotent."""
+        """Unregister and stop; idempotent. A start that has not begun yet never registers."""
         self._closed = True
-        self._shutdown()
+        with self._life:
+            self._shutdown()
 
     def _shutdown(self) -> None:
         zc, browser, info = self._zc, self._browser, self._info

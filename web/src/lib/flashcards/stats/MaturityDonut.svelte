@@ -97,7 +97,7 @@
   }
   .small {
     fill: var(--subtle);
-    font: 7px var(--font-mono);
+    font: 7px var(--font-ui);
     letter-spacing: 0.12em;
     text-anchor: middle;
     text-transform: uppercase;
@@ -127,7 +127,7 @@
     border-radius: 3px;
   }
   li b {
-    font: 500 12px var(--font-mono);
+    font: 500 12px var(--font-ui);
     font-variant-numeric: tabular-nums;
   }
   @media (prefers-reduced-motion: reduce) {

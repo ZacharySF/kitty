@@ -278,7 +278,7 @@
   .when,
   .count {
     color: var(--muted);
-    font: 11px var(--font-mono);
+    font: 11px var(--font-ui);
     white-space: nowrap;
   }
   .section .set-label {
@@ -319,7 +319,7 @@
   .tag,
   .state {
     color: var(--subtle);
-    font: 500 9.5px var(--font-mono);
+    font: 500 9.5px var(--font-ui);
     letter-spacing: 0.1em;
     text-transform: uppercase;
     white-space: nowrap;
@@ -354,7 +354,7 @@
   }
   .from {
     color: var(--subtle);
-    font: 10.5px var(--font-mono);
+    font: 10.5px var(--font-ui);
   }
   textarea {
     width: 100%;

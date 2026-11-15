@@ -37,6 +37,8 @@ import threading
 import time
 from collections.abc import Callable
 
+from kitty.core.blocks.actor import Actor
+
 HEADER = "X-Kitty-Secret"
 #: The WebSocket subprotocol the server selects when the secret travels as a subprotocol.
 PROTOCOL = "kitty"
@@ -51,6 +53,18 @@ LINK_TTL = 60.0
 MAX_LINKS = 64
 #: The one message for every refusal: it says nothing about which part was wrong.
 REFUSAL = "rika! did not recognise this window; open rika! or the link kitty-web printed"
+#: Behind rika-server (``kitty-web --worker``), the front's private secret on every request it
+#: forwards, and the two ports of the loopback connection the caller opened to the front
+#: (agent verification matches them against /proc; web_server.RequestHandler.connection_ports).
+FRONT_HEADER = "X-Kitty-Front"
+PEER_PORT_HEADER = "X-Kitty-Peer-Port"
+FRONT_PORT_HEADER = "X-Kitty-Front-Port"
+
+
+def window_user(app) -> Actor:
+    """The person at this rika! window session (`WebApplication.ui_session`, rika-server's):
+    the actor that approves effects (kitty.core.effects), here and in the front."""
+    return Actor("user", None, app.ui_session)
 
 
 class UiAuth:
@@ -103,16 +117,6 @@ class UiAuth:
             if current[1] <= self._clock():
                 return None
         return self.secret
-
-    def wait_code(self, code: str, stop: threading.Event) -> None:
-        """Block until `code` is used, replaced or expired, or `stop` is set."""
-        with self._changed:
-            while not stop.is_set() and self._code is not None and self._code[0] == code:
-                remaining = self._code[1] - self._clock()
-                if remaining <= 0:
-                    self._code = None
-                    return
-                self._changed.wait(min(remaining, 0.5))
 
     # Link tickets.
 

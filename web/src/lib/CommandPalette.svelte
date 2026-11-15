@@ -9,6 +9,7 @@
   import { morningBrief } from "./goals/brief.svelte";
   import { launchMath, type MathLaunch } from "./math/launch";
   import { rika } from "./rika/session.svelte";
+  import { homeEditor, templatePicker } from "./home/templatePicker.svelte";
 
   /**
    * Spotlight-style palette (Ctrl K): one large field, nothing else until you type,
@@ -24,10 +25,13 @@
     onopenjob,
     onadd,
     onhelp,
+    onedit,
     onnewcard,
     onreload,
     onterminal,
     onrika,
+    onsettings,
+    onnotifications,
   }: {
     enabled: readonly string[];
     onclose: () => void;
@@ -35,6 +39,8 @@
     onopenjob: (id: number) => void;
     onadd: () => void;
     onhelp: () => void;
+    /** Page edit mode on the page in view (home: its own edit mode). */
+    onedit: () => void;
     /** Opens the quick-add flashcard popover; absent when Flashcards is off. */
     onnewcard?: () => void;
     onreload: () => void;
@@ -42,6 +48,10 @@
     onterminal?: () => void;
     /** Opens Rika's history drawer. */
     onrika: () => void;
+    /** Opens Settings on a page (`appearance`, `modules`, …). */
+    onsettings: (page: string) => void;
+    /** Opens the notification centre; absent when no module sends reminders. */
+    onnotifications?: () => void;
   } = $props();
 
   const LIMIT = 6;
@@ -75,12 +85,19 @@
     ...(onterminal ? [{ label: "Open terminal", meta: "Tern window", icon: "terminal", run: () => onterminal() }] : []),
     { label: "Rika history", meta: "Rika", icon: "kitty", run: () => onrika() },
     { label: "Brain dump", meta: "Rika · talk, then one plan", icon: "kitty", run: () => void rika.listen("dump") },
-    // Q15 A: opens the Rika bar's brief, sweeping first when today has none yet.
+    // Q15 A: opens Rika's brief, sweeping first when today has none yet.
     { label: "Morning brief", meta: "Rika", icon: "goals", run: () => void morningBrief.show() },
     ...(mathOn ? [
       { label: "Mental math sprint", meta: "Math", icon: "math", run: () => openMath("sprint") },
       { label: "Next math lesson", meta: "Math", icon: "math", run: () => openMath("lesson") },
     ] : []),
+    // The top bar carries no theme or bell: both live here (and in the tab menu).
+    { label: "Theme", meta: "Settings · Appearance", icon: "settings", run: () => onsettings("appearance") },
+    // Rika offers one template once; the four stay here.
+    { label: "Home templates", meta: "Home", icon: "today", run: () => { templatePicker.open = true; onview("today"); } },
+    { label: "Edit home", meta: "Home · move, add or remove widgets", icon: "today", run: () => { homeEditor.on = true; onview("today"); } },
+    { label: "Edit this page", meta: "Action", icon: "settings", run: () => onedit() },
+    ...(onnotifications ? [{ label: "Notifications", meta: "Action", icon: "today", run: () => onnotifications() }] : []),
     { label: "Keyboard shortcuts", meta: "Action", icon: "questions", run: () => onhelp() },
     { label: "Reload configuration", meta: "Action", icon: "refresh", run: () => onreload() },
     { label: "Edit build", meta: "Action", icon: "settings", run: () => { buildStore.editorOpen = true; } },
@@ -242,11 +259,15 @@
     padding: 0;
     overflow: hidden;
     border: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
-    border-radius: 18px;
+    border-radius: 22px;
     color: var(--ink);
     background: color-mix(in srgb, var(--solid-panel, var(--br-panel)) 80%, transparent);
     backdrop-filter: blur(36px) saturate(170%);
     box-shadow: var(--overlay-shadow);
+  }
+  /* The shared overlay rule (styles.css) sets 12px for every dialog; search is a field, so rounder. */
+  :global(:root body) dialog.spotlight {
+    border-radius: 22px;
   }
   .spotlight::backdrop {
     background: color-mix(in srgb, var(--shadow-tint) 28%, transparent);

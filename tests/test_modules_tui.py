@@ -14,7 +14,7 @@ from rich.text import Text
 from textual.widgets import DataTable
 
 from kitty.core.workspace import open_workspace
-from kitty.modules import ModuleDisabledError, load_modules, save_modules
+from kitty.modules import DEFAULT_MODULES, ModuleDisabledError, load_modules, save_modules
 from kitty.settings import Settings
 from kitty.tui.app import KittyApp
 from kitty.tui.navigation import PLACES
@@ -54,7 +54,7 @@ def test_create_app_picks_the_core_app_without_applyai(core_workspace):
 def test_create_app_picks_the_job_app_with_applyai(workspace):
     app = create_app(workspace=workspace)
     assert type(app) is KittyApp
-    assert app.modules == ("applyai", "workspace", "terminal")
+    assert app.modules == DEFAULT_MODULES
 
 
 def test_job_app_refuses_a_workspace_without_applyai(core_workspace):
@@ -156,6 +156,6 @@ async def test_job_app_reload_keeps_the_frozen_selection(workspace):
         save_modules(workspace.settings.config_dir, ["workspace"])      # pending: applyai off
         await pilot.press("ctrl+r")
         await pilot.pause()
-        assert app.modules == ("applyai", "workspace", "terminal")
+        assert app.modules == DEFAULT_MODULES
         assert app.config.track_names == tracks
         assert app.screen.__class__.__name__ == "DashboardScreen"

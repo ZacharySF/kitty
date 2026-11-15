@@ -34,7 +34,7 @@ def test_route_scoping_and_query_rejection(workspace, tmp_path):
     assert web_atlas.get(None, workspace.conn, "/api/atlasx", {}) is None
     assert web_atlas.get(None, workspace.conn, "/api/schema", {}) is None
     assert web_atlas.post(None, workspace.conn, "/api/atlas", {}) is None
-    app = WebApplication(workspace.settings, workspace.config, tmp_path)
+    app = WebApplication(workspace.settings, workspace.config, tmp_path, ui_session="ui-test")
     try:
         result = app.get_json(workspace.conn, "/api/atlas", {})
         assert {section["kind"] for section in result["sections"]} == set(web_atlas.KINDS)
@@ -104,7 +104,7 @@ def assert_section_graph(result, *, bounded=True):
 
 @pytest.mark.parametrize("section", ["jobs", "flashcards", "notes", "study", "opportunities"])
 def test_section_routes_are_read_only_and_reject_unrecognized_query_fields(workspace, tmp_path, section):
-    app = WebApplication(workspace.settings, workspace.config, tmp_path)
+    app = WebApplication(workspace.settings, workspace.config, tmp_path, ui_session="ui-test")
     try:
         path = f"/api/atlas/sections/{section}"
         result = app.get_json(workspace.conn, path, {})
@@ -135,7 +135,7 @@ def test_section_search_finds_records_by_content_through_the_index(workspace, tm
     track = conn.execute("SELECT name FROM tracks WHERE active = 1 ORDER BY sort_order, name").fetchone()[0]
     job, _ = jobs.upsert_job(conn, company="Synthetic Co", title="Lab assistant", url="https://example.invalid/k",
                              jd_text="Run the Krebs cycle assays", tracks=[track])
-    app = WebApplication(workspace.settings, workspace.config, tmp_path)
+    app = WebApplication(workspace.settings, workspace.config, tmp_path, ui_session="ui-test")
     try:
         found = app.get_json(conn, "/api/atlas/sections/notes", {"search": "krebs"})
         assert [node["id"] for node in found["nodes"]] == [f"notebook:{book['id']}", f"page:{page['id']}"]

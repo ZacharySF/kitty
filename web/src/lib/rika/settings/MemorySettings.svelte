@@ -196,7 +196,7 @@
   }
   .count {
     color: var(--muted);
-    font: 11px var(--font-mono);
+    font: 11px var(--font-ui);
     font-variant-numeric: tabular-nums;
   }
   ul {
@@ -243,7 +243,7 @@
   .hits em {
     grid-row: span 2;
     color: var(--subtle);
-    font: 500 9.5px/1.9 var(--font-mono);
+    font: 500 9.5px/1.9 var(--font-ui);
     font-style: normal;
     letter-spacing: 0.1em;
     text-transform: uppercase;

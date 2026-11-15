@@ -58,6 +58,7 @@ export type ThemeId =
   | "gruvbox"
   | "one-dark"
   | "kitty"
+  | "blossom"
   | "scythe"
   | "liquid-glass"
   | "speed"
@@ -65,7 +66,8 @@ export type ThemeId =
   | "red"
   | "pretti"
   | "bloodluxe"
-  | "halfblood";
+  | "halfblood"
+  | "aero";
 
 export type Palette = Omit<Theme, "name">;
 

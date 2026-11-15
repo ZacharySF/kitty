@@ -1,12 +1,22 @@
-"""Consumer-visible graph persistence, source identity and conflict boundaries."""
+"""Consumer-visible graph persistence, source identity and conflict boundaries.
+
+The core functions are tested here directly; the routes are rika-server's (server/src/schema),
+compared with the core in tests/test_schema_parity.py and reached through the front below."""
+from contextlib import contextmanager
 from copy import deepcopy
-from types import SimpleNamespace
+from urllib.parse import urlencode
 
 import pytest
+from terminal_support import front_site
 
-from kitty import web_schema
 from kitty.core import jobs, notes, schema_maps as schema
-from kitty.web_server import APIError
+
+
+@contextmanager
+def web(workspace):
+    """Requests to the front on this workspace: `request(path, body=None, **query)`."""
+    with front_site(workspace.settings) as site:
+        yield lambda path, body=None, **query: site.request(path + ('?' + urlencode(query) if query else ''), body)
 
 
 def node(key, kind='topic', source=None, **extra):
@@ -195,19 +205,15 @@ def test_graph_size_unknown_fields_and_invalid_viewport_are_bounded(workspace):
 
 def test_web_routes_return_conflicts_and_ignore_other_modules(workspace):
     conn = workspace.conn
-    app = SimpleNamespace(_no_query=lambda query: None)
-    created = web_schema.post(app, conn, '/api/schema/create', {'title': 'Web graph', 'mode': 'general'})
-    assert web_schema.get(app, conn, '/api/schema/map', {'id': str(created['id'])})['title'] == 'Web graph'
-    assert web_schema.get(app, conn, '/api/schema', {})['maps'][0]['id'] == created['id']
-    save(conn, created)
-    with pytest.raises(APIError) as caught:
-        web_schema.post(app, conn, '/api/schema/undo', {'id': created['id'], 'revision': created['revision']})
-    assert caught.value.status == 409
-    with pytest.raises(APIError) as caught:
-        web_schema.get(app, conn, '/api/schema/map', {'id': 'bad'})
-    assert caught.value.status == 400
-    assert web_schema.get(app, conn, '/api/other', {}) is None
-    assert web_schema.post(app, conn, '/api/other', {}) is None
+    with web(workspace) as request:
+        status, created = request('/api/schema/create', {'title': 'Web graph', 'mode': 'general'})
+        assert status == 200
+        assert request('/api/schema/map', id=created['id'])[1]['title'] == 'Web graph'
+        assert request('/api/schema')[1]['maps'][0]['id'] == created['id']
+        save(conn, created)
+        assert request('/api/schema/undo', {'id': created['id'], 'revision': created['revision']})[0] == 409
+        assert request('/api/schema/map', id='bad')[0] == 400
+        assert request('/api/other')[0] == 404 and request('/api/other', {})[0] == 404
 
 
 def test_add_node_task_identity_revision_parent_and_live_title(workspace):
@@ -218,15 +224,15 @@ def test_add_node_task_identity_revision_parent_and_live_title(workspace):
     body = {'map_id': item['id'], 'revision': item['revision'],
             'label': 'Review chapter', 'kind': 'task', 'parent_id': 'physics',
             'source': {'kind': 'calendar_task', 'id': 'synthetic-task'}}
-    result = web_schema.post(None, conn, '/api/schema/add-node', body)
+    with web(workspace) as request:
+        status, result = request('/api/schema/add-node', body)
+        assert status == 200
+        assert request('/api/schema/add-node', body)[0] == 409
     added = result['graph']['nodes'][-1]
     assert added['kind'] == 'task'
     assert result['live'][added['id']]['label'] == 'Review synthetic chapter'
     assert result['graph']['edges'][-1]['to'] == added['id']
     assert result['graph']['edges'][-1]['from'] == 'physics'
-    with pytest.raises(APIError) as caught:
-        web_schema.post(None, conn, '/api/schema/add-node', body)
-    assert caught.value.status == 409
     body['revision'] = result['revision']
     repeated = schema.add_node(conn, body)
     assert repeated['revision'] == result['revision']
@@ -336,7 +342,9 @@ def test_network_unifies_sources_across_maps_with_live_metadata_and_provenance(w
                                         'edges': [{'id': 'needs', 'from': 'role', 'to': 'class', 'label': 'needs'},
                                                   {'id': 'part', 'from': 'vectors', 'to': 'class', 'label': 'Part  Of'}]})
     conn.execute("UPDATE study_subjects SET name='Linear Algebra II' WHERE id=?", (subject_id,))
-    result = web_schema.get(SimpleNamespace(), conn, '/api/schema/network', {})
+    with web(workspace) as request:
+        result = request('/api/schema/network')[1]
+        picked = request('/api/schema/network', map_ids=study['id'])[1]
     by_id = {n['id']: n for n in result['nodes']}
     shared = by_id[f'subject:{subject_id}']
     assert shared['label'] == 'Linear Algebra II'
@@ -353,7 +361,6 @@ def test_network_unifies_sources_across_maps_with_live_metadata_and_provenance(w
     assert len(result['edges']) == 3
     only_jobs = schema.network(conn, mode='jobs')
     assert [s['id'] for s in only_jobs['maps']] == [career['id']]
-    picked = web_schema.get(SimpleNamespace(), conn, '/api/schema/network', {'map_ids': str(study['id'])})
     assert {n['id'] for n in picked['nodes']} == {f'subject:{subject_id}', f"map:{study['id']}:vectors"}
 
 
@@ -367,7 +374,8 @@ def test_network_label_merge_is_opt_in_kind_aware_and_weights_edges(workspace):
     separate = schema.network(conn)
     assert len(separate['nodes']) == 5 and separate['unified'] == 0
     assert all(e['weight'] == 1 for e in separate['edges'])
-    merged = web_schema.get(SimpleNamespace(), conn, '/api/schema/network', {'merge_labels': 'true'})
+    with web(workspace) as request:
+        merged = request('/api/schema/network', merge_labels='true')[1]
     assert merged['merge_labels'] is True
     by_id = {n['id']: n for n in merged['nodes']}
     assert set(by_id) == {'label:topic:graph theory', 'label:skill:proofs', 'label:idea:graph theory'}
@@ -413,15 +421,13 @@ def test_network_clusters_are_connected_components_and_deterministic(workspace):
 
 def test_network_query_boundaries(workspace):
     conn = workspace.conn
-    app = SimpleNamespace()
     item = network_map(conn, 'study', {'nodes': [node('a')], 'edges': []})
     assert schema.network(conn, mode='jobs')['nodes'] == []
-    for query in ({'map_ids': 'x'}, {'merge_labels': 'maybe'}, {'mode': 'other'}, {'map_ids': '999999'},
-                  {'map_ids': ','.join(str(i) for i in range(1, 102))}, {'map_ids': '0'}, {'unknown': '1'}):
-        with pytest.raises(APIError) as caught:
-            web_schema.get(app, conn, '/api/schema/network', query)
-        assert caught.value.status == 400
-    assert web_schema.get(app, conn, '/api/schema/network', {'map_ids': str(item['id']), 'mode': 'jobs'})['nodes'] == []
+    with web(workspace) as request:
+        for query in ({'map_ids': 'x'}, {'merge_labels': 'maybe'}, {'mode': 'other'}, {'map_ids': '999999'},
+                      {'map_ids': ','.join(str(i) for i in range(1, 102))}, {'map_ids': '0'}, {'unknown': '1'}):
+            assert request('/api/schema/network', **query)[0] == 400
+        assert request('/api/schema/network', map_ids=item['id'], mode='jobs')[1]['nodes'] == []
     for _ in range(schema.MAX_MAPS - 1):
         schema.create(conn, {'title': 'Filler', 'mode': 'general'})
     assert len(schema.network(conn)['maps']) == schema.MAX_MAPS

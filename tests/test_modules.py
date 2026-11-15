@@ -16,8 +16,8 @@ from kitty.config import ConfigError, load_config
 from kitty.core import bootstrap, doctor as doctor_core
 from kitty.core.workspace import open_workspace, sync_config_to_db
 from kitty.modules import (
-    MODULE_IDS, ModuleDisabledError, available_modules, load_modules, modules_state,
-    normalize_modules, require_module, save_modules,
+    DEFAULT_MODULES, MODULE_IDS, MODULE_PACKS, REGISTRY, ModuleDisabledError, available_modules, load_modules,
+    modules_state, normalize_modules, require_module, save_modules,
 )
 from kitty.settings import Settings, find_project_root
 
@@ -56,15 +56,44 @@ def copy_careers(config_dir: Path) -> None:
 
 
 def test_registry_constants_and_metadata():
-    assert MODULE_IDS == ("applyai", "workspace", "terminal")
+    assert MODULE_IDS == ("applyai", "workspace", "math", "learnharness", "terminal", "voice", "brain")
+    # A workspace without a selection keeps every module rika! had before packs; the Brain is new.
+    assert DEFAULT_MODULES == ("applyai", "workspace", "math", "learnharness", "terminal", "voice")
+    assert {key: MODULE_PACKS[key] for key in MODULE_IDS} == {
+        "applyai": ("discovery",), "workspace": (), "math": ("math",), "learnharness": ("learnharness",),
+        "terminal": ("herdr",), "voice": ("voice",), "brain": ("brain",)}
+    assert [pack["id"] for pack in REGISTRY["packs"]] == ["discovery", "math", "learnharness", "herdr", "voice", "brain", "themes", "animations"]
+    assert all(pack["label"] and pack["description"] for pack in REGISTRY["packs"])
     assert [item["id"] for item in available_modules()] == list(MODULE_IDS)
     assert all(item["label"] and item["description"] for item in available_modules())
+    assert available_modules()[-1]["packs"] == ["brain"]
+
+
+def test_every_pack_has_one_kind_of_payload():
+    """kitty.packs loads the Python and program packs; web code (the Brain, Themes, Animations) is the front's."""
+    from kitty import packs
+
+    kinds = [set(packs.PYTHON), set(packs.PROGRAMS), set(packs.WEB)]
+    assert set().union(*kinds) == {pack["id"] for pack in REGISTRY["packs"]}
+    assert sum(len(kind) for kind in kinds) == len(REGISTRY["packs"])
+
+
+def test_every_copy_of_the_module_list_is_the_registry():
+    """modules.json is the one source (rika-server compiles it in); the rest must agree with it."""
+    schema = json.loads((REPO_ROOT / "src/kitty/core/builds/kitty-build.schema.json").read_text())["properties"]["modules"]
+    assert schema["items"]["enum"] == list(MODULE_IDS) and schema["default"] == list(DEFAULT_MODULES)
+    assert 'include_str!("../../src/kitty/modules.json")' in (REPO_ROOT / "server/src/modules.rs").read_text()
+    api = (REPO_ROOT / "web/src/lib/api.ts").read_text()
+    assert f"export type ModuleId = {' | '.join(json.dumps(key) for key in MODULE_IDS)};" in api
+    assert f"modules: {json.dumps(list(DEFAULT_MODULES))}," in (REPO_ROOT / "web/src/lib/buildCore.ts").read_text()
+    packs = {pack["id"] for pack in REGISTRY["packs"]}
+    assert all(set(item["packs"]) <= packs for item in REGISTRY["modules"])
 
 
 def test_absent_file_means_every_module_and_selection_is_canonical(tmp_path):
     config_dir = tmp_path / "config"
     # A pre-module workspace (the user's existing one) keeps every module, Terminal included.
-    assert load_modules(config_dir) == ("applyai", "workspace", "terminal")
+    assert load_modules(config_dir) == DEFAULT_MODULES
     write(config_dir, ["workspace", "applyai"])
     assert load_modules(config_dir) == ("applyai", "workspace")
     write(config_dir, [])
@@ -135,7 +164,8 @@ def test_require_module_raises_a_readable_error_when_disabled(tmp_path):
 
 
 def test_normalize_rejects_non_ids_and_duplicates():
-    assert normalize_modules(["terminal", "workspace", "applyai"]) == MODULE_IDS
+    assert normalize_modules(["voice", "terminal", "learnharness", "math", "workspace", "applyai"]) == DEFAULT_MODULES
+    assert normalize_modules(["brain", "applyai"]) == ("applyai", "brain")
     for bad in (["Workspace"], ["applyai", "applyai"], [None], [["applyai"]], ["applyai/../x"]):
         with pytest.raises(ValueError):
             normalize_modules(bad)
@@ -176,8 +206,8 @@ def test_save_modules_refuses_symlinks(tmp_path):
 def test_modules_state_separates_active_from_pending(tmp_path):
     config_dir = tmp_path / "config"
     write(config_dir, ["workspace"])
-    state = modules_state(MODULE_IDS, config_dir)
-    assert state["enabled"] == ["applyai", "workspace", "terminal"]
+    state = modules_state(DEFAULT_MODULES, config_dir)
+    assert state["enabled"] == list(DEFAULT_MODULES)
     assert state["configured"] == ["workspace"]
     assert state["restart_required"] is True
     assert [item["id"] for item in state["available"]] == list(MODULE_IDS)
@@ -215,7 +245,7 @@ def test_applyai_still_requires_its_files_and_both_enabled_matches_legacy(tmp_pa
         load_config(config_dir)  # No build file: legacy default enables applyai.
     copy_careers(config_dir)
     legacy = load_config(config_dir)
-    assert legacy.modules == MODULE_IDS and legacy.track_names
+    assert legacy.modules == DEFAULT_MODULES and legacy.track_names
     write(config_dir, ["applyai", "workspace"])
     assert load_config(config_dir).track_names == legacy.track_names
 
@@ -298,7 +328,7 @@ def test_init_with_applyai_copies_careers_examples(tmp_path):
 def test_init_in_a_legacy_workspace_leaves_the_file_absent(tmp_path):
     settings = example_workspace(tmp_path)
     shutil.copy(settings.config_path("profile.yaml.example"), settings.config_path("profile.yaml"))
-    assert bootstrap.initialize_modules(settings) == MODULE_IDS
+    assert bootstrap.initialize_modules(settings) == DEFAULT_MODULES
     assert not (settings.config_dir / "build.json").exists()
     assert {r.action for r in bootstrap.copy_examples(settings)} == {"created", "kept"}
 

@@ -58,19 +58,19 @@ test('each group key maps to its header group and built-ins keep their order',()
 
 test('an add-on view opens its group even when every built-in module is off',()=>{
   const external=[view()];
-  assert.deepEqual(visibleGroups([],external).map(group=>group.label),['Plan','Study','Settings']);
+  assert.deepEqual(visibleGroups([],external).map(group=>group.label),['Plan','Study','Rika','Settings']);
   assert.deepEqual(groupViews([],external,'Study'),['m/demo-mod/demo']);
   assert.equal(viewEnabled('m/demo-mod/demo',[],external),true);
   assert.equal(viewEnabled('m/demo-mod/demo',ALL,[]),false);
   assert.equal(viewEnabled('study',[],external),false);
   const navigate=shortcutsFor([],external).find(group=>group.title==='Navigate').shortcuts;
-  assert.ok(navigate.some(([keys])=>keys==='Ctrl + Alt / Ctrl + X / Ctrl + V'));
+  assert.ok(navigate.some(([keys,what])=>keys==='Ctrl + Alt'&&what.startsWith('Plan')));
 });
 
 test('navigation items carry the label and fall back to a generic icon for unknown names',()=>{
   const external=[view({icon:'math'}),view({module:'odd-mod',icon:'not-an-icon'})];
   const items=visibleNavigation([],external);
-  assert.deepEqual(items.map(item=>item.id),['today','goals','ai','settings','m/demo-mod/demo','m/odd-mod/demo']);
+  assert.deepEqual(items.map(item=>item.id),['today','goals','rika','ai','settings','m/demo-mod/demo','m/odd-mod/demo']);
   assert.equal(navItem('m/demo-mod/demo',external)?.icon,'math');
   assert.equal(navItem('m/odd-mod/demo',external)?.icon,'atlas');
   assert.equal(navItem('m/odd-mod/demo',external)?.label,'Demo');

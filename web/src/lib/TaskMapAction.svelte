@@ -156,7 +156,7 @@
   label {
     display: grid;
     gap: 0.2rem;
-    font-size: 0.78rem;
+    font-size: 13px;
     color: var(--muted);
   }
   select {

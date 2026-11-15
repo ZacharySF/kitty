@@ -24,7 +24,7 @@ from typing import Any
 
 import httpx
 
-from kitty import web_effects
+from kitty import web_auth
 from kitty.core import effects
 from kitty.core import keys as keystore
 from kitty.core.builds import project, store
@@ -311,7 +311,7 @@ def _review(app, conn, purpose, text):
             'max_output_tokens': output_bound, 'maximum_cost_usd': str(cost),
             'prompt_price': model['prompt_price'], 'completion_price': model['completion_price'], 'routing': settings['routing']}
     try:
-        effect = effects.propose(conn, REQUEST.name, plan, actor=web_effects.user(app), ctx=_Context(app, conn))
+        effect = effects.propose(conn, REQUEST.name, plan, actor=web_auth.window_user(app), ctx=_Context(app, conn))
     except effects.EffectError as exc:
         raise _effect_error(exc) from None
     return {**plan, 'maximum_cost_usd': float(cost),
@@ -525,7 +525,7 @@ def post(app, conn, path, body):
         try:
             # Approval, both budget checks and the ledger reservation commit together, or not at all.
             effect, key = effects.approve_and_execute(conn, body.get('effect_id'), body.get('digest'), kinds={REQUEST.name},
-                                                      actor=web_effects.user(app), ctx=_Context(app, conn),
+                                                      actor=web_auth.window_user(app), ctx=_Context(app, conn),
                                                       options={'budget_usd': str(budget)})
         except effects.EffectError as exc:
             raise _effect_error(exc) from None

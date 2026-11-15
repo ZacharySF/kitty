@@ -1,4 +1,5 @@
 import type { ITheme } from "@xterm/xterm";
+import type { SessionUsage } from "./usage/usage";
 
 /** Bracket's semantic roles, as listed for each theme in themes.ts. */
 export type ThemeRoles = {
@@ -59,8 +60,8 @@ export type TerminalActivity = {
     label: string;
     status: AgentState;
     focused: boolean;
-    /** `task` is the pane's terminal title; `since` the epoch ms its state began. */
-    agents: { pane: string; name: string; status: AgentState; task: string; line: string; revision: number; since: number }[];
+    /** `task` is the pane's terminal title; `since` the epoch ms its state began; `usage` its session's usage while that is on for its kind. */
+    agents: { pane: string; name: string; status: AgentState; task: string; line: string; revision: number; since: number; usage?: SessionUsage | null }[];
   }[];
 };
 

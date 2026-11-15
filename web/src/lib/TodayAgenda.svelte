@@ -70,7 +70,7 @@
   });
 </script>
 
-<HomeWidget {id} title="Today" eyebrow={new Date(today).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })}>
+<HomeWidget {id} title="Today" icon="today" eyebrow={new Date(today).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })}>
   {#if error}
     <p class="note" role="alert">{error}</p>
   {:else if !events}
@@ -139,10 +139,10 @@
   li button {
     width: 100%;
     display: grid;
-    grid-template-columns: 38px 3px minmax(0, 1fr) auto;
+    grid-template-columns: 54px 3px minmax(0, 1fr) auto;
     align-items: center;
-    gap: 9px;
-    padding: 5px 4px 5px 2px;
+    gap: 12px;
+    padding: 8px 4px 8px 2px;
     border: 1px solid transparent;
     border-radius: 8px;
     background: transparent;
@@ -157,13 +157,13 @@
   }
   time {
     color: var(--muted);
-    font: 500 10.5px var(--font-mono);
+    font-size: 14px;
     font-variant-numeric: tabular-nums;
   }
   .bar {
     position: relative;
     align-self: stretch;
-    min-height: 28px;
+    min-height: 36px;
     border-radius: 2px;
     background: var(--calendar-color);
     opacity: 0.85;
@@ -185,28 +185,27 @@
     white-space: nowrap;
   }
   strong {
-    font-weight: 500;
-    font-size: 12.5px;
+    font-weight: 400;
+    font-size: 17px;
+    line-height: 1.3;
   }
   small {
     color: var(--muted);
-    font-size: 11px;
+    font-size: 14px;
   }
   .past {
     opacity: 0.45;
   }
   .live strong {
-    font-weight: 600;
+    font-weight: 700;
   }
+  /* "Now" / "Soon" in plain words: no pill outline or tracked caps. */
   .chip {
-    padding: 1px 7px;
-    border: 1px solid var(--hairline);
+    padding: 2px 8px;
     border-radius: 999px;
     color: var(--muted);
-    font: 500 9.5px var(--font-mono);
+    font-size: 14px;
     font-style: normal;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
     white-space: nowrap;
   }
   .chip.now {
@@ -216,7 +215,7 @@
   }
   .now-line {
     display: grid;
-    grid-template-columns: 38px minmax(0, 1fr);
+    grid-template-columns: 54px minmax(0, 1fr);
     align-items: center;
     gap: 7px;
     height: 12px;
@@ -224,7 +223,8 @@
   }
   .now-line span {
     color: var(--accent);
-    font: 600 9.5px var(--font-mono);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
   }
   .now-line i {
     position: relative;
@@ -244,7 +244,7 @@
   .note {
     margin: 0 0 6px;
     color: var(--muted);
-    font-size: 12px;
+    font-size: 16px;
   }
   /* A narrow rail drops the time range and puts the chip under the title. */
   @container (max-width: 240px) {

@@ -11,6 +11,8 @@ import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 import { chromium } from "playwright-core";
+/** Kitty, the default, is set in an open Helvetica; the other themes keep Inter. */
+const TEXT_FACE = { kitty: "TeX Gyre Heros" };
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 let server;
@@ -82,19 +84,20 @@ for (const theme of ["kitty", "liquid-glass"]) {
       await context.close();
     });
 
-    test("labels, eyebrows, section titles, field labels and fold-outs are Inter 600 sentence case, never italic", async () => {
+    test("labels, eyebrows, section titles, field labels and fold-outs are the text face, 600, sentence case, never italic", async () => {
       const { page, problems, context } = await harness(theme);
       for (const selector of [".eyebrow", ".br-section-title", ".br-field__label", "summary"]) {
         const s = await style(page.locator(selector).first(), "fontFamily", "fontWeight", "fontStyle", "textTransform", "fontSize", "letterSpacing");
-        assert.equal(family(s.fontFamily), "Inter Variable", `${selector} face`);
+        assert.equal(family(s.fontFamily), TEXT_FACE[theme] ?? "Inter Variable", `${selector} face`);
         assert.equal(s.fontWeight, "600", `${selector} weight`);
         assert.equal(s.fontStyle, "normal", `${selector} is italic`);
         assert.equal(s.textTransform, "none", `${selector} case`);
-        assert.equal(s.fontSize, "12px", `${selector} size`);
+        // Kitty's bigger scale: labels are 13.5px there, 12px in the other themes.
+        assert.equal(s.fontSize, theme === "kitty" ? "13.5px" : "12px", `${selector} size`);
       }
-      // Fraunces is the page title's face only; every other heading is Inter.
-      assert.equal(family((await style(page.locator("h1"), "fontFamily")).fontFamily), "Fraunces Variable");
-      assert.equal(family((await style(page.locator("h2"), "fontFamily")).fontFamily), "Inter Variable");
+      // Titles and headings are set in the text face (design labs, Type).
+      for (const heading of ["h1", "h2"])
+        assert.equal(family((await style(page.locator(heading), "fontFamily")).fontFamily), TEXT_FACE[theme] ?? "Inter Variable", heading);
       const loaded = await page.evaluate(() => [...document.fonts].map((face) => face.family.replace(/["']/g, "")));
       for (const gone of ["Newsreader Variable", "Space Grotesk Variable"]) assert.ok(!loaded.includes(gone), `${gone} is still bundled`);
       assert.deepEqual(problems, []);
@@ -174,7 +177,7 @@ describe("Select", () => {
     // The open list is the app's overlay glass, not the OS menu: one themed box with a radius.
     const glass = page.locator("[popover]").filter({ has: list });
     const panel = await style(glass, "borderTopLeftRadius", "backdropFilter", "fontFamily");
-    assert.equal(family(panel.fontFamily), "Inter Variable");
+    assert.equal(family(panel.fontFamily), TEXT_FACE.kitty);
     assert.ok(parseFloat(panel.borderTopLeftRadius) >= 10);
     assert.notEqual(panel.backdropFilter, "none");
     const inner = await style(list, "borderTopWidth", "backgroundColor");
@@ -337,7 +340,7 @@ describe("adding and editing", () => {
     assert.ok(rect.right > 1260 && rect.width <= 420, "drawer is not on the right edge");
     assert.equal((await style(drawer.locator("header"), "borderBottomWidth")).borderBottomWidth, "1px");
     assert.equal((await style(drawer.locator("footer"), "borderTopWidth")).borderTopWidth, "1px");
-    assert.equal(family((await style(drawer.getByRole("heading", { name: "Orgo quiz" }), "fontFamily")).fontFamily), "Inter Variable");
+    assert.equal(family((await style(drawer.getByRole("heading", { name: "Orgo quiz" }), "fontFamily")).fontFamily), TEXT_FACE.kitty);
     await page.keyboard.press("Escape");
     await drawer.waitFor({ state: "detached" });
     assert.equal(await opener.evaluate((node) => node === document.activeElement), true);

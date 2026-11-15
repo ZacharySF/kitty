@@ -102,7 +102,7 @@ test("an outside editor's save restyles both windows, drops removed tokens and f
     await page.waitForFunction(() => getComputedStyle(document.querySelector(".workbench")).outlineColor === "rgb(0, 255, 0)");
     assert.equal(await property(page, "--probe"), "");
     // Back on the default Kitty theme's own ink.
-    assert.equal(await property(page, "--br-ink"), "#f5e8ee");
+    assert.equal(await property(page, "--br-ink"), "#f5f5f7");
     assert.equal(await scopedCss(page), `@scope (#app) {\n${css}\n}`);
   }
   // The open editor had no unsaved edits, so it shows the file as written.
@@ -202,12 +202,12 @@ test("safe mode (?safe and Ctrl+Alt+Shift+S) drops custom CSS and tokens; its co
   await waitProperty(windowA, "--probe4", "#00ff00");
   assert.match(await scopedCss(windowA), /^@scope \(#app\)/);
   assert.equal(new URL(windowA.url()).searchParams.has("safe"), false);
-  // Ctrl+Alt on its own still opens Plan (on release).
+  // Ctrl+Alt on its own still opens Plan (on release): its first page other than home.
   await windowA.keyboard.down("Control");
   await windowA.keyboard.down("Alt");
   await windowA.keyboard.up("Alt");
   await windowA.keyboard.up("Control");
-  await windowA.waitForFunction(() => location.hash === "#today");
+  await windowA.waitForFunction(() => location.hash === "#goals");
   await windowA.goto(new URL("#settings", base).href);
 
   // ?safe opens one window without the custom look; the other keeps it.

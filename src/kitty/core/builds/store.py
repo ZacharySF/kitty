@@ -20,12 +20,12 @@ and removes modules.yaml; settings rows and browser preferences follow on first 
 from __future__ import annotations
 
 import errno
-import fcntl
 import hashlib
 import json
 import os
 import re
 import stat
+import sys
 import tempfile
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -70,6 +70,25 @@ def locked(root: Path) -> Iterator[None]:
     """Exclusive lock on the config directory for one read-modify-write of the build."""
     folder = Path(root) / "config"
     folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if sys.platform == "win32":
+        # Windows cannot open a folder as a file: both sides lock `.lock` inside it
+        # (rika-server: server/src/modules.rs `lock`).
+        import msvcrt
+
+        descriptor = os.open(folder / ".lock", os.O_RDWR | os.O_CREAT)
+        try:
+            while True:
+                try:
+                    msvcrt.locking(descriptor, msvcrt.LK_LOCK, 1)
+                    break
+                except OSError:
+                    continue  # LK_LOCK gives up after ten seconds; keep waiting
+            yield
+        finally:
+            os.close(descriptor)
+        return
+    import fcntl
+
     descriptor = os.open(folder, os.O_RDONLY | os.O_DIRECTORY)
     try:
         fcntl.flock(descriptor, fcntl.LOCK_EX)

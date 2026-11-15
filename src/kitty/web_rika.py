@@ -10,6 +10,10 @@ POST /api/rika/dumps {transcript, segments: [{start, end, text}], duration, conv
 POST /api/rika/plans/<id> {decision: approve, items: [item ids], choices?: {item id: index}}
     or {decision: dismiss}  ->  {plan}
     Approving runs the ticked items on Rika's worker and links them into the dump note.
+    A plan is also how Rika asks about a date before adding a dated item (``plan_kind``
+    ``confirm``) and checks in on a task whose day passed (``checkin``): there a choice
+    may be another date, ``{item id: {date: "YYYY-MM-DD", time?: "HH:MM"}}``, and
+    dismissing is "Not now" (kitty.core.rika.slots, kitty.core.rika.followups).
 GET  /api/rika/history[?before=<created_at>]  ->  {items, has_more, next_before}
     Messages, actions, approvals and plans, oldest first (shapes in kitty.core.rika.store).
 POST /api/rika/approvals/<id> {decision: approve|reject}  ->  {approval}
@@ -48,6 +52,7 @@ import queue
 import re
 import select
 
+from kitty import packs
 from kitty.core.rika import speech, store
 from kitty.core.rika.agents import AgentError
 from kitty.core.rika.loop import Rika, RikaError
@@ -151,6 +156,17 @@ def post(app, conn, path, body):
     if match:
         _keys(body, set())
         return {"action": _call(app.rika.undo, conn, match[1])}
+    match = re.fullmatch(PREFIX + "/agents/" + _AGENT + "/skill", path)
+    if match:
+        _keys(body, {"path"}, {"path"})
+        if not isinstance(body["path"], str):
+            raise _error(400, "Expected {path} of a skill listed for this agent")
+        try:
+            return app.rika.agents.use_skill(match[1], body["path"])
+        except LookupError as exc:
+            raise _error(404, str(exc)) from None
+        except AgentError as exc:
+            raise _error(409, str(exc)) from None
     match = re.fullmatch(PREFIX + "/agents/" + _AGENT + "/open", path)
     if match:
         _keys(body, set())
@@ -203,6 +219,12 @@ class _Listening:
                 and isinstance(message["session"], str) and _SESSION.fullmatch(message["session"]) \
                 and message["mode"] in MODES:
             self.close()
+            # Voice is a module with a pack (kitty.packs): off, or without its engine, it says so.
+            refusal = ("Voice is turned off in Settings > Modules" if "voice" not in self.app.modules
+                       else None if packs.loaded("voice") else str(packs.PackMissing("voice")))
+            if refusal:
+                self.emit({"type": "voice.error", "session": message["session"], "mode": message["mode"], "message": refusal})
+                return
             self.session = self.app.rika.voice.session(message["session"], message["mode"], self.emit)
         elif kind == "voice.mode" and set(message) == {"type", "mode"} and message["mode"] in MODES:
             if self.session is not None:

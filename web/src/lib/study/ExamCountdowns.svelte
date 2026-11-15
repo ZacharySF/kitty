@@ -94,7 +94,7 @@
     border-radius: 999px;
     background: color-mix(in srgb, var(--warning) 20%, transparent);
     color: var(--warning);
-    font: 600 9px var(--font-mono);
+    font: 600 9px var(--font-ui);
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
@@ -109,7 +109,7 @@
   }
   .count span {
     color: var(--muted);
-    font: 500 11px/1.3 var(--font-mono);
+    font: 500 11px/1.3 var(--font-ui);
     text-transform: uppercase;
   }
   .count small {
@@ -160,7 +160,7 @@
   }
   text {
     fill: var(--muted);
-    font: 500 9px var(--font-mono);
+    font: 500 9px var(--font-ui);
     text-anchor: middle;
   }
   .action {

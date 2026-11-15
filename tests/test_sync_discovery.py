@@ -170,6 +170,46 @@ def test_update_reannounces_and_close_is_idempotent() -> None:
     assert disc.seen() == []
 
 
+def test_closing_during_a_slow_registration_leaves_nothing_announced() -> None:
+    """Registration runs on a background thread (mDNS probing is slow); a quit meanwhile
+    waits for it, then unregisters, and an update in between never touches half a service."""
+    import threading
+
+    entered, release = threading.Event(), threading.Event()
+
+    class SlowZeroconf(FakeZeroconf):
+        def register_service(self, info: Any) -> None:
+            entered.set()
+            release.wait(5)
+            super().register_service(info)
+
+    fake = SlowZeroconf()
+    disc = d.Discovery(device_id=ME, name="Mine", port=8123, interfaces=["192.168.1.2"],
+                       zeroconf_factory=lambda **_: fake)
+    starting = threading.Thread(target=disc.start)
+    starting.start()
+    assert entered.wait(5)
+    updating = threading.Thread(target=disc.update, kwargs={"pairing": True})
+    closing = threading.Thread(target=disc.close)
+    updating.start()
+    closing.start()
+    time.sleep(0.05)
+    assert fake.updated == [] and fake.unregistered == [], "both wait for the registration"
+    release.set()
+    for thread in (starting, updating, closing):
+        thread.join(5)
+    assert len(fake.registered) == 1 and len(fake.unregistered) == 1 and fake.closed == 1
+
+
+def test_a_start_after_close_never_registers() -> None:
+    fake = FakeZeroconf()
+    disc = d.Discovery(device_id=ME, name="Mine", port=8123, interfaces=["192.168.1.2"],
+                       zeroconf_factory=lambda **_: fake)
+    disc.close()
+    disc.start()
+    assert fake.registered == [] and fake.closed == 0
+
+
 def test_unchanged_device_stays_until_removed(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = FakeZeroconf()
     disc = started(fake)

@@ -4,12 +4,14 @@ from __future__ import annotations
 import http.client
 import re
 import json
+from contextlib import closing
 
 import pytest
-from terminal_support import make_root, site
+from terminal_support import front_site, make_root, site
 from test_web_blocks import Client
 
-from kitty.core import endpoint
+from kitty.core import calendar, endpoint, quick_notes
+from kitty.db import connect
 
 EXTENSION = "chrome-extension://" + "b" * 32
 OTHER_EXTENSION = "chrome-extension://" + "c" * 32
@@ -149,11 +151,11 @@ def test_a_token_reaches_only_its_scopes_and_never_the_rest_of_the_api(running):
     # Every other route refuses a client token, even with the page headers forged.
     forged = {"Origin": running.server.origin, "X-Kitty-Request": "1"}
     for token in (capture, reader):
-        assert call(running, "GET", "/api/quick-notes", token=token, headers=forged)[0] == 403
         assert call(running, "GET", "/api/clients", token=token, headers=forged)[0] == 403
         assert call(running, "POST", "/api/quick-notes/create", {"body": "x"}, token=token, headers=forged)[0] == 403
         assert call(running, "POST", "/api/clients/revoke", {"id": "x"}, token=token, headers=forged)[0] == 403
-    assert running.request("/api/quick-notes")[1]["notes"][0]["body"] == "from the plugin"
+    with closing(connect(running.app.settings.db_path)) as conn:  # reading quick notes is rika-server's
+        assert quick_notes.list_notes(conn)[0]["body"] == "from the plugin"
 
 
 def test_revoking_a_client_ends_its_token(running):
@@ -166,12 +168,12 @@ def test_revoking_a_client_ends_its_token(running):
 
 
 def test_the_browser_origin_guard_is_unchanged_for_normal_routes(running):
-    assert running.request("/api/quick-notes")[0] == 200
+    assert running.request("/api/clients")[0] == 200
     assert running.request("/api/quick-notes/create", {"body": "page"})[0] == 200
     assert running.request("/api/quick-notes/create", {"body": "x"}, headers={"X-Kitty-Request": None})[0] == 403
-    assert running.request("/api/quick-notes", headers={"Origin": "https://attacker.example"})[0] == 403
-    assert running.request("/api/quick-notes", headers={"Origin": EXTENSION})[0] == 403
-    assert call(running, "OPTIONS", "/api/quick-notes", origin=EXTENSION,
+    assert running.request("/api/clients", headers={"Origin": "https://attacker.example"})[0] == 403
+    assert running.request("/api/clients", headers={"Origin": EXTENSION})[0] == 403
+    assert call(running, "OPTIONS", "/api/clients", origin=EXTENSION,
                 headers={"Access-Control-Request-Method": "POST"})[0] == 405
 
 
@@ -214,7 +216,13 @@ def test_cors_answers_only_the_recorded_extension_origin(running):
     assert preflight(running, "/api/ingress/notes", EXTENSION)[0] == 403
 
 
-def test_captures_land_in_the_op_log_and_push_to_open_windows(running):
+def test_captures_land_in_the_op_log_and_push_to_open_windows(tmp_path):
+    # The front owns the windows' live sockets (server/src/live/); the ingress is forwarded.
+    with front_site(make_root(tmp_path, ("workspace",))) as running:
+        captures_push_to_open_windows(running)
+
+
+def captures_push_to_open_windows(running):
     client, token = pair(running, scopes=("capture", "read"))
     window = Client(running)
     try:
@@ -302,7 +310,8 @@ def test_the_kitty_tern_plugin_request_sequence(running):
     assert status == 200 and isinstance(saved["page"], int)
     status, note, _ = call(running, "POST", "/api/ingress/notes", {"text": "typed in Tern"}, token=token, headers=tern)
     assert status == 200 and isinstance(note["id"], int)
-    assert running.request("/api/calendar/tasks", {"title": "Synthetic task", "due": "2026-11-05"})[0] == 200
+    with closing(connect(running.app.settings.db_path)) as conn:  # the task route is rika-server's
+        calendar.save_task(conn, {"title": "Synthetic task", "due": "2026-11-05"})
     status, recent, _ = call(running, "GET", "/api/ingress/recent?limit=20", token=token, headers=tern)
     assert status == 200 and recent["inbox"] == saved["page"]
     assert all(isinstance(page["number"], int) and isinstance(page["title"], str) for page in recent["pages"])

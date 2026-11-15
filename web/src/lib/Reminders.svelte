@@ -166,7 +166,6 @@
 <section class="panel">
   <header class="panel-heading">
     <div>
-      <span class="eyebrow">THE NEXT SMALL STEP</span>
       <h2>Reminders & follow-ups</h2>
     </div>
     <button class="button" disabled={loading} onclick={() => load()}>Refresh</button>
@@ -293,7 +292,7 @@
     max-width: none;
     margin: 0 0 8px;
     color: var(--subtle);
-    font: 10.5px var(--font-mono);
+    font: 10.5px var(--font-ui);
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
@@ -329,7 +328,7 @@
     align-items: center;
     gap: 6px;
     padding: 0 16px;
-    font: 500 10.5px var(--font-mono);
+    font: 500 10.5px var(--font-ui);
     letter-spacing: 0.1em;
     text-transform: uppercase;
   }
@@ -482,10 +481,10 @@
   .acts button.danger:hover:not(:disabled) {
     color: var(--error);
   }
-  /* Fixed above the Rika bar so it stays in reach however far the list is scrolled. */
+  /* Fixed to the window's foot so it stays in reach however far the list is scrolled. */
   .undo {
     position: fixed;
-    bottom: max(24px, calc(var(--rika-space, 0px) + 12px));
+    bottom: 24px;
     left: 50%;
     z-index: 25;
     display: inline-flex;

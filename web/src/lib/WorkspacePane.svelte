@@ -1,15 +1,18 @@
 <script lang="ts">
   import { provideWorkspaceContext, type SaveStatus, type WorkspaceTrail } from "./workspaceContext.svelte";
   import type { Bootstrap } from "./api";
-  import { externalViewFor, viewEnabled, type AnyView } from "./workspace";
+  import { externalViewFor, missingPack, navigation, viewEnabled, type AnyView, type View } from "./workspace";
   import { activeModules } from "./modules.svelte";
+  import Home from "./Home.svelte";
+  import JobsNav from "./JobsNav.svelte";
   import GraphNavigator from "./GraphNavigator.svelte";
+  import PackMissing from "./PackMissing.svelte";
 
   import WorkspaceSettings from "./WorkspaceSettings.svelte";
   import AI from "./AI.svelte";
   import Loader from "./Loader.svelte";
 
-  let { tabId, view, active, workspace, revision, epoch, initialJobId, onchange, onadd, onview, onopenjob, onguide }: {
+  let { tabId, view, active, workspace, revision, epoch, initialJobId, notePage, onchange, onadd, onview, onopenjob, onguide, onnotepage, onfocusnotepage, onnotepagetab }: {
     tabId: string;
     view: AnyView;
     active: boolean;
@@ -17,11 +20,16 @@
     revision: number;
     epoch: number;
     initialJobId: number | null;
+    /** The note page this tab shows; Notes opens it on mount. */
+    notePage: number | null;
     onchange: () => Promise<void>;
     onadd: () => void;
     onview: (next: AnyView) => void;
     onopenjob: (id: number) => void;
     onguide: () => void;
+    onnotepage: (id: number | null, title: string) => void;
+    onfocusnotepage: (id: number) => boolean;
+    onnotepagetab: (id: number) => void;
   } = $props();
   const trail = $state<WorkspaceTrail>({ section: null, root: null, nodes: [] });
   let status = $state<SaveStatus | null>(null);
@@ -44,9 +52,14 @@
     setStatus: (next) => {
       status = next;
     },
+    get notePage() { return notePage; },
+    setNotePage: (id, title) => onnotepage(id, title),
+    focusNotePage: (id) => onfocusnotepage(id),
+    openNotePageTab: (id) => onnotepagetab(id),
   });
 
-  let atlas: { focusSearch: () => void; focusGroup: (label: string) => void; handleKey: (event: KeyboardEvent) => boolean } | undefined = $state();
+  let home: { focusSearch: () => void } | undefined = $state();
+  let atlas: { focusSearch: () => void; focusGroup: (label: string) => void } | undefined = $state();
   let jobBrowser: { handleKey: (event: KeyboardEvent) => Promise<boolean> } | undefined = $state();
   let pipeline: { handleKey: (event: KeyboardEvent) => Promise<boolean> } | undefined = $state();
   let study: { handleKey: (event: KeyboardEvent) => Promise<boolean> } | undefined = $state();
@@ -57,7 +70,7 @@
   let notes: {
     hasUnsavedChanges: () => boolean;
     isCanvasFullscreen: () => boolean;
-    newCanvasTab: () => Promise<void>;
+    newCanvasPage: () => Promise<void>;
   } | undefined = $state();
   let maps: { hasUnsavedChanges: () => boolean } | undefined = $state();
 
@@ -71,16 +84,21 @@
     if (view === "schema") return maps?.hasUnsavedChanges() ?? false;
     return false;
   }
-  export function focusGroup(label: string) { if (active) atlas?.focusGroup(label); }
-  export function focusSearch() { if (active) atlas?.focusSearch(); }
-  export async function createCanvasTab(): Promise<boolean> {
+  /** Finds a navigation group on the Brain (the only view that maps them). */
+  export function focusGroup(label: string) { if (active && view === "brain") atlas?.focusGroup(label); }
+  /** "/": home asks Rika; the Brain opens Sections on its search. */
+  export function focusSearch() {
+    if (!active) return;
+    if (view === "today") home?.focusSearch();
+    else if (view === "brain") atlas?.focusSearch();
+  }
+  export async function createCanvasPage(): Promise<boolean> {
     if (!active || !notes?.isCanvasFullscreen()) return false;
-    await notes.newCanvasTab();
+    await notes.newCanvasPage();
     return true;
   }
   export async function handleKey(event: KeyboardEvent): Promise<boolean> {
     if (!active) return false;
-    if (view === "today") return atlas?.handleKey(event) ?? false;
     if (view === "pipeline") return await pipeline?.handleKey(event) ?? false;
     if (view === "study") return await study?.handleKey(event) ?? false;
     if (view === "math") return math?.handleKey(event) ?? false;
@@ -105,7 +123,12 @@
         <ModuleElement view={added} />
       {/await}
     {/if}
+  {:else if missingPack(view as View, activeModules.missing)}
+    <!-- The module is on but its pack is not loaded: its routes answer 409; say how to get it. -->
+    <PackMissing id={view} label={navigation.find(item => item.id === view)?.label ?? view} {onview} />
   {:else if view === "today"}
+    <Home bind:this={home} {revision} counts={workspace?.counts} {onview} />
+  {:else if view === "brain"}
     <GraphNavigator bind:this={atlas} {revision} {onview} />
   {:else if view === "goals"}
     {#await import("./goals/Goals.svelte")}{@render pending()}{:then { default: Goals }}
@@ -130,6 +153,10 @@
   {:else if view === "agent-skills"}
     {#await import("./AgentSkillsView.svelte")}{@render pending()}{:then { default: AgentSkillsView }}
       <AgentSkillsView />
+    {/await}
+  {:else if view === "rika"}
+    {#await import("./rika/RikaPage.svelte")}{@render pending()}{:then { default: RikaPage }}
+      <RikaPage {onview} />
     {/await}
   {:else if view === "settings"}
     <WorkspaceSettings bind:this={settings} {onview} {onchange} />
@@ -168,10 +195,12 @@
       <Documents bind:this={documents} />
     {/await}
   {:else if view === "inbox" || view === "jobs" || view === "queue" || view === "applications" || view === "favorites"}
+    <JobsNav {view} {onview} />
     {#await import("./JobBrowser.svelte")}{@render pending()}{:then { default: JobBrowser }}
       <JobBrowser bind:this={jobBrowser} {view} {workspace} {revision} {initialJobId} onchange={onchange} {onadd} {onview} {onopenjob} {onguide} />
     {/await}
   {:else if view === "pipeline"}
+    <JobsNav {view} {onview} />
     {#await import("./Pipeline.svelte")}{@render pending()}{:then { default: Pipeline }}
       <Pipeline bind:this={pipeline} {workspace} onchange={onchange} onmail={() => onview("mail")} />
     {/await}
@@ -180,10 +209,12 @@
       <Reminders {onopenjob} onchange={onchange} />
     {/await}
   {:else if view === "resumes"}
+    <JobsNav {view} {onview} />
     {#await import("./Library.svelte")}{@render pending()}{:then { default: Library }}
       <Library demo={workspace?.demo ?? true} {onopenjob} />
     {/await}
   {:else if view === "sources"}
+    <JobsNav {view} {onview} />
     {#await import("./Sources.svelte")}{@render pending()}{:then { default: Sources }}
       <Sources demo={workspace?.demo ?? true} />
     {/await}
@@ -192,10 +223,12 @@
       <Profile bind:this={profile} demo={workspace?.demo ?? true} onresume={() => onview("resumes")} />
     {/await}
   {:else if view === "finder" || view === "reports" || view === "mail" || view === "triage"}
+    <JobsNav {view} {onview} />
     {#await import("./Insights.svelte")}{@render pending()}{:then { default: Insights }}
       <Insights section={view} demo={workspace?.demo ?? true} />
     {/await}
   {:else if view === "questions"}
+    <JobsNav {view} {onview} />
     {#await import("./Questions.svelte")}{@render pending()}{:then { default: Questions }}
       <Questions demo={workspace?.demo ?? true} />
     {/await}

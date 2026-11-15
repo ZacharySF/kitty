@@ -2,7 +2,9 @@
 
 The GitHub API is a loopback stand-in (external_module_kit.FakeGitHub, reached through
 KITTY_GITHUB_API); every module is a synthetic tarball built here. A "restart" is a new
-WebApplication over the same workspace, exactly like kitty-web start-up.
+WebApplication over the same workspace, exactly like kitty-web start-up. ``/api/modules``
+and ``/api/bootstrap`` are rika-server's: they add this worker's ``GET /api/external-modules``
+(tests/test_front_external_modules.py).
 """
 from __future__ import annotations
 
@@ -41,7 +43,7 @@ def serve(settings: Settings):
     (static / "index.html").write_text("<!doctype html><title>Synthetic</title>")
     with open_workspace(settings, modules=()) as workspace:
         config = workspace.config
-    app = WebApplication(settings, config, static)
+    app = WebApplication(settings, config, static, ui_session="ui-test")
     server = LocalHTTPServer(app, 0)
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()
@@ -92,10 +94,14 @@ def fake_github(monkeypatch):
         yield fake
 
 
-def external(request) -> dict:
-    status, data, _ = request("/api/modules")
+def worker_state(request) -> dict:
+    status, data, _ = request("/api/external-modules")
     assert status == 200
-    return data["external"]
+    return data
+
+
+def external(request) -> dict:
+    return worker_state(request)["external"]
 
 
 def test_python_module_installs_then_routes_and_serves_its_view_after_restart(tmp_path, fake_github):
@@ -119,11 +125,11 @@ def test_python_module_installs_then_routes_and_serves_its_view_after_restart(tm
         assert fake_github.requests[0]["authorization"] is None
 
     with serve(settings) as (_app, request, _finish):
-        status, boot, _ = request("/api/bootstrap")
-        assert status == 200 and boot["modules"]["restart_required"] is False
-        [entry] = boot["modules"]["external"]["installed"]
+        answer = worker_state(request)
+        assert answer["pending"] is False
+        [entry] = answer["external"]["installed"]
         assert entry["status"] == "active" and entry["active_version"] == "0.1.0"
-        assert boot["modules"]["external"]["views"] == [{
+        assert answer["external"]["views"] == [{
             "module": "rika-synth", "version": "0.1.0", "id": "synth", "label": "Synthetic", "icon": "study",
             "group": "study", "first": True, "ui": "element",
             "script": "/modules/rika-synth/0.1.0/ui/view.js", "tag": "rika-synth-view",
@@ -292,11 +298,10 @@ def test_a_module_that_fails_to_load_is_reported_and_rika_keeps_working(tmp_path
     with serve(settings) as (_app, request, finish):
         assert finish(request("/api/external-modules/install", {"repo": "synthetic/rika-synth"}))["status"] == "completed"
     with serve(settings) as (_app, request, _finish):
-        status, boot, _ = request("/api/bootstrap")
-        assert status == 200
-        [entry] = boot["modules"]["external"]["installed"]
+        answer = worker_state(request)
+        [entry] = answer["external"]["installed"]
         assert entry["status"] == "failed" and "synthetic load failure" in entry["error"]
-        assert boot["modules"]["external"]["views"] == [] and boot["modules"]["restart_required"] is False
+        assert answer["external"]["views"] == [] and answer["pending"] is False
         assert request("/api/modules/rika-synth/hello")[0] == 503
         assert request("/modules/rika-synth/0.1.0/ui/view.js", auth=False)[0] == 404
     assert "rika_synth_web_e" not in sys.modules

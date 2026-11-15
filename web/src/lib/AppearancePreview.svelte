@@ -148,7 +148,7 @@
     padding: 2px;
     border: 1px solid var(--hairline);
     border-radius: 999px;
-    font: 500 7px var(--font-mono);
+    font: 500 7px var(--font-ui);
     letter-spacing: 0.12em;
     text-transform: uppercase;
   }
@@ -181,7 +181,9 @@
   .beat {
     transform-box: fill-box;
     transform-origin: center;
-    animation: beat 2.4s ease-in-out infinite;
+    /* Three beats show the motion setting, then it rests: an endless animation kept the whole
+       Settings page repainting (17% of a core in the desktop's web engine). */
+    animation: beat 2.4s ease-in-out 3;
   }
   .preview[data-motion="reduced"] .beat {
     animation: none;
@@ -231,6 +233,6 @@
   em {
     margin-left: auto;
     color: var(--muted);
-    font: normal 8px var(--font-mono);
+    font: normal 8px var(--font-ui);
   }
 </style>

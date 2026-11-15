@@ -47,7 +47,7 @@
   });
 </script>
 
-<HomeWidget {id} title="Quick note">
+<HomeWidget {id} title="Quick note" icon="quick-notes">
   <form onsubmit={(event) => { event.preventDefault(); void save(); }}>
     <textarea
       bind:value={text}
@@ -81,13 +81,13 @@
   }
   textarea {
     width: 100%;
-    min-height: 54px;
-    padding: 8px 10px 30px;
+    min-height: 96px;
+    padding: 12px 14px 40px;
     border: 1px solid var(--hairline);
-    border-radius: 10px;
-    background: color-mix(in srgb, var(--solid-inset) 50%, transparent);
+    border-radius: 12px;
+    background: transparent;
     color: var(--ink);
-    font: 13px/1.4 var(--font-ui);
+    font: 17px/1.45 var(--font-ui);
     resize: none;
   }
   textarea:focus-visible {
@@ -95,11 +95,11 @@
   }
   .pill {
     position: absolute;
-    right: 6px;
-    bottom: 8px;
-    min-height: 22px;
-    padding: 1px 10px;
-    font-size: 10px;
+    right: 8px;
+    bottom: 10px;
+    min-height: 28px;
+    padding: 1px 14px;
+    font-size: 14px;
   }
   .pill:disabled {
     opacity: 0.4;
@@ -110,18 +110,18 @@
     list-style: none;
   }
   li + li {
-    border-top: 1px dashed color-mix(in srgb, var(--hairline) 70%, transparent);
+    border-top: 1px solid color-mix(in srgb, var(--hairline) 70%, transparent);
   }
   li button {
     width: 100%;
     display: flex;
     justify-content: space-between;
     gap: 10px;
-    padding: 5px 2px;
+    padding: 8px 2px;
     border: 0;
     background: transparent;
     color: var(--ink);
-    font: 12px var(--font-ui);
+    font: 16px var(--font-ui);
     text-align: left;
     cursor: pointer;
   }
@@ -137,11 +137,11 @@
   time {
     flex: none;
     color: var(--subtle);
-    font: 10px var(--font-mono);
+    font-size: 14px;
   }
   .note {
     margin: 6px 0 0;
     color: var(--error);
-    font-size: 12px;
+    font-size: 14px;
   }
 </style>

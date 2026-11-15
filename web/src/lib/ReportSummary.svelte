@@ -191,7 +191,7 @@
     border-radius: 999px;
     background: transparent;
     color: var(--muted);
-    font: 500 10px var(--font-mono);
+    font: 500 10px var(--font-ui);
     letter-spacing: 0.1em;
     text-transform: uppercase;
     cursor: pointer;

@@ -368,14 +368,16 @@ def _mail_row(row: sqlite3.Row) -> dict[str, Any]:
     return {**dict(row), "needs_reply": bool(row["needs_reply"])}
 
 
-def _store(conn: sqlite3.Connection, message: MailMessage) -> dict[str, Any] | None:
+def _store(conn: sqlite3.Connection, message: MailMessage, *, provider: str = "gmail") -> dict[str, Any] | None:
+    """Classify and keep one message. `provider` is 'gmail' (also the demo) or 'outlook',
+    whose mail is read-only: Rika drafts replies only to Gmail mail."""
     kind, needs_reply = classify(message)
     with transaction(conn):
         inserted = conn.execute(
             "INSERT OR IGNORE INTO rika_mail_messages(id,thread_id,rfc_id,sender,sender_email,subject,body,received_at,"
-            "kind,needs_reply,fetched_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            "kind,needs_reply,fetched_at,provider) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
             (message.id, message.thread_id, message.rfc_id, message.sender, message.sender_email, message.subject,
-             message.body[:MAX_BODY], _utc(message.received_at), kind, int(needs_reply), store.now())).rowcount
+             message.body[:MAX_BODY], _utc(message.received_at), kind, int(needs_reply), store.now(), provider)).rowcount
     if not inserted:
         return None
     return _mail_row(conn.execute("SELECT * FROM rika_mail_messages WHERE id=?", (message.id,)).fetchone())
@@ -600,8 +602,8 @@ def _check(app, conn: sqlite3.Connection, message_id: str | None) -> dict[str, l
         except MailError:
             pass
     problems = []
-    waiting = conn.execute("SELECT * FROM rika_mail_messages m WHERE needs_reply=1 AND received_at>=? AND NOT EXISTS "
-                           "(SELECT 1 FROM rika_mail_drafts d WHERE d.mail_id=m.id) ORDER BY received_at",
+    waiting = conn.execute("SELECT * FROM rika_mail_messages m WHERE needs_reply=1 AND provider='gmail' AND received_at>=? "
+                           "AND NOT EXISTS (SELECT 1 FROM rika_mail_drafts d WHERE d.mail_id=m.id) ORDER BY received_at",
                            (since,)).fetchall()
     for row in waiting:
         composed = compose(app, conn, row)
@@ -629,6 +631,8 @@ def create_reply(app, conn: sqlite3.Connection, mail_id: str, *, body: str | Non
     row = conn.execute("SELECT * FROM rika_mail_messages WHERE id=?", (mail_id,)).fetchone()
     if row is None:
         raise MailRefused(404, "No email with that id; check mail first")
+    if row["provider"] != "gmail":
+        raise MailRefused(409, "Outlook mail is read-only in rika! for now: reply in Outlook")
     box = mailbox(app)
     if box is None:
         raise MailRefused(409, "Connect Gmail first (Settings → Rika → Email)")

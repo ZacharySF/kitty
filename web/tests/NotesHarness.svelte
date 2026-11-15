@@ -23,6 +23,15 @@
     setStatus(status) {
       window.notesHarness.status = status;
     },
+    // One tab system: the harness is a single tab; it records what the view reports and asks for.
+    notePage: null,
+    setNotePage(id, title) {
+      window.notesHarness.notePage = id ? { id, title } : null;
+    },
+    focusNotePage: () => false,
+    openNotePageTab(id) {
+      window.notesHarness.newTabs = [...(window.notesHarness.newTabs ?? []), id];
+    },
   });
 </script>
 

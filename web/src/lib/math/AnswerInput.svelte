@@ -154,7 +154,7 @@
     outline: none;
     background: transparent;
     color: var(--ink);
-    font: 20px var(--font-mono);
+    font: 20px var(--font-ui);
   }
   .echo {
     display: flex;
@@ -165,13 +165,13 @@
     padding-left: 12px;
     border-left: 1px solid var(--hairline);
     color: var(--ink);
-    font: 17px var(--font-mono);
+    font: 17px var(--font-ui);
     white-space: nowrap;
   }
   .hint {
     overflow: hidden;
     color: var(--subtle);
-    font: 12px var(--font-mono);
+    font: 12px var(--font-ui);
     text-overflow: ellipsis;
   }
   .field {
@@ -219,7 +219,7 @@
   }
   .choice kbd {
     color: var(--subtle);
-    font: 11px var(--font-mono);
+    font: 11px var(--font-ui);
   }
   .choice.ok {
     border-color: var(--success);

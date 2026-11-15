@@ -66,7 +66,7 @@
   }
   .eyebrow {
     color: var(--subtle);
-    font: 500 10px var(--font-mono);
+    font: 500 10px var(--font-ui);
     letter-spacing: 0.12em;
     text-transform: uppercase;
   }
@@ -83,7 +83,7 @@
   h5 {
     margin: 4px 0 0;
     color: var(--muted);
-    font: 500 10.5px var(--font-mono);
+    font: 500 10.5px var(--font-ui);
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
@@ -92,7 +92,7 @@
     border: 1px solid var(--hairline);
     border-radius: 999px;
     color: var(--muted);
-    font: 500 10.5px var(--font-mono);
+    font: 500 10.5px var(--font-ui);
   }
   .s-mastered {
     border-color: var(--accent);

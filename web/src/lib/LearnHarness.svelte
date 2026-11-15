@@ -61,8 +61,7 @@
     <summary>Learning data and provider setup</summary>
     <p>The bundled app stores learning records and provider connections in this workspace's
       separate <code>data/learnharness/</code> directory. rika! does not copy credentials or learning
-      records from an existing upstream checkout. Demo workspace learning records are disposable;
-      an independently started server keeps its own data.</p>
+      records from an existing upstream checkout.</p>
     <p>No provider is configured automatically. Use LearnHarness settings to connect your provider
       and choose models before generating lessons. Requests may send learning context to that
       provider and incur costs. Do not enter private applicant data.</p>

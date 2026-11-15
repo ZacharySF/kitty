@@ -2,6 +2,7 @@
   import { onMount, tick, untrack } from "svelte";
   import { Panel, Button, Badge } from "@nunera/bracket";
   import { api, safeUrl } from "./api";
+  import { tween } from "./motion";
   import SchemaNetwork from "./SchemaNetwork.svelte";
   import type { GraphLayout, GraphLink, GraphNode } from "./graph3d";
   import { useWorkspaceContext, type SaveStatus } from "./workspaceContext.svelte";
@@ -1277,7 +1278,8 @@
     if (stage?.hasPointerCapture(e.pointerId))
       stage.releasePointerCapture(e.pointerId);
   }
-  function zoom(factor: number, clientX?: number, clientY?: number) {
+  let stopZoom = () => {};
+  function zoom(factor: number, clientX?: number, clientY?: number, glide = clientX === undefined) {
     if (!current || !editable) return;
     const rect = stage?.getBoundingClientRect(),
       x =
@@ -1291,9 +1293,15 @@
     remember();
     const v = current.viewport,
       z = Math.max(0.1, Math.min(4, v.zoom * factor));
-    v.x = Math.max(-1e7, Math.min(1e7, x - ((x - v.x) * z) / v.zoom));
-    v.y = Math.max(-1e7, Math.min(1e7, y - ((y - v.y) * z) / v.zoom));
-    v.zoom = z;
+    const from = { x: v.x, y: v.y, zoom: v.zoom };
+    const to = { x: Math.max(-1e7, Math.min(1e7, x - ((x - v.x) * z) / v.zoom)), y: Math.max(-1e7, Math.min(1e7, y - ((y - v.y) * z) / v.zoom)), zoom: z };
+    // The buttons and keys glide there (the Animations module); the wheel and a pinch stay direct.
+    stopZoom();
+    stopZoom = tween(glide ? 170 : 0, (progress) => {
+      v.x = from.x + (to.x - from.x) * progress;
+      v.y = from.y + (to.y - from.y) * progress;
+      v.zoom = from.zoom + (to.zoom - from.zoom) * progress;
+    });
   }
   function fit() {
     if (!current || !editable) return;
@@ -2598,12 +2606,12 @@
 </section>
 
 <style>
-  /* Q18: one surface that fills its tab above the Rika bar (or its host, embedded in Notes). */
+  /* Q18: one surface that fills its tab (or its host, embedded in Notes). */
   .schema {
     position: relative;
     display: flex;
     flex-direction: column;
-    height: var(--map-height, var(--fit-h, calc(100dvh - var(--workbench-top, 0px) - var(--rika-space, 0px) - 34px)));
+    height: var(--map-height, var(--fit-h, calc(100dvh - var(--workbench-top, 0px) - 34px)));
     min-height: 420px;
     overflow: hidden;
     color: var(--ink);
@@ -2683,7 +2691,7 @@
     font: 500 var(--fs-control) / 1.3 var(--font-ui);
     text-align: left;
   }
-  .switch-item small { margin: 0; color: var(--subtle); font: 500 var(--fs-chrome) / 1 var(--font-mono); text-transform: uppercase; letter-spacing: 0.08em; }
+  .switch-item small { margin: 0; color: var(--subtle); font: 500 var(--fs-chrome) / 1 var(--font-ui); text-transform: uppercase; letter-spacing: 0.08em; }
   .switch-item:hover,
   .menu-item:hover,
   .menu-item:focus-visible { background: var(--wash); }
@@ -2782,7 +2790,7 @@
   .graph-node.root .label { fill: var(--solid-void); font: 600 13px var(--font-ui); }
   .graph-node .fold circle { fill: color-mix(in srgb, var(--b) 40%, var(--solid-panel)); }
   .graph-node.root .fold circle { fill: var(--solid-void); }
-  .graph-node .fold text { fill: var(--ink); font: 600 9px var(--font-mono); pointer-events: none; }
+  .graph-node .fold text { fill: var(--ink); font: 600 9px var(--font-ui); pointer-events: none; }
   .graph-node.root.painted .pill { fill: var(--b); }
   .graph-node.drop-target .pill {
     stroke: var(--accent);
@@ -3023,7 +3031,7 @@
   }
   .z.fit { padding: 0 7px; font-size: 11.5px; }
   .z:hover:not(:disabled) { background: var(--wash); color: var(--ink); }
-  .pct { min-width: 38px; color: var(--muted); font: 500 var(--fs-chrome) / 1 var(--font-mono); text-align: center; }
+  .pct { min-width: 38px; color: var(--muted); font: 500 var(--fs-chrome) / 1 var(--font-ui); text-align: center; }
   .corner .vr { height: 14px; margin: 0 2px; }
 
   /* The pill's ⋯ panel: small forms and searches. */
@@ -3100,7 +3108,7 @@
   .branches a { margin: 0; color: var(--ink); text-decoration: none; }
   .branches a:hover,
   .branches a:focus-visible { color: var(--accent); }
-  .ref-kind { display: block; margin-bottom: 2px; color: var(--violet); font: 500 var(--fs-chrome) / 1.2 var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; }
+  .ref-kind { display: block; margin-bottom: 2px; color: var(--violet); font: 500 var(--fs-chrome) / 1.2 var(--font-ui); letter-spacing: 0.06em; text-transform: uppercase; }
   code { color: var(--violet); }
   @media (max-width: 900px) {
     .views,

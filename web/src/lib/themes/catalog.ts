@@ -233,10 +233,43 @@ export const THEMES: readonly ThemeTokens[] = [
     backdrop: "plain",
   },
   {
-    // Q10 A+B+C: frosted pink glass over a blossom backdrop (kitty/), a pastel palette
-    // with real roles: sakura accent apart from dusty structure, six distinct data hues.
+    // The default (design-lab Round 1): Apple's product-page black. No accent: `signal` is the ink, so the
+    // primary is inverted (white on black). Greys step one value at a time; the six data colours are a
+    // lightness ramp, so groups never need a hue. Red stays for danger only. Flat, with a frosted top bar (kitty/).
     id: "kitty",
-    label: "Kitty",
+    label: "Black",
+    scheme: "dark",
+    roles: {
+      void: "#000000",
+      panel: "#161617",
+      inset: "#0b0b0c",
+      raised: "#1d1d1f",
+      line: "#2c2c2e",
+      lineHot: "#f5f5f7",
+      ink: "#f5f5f7",
+      mute: "#a1a1a6",
+      dim: "#86868b",
+      structure: "#d2d2d7",
+      signal: "#f5f5f7",
+      go: "#d2d2d7",
+      reference: "#d2d2d7",
+      caution: "#d2d2d7",
+      alternate: "#a1a1a6",
+      danger: "#ff6961",
+    },
+    graph: ["#f5f5f7", "#d2d2d7", "#a1a1a6", "#86868b", "#6e6e73", "#48484a"],
+    shadow: "#000000",
+    surface: { style: "flat", alpha: OPAQUE, radius: 12 },
+    focus: "ring",
+    selection: "pill",
+    motion: "calm",
+    backdrop: "plain",
+  },
+  {
+    // Q10 A+B+C, the former default: frosted pink glass over a blossom backdrop (blossom/), a pastel
+    // palette with real roles: sakura accent apart from dusty structure, six distinct data hues.
+    id: "blossom",
+    label: "Blossom",
     scheme: "dark",
     roles: {
       void: "#1a1319",
@@ -295,6 +328,39 @@ export const THEMES: readonly ThemeTokens[] = [
     selection: "bar",
     motion: "snappy",
     backdrop: "nebula",
+  },
+  {
+    // Kitty (aero/): a night concourse behind aqua glass. Soft club and transit light: deep teal-navy,
+    // cyan signage, mint, periwinkle and one amber lamp. Glass with a lit top edge; the art, the text
+    // scraps behind it and the marks before widget titles are rolled anew on every load.
+    id: "aero",
+    label: "Kitty",
+    scheme: "dark",
+    roles: {
+      void: "#050a0b",
+      panel: "#0c1618",
+      inset: "#081012",
+      raised: "#14272b",
+      line: "#4a6d70",
+      lineHot: "#f3f7ee",
+      ink: "#f3f7ee",
+      mute: "#c3d5d2",
+      dim: "#a6bdba",
+      structure: "#d3e2df",
+      signal: "#ffd60a",
+      go: "#7be0a4",
+      reference: "#9fc6ff",
+      caution: "#ff9a4d",
+      alternate: "#ff9ecf",
+      danger: "#ff7a7a",
+    },
+    graph: ["#ffd60a", "#ff7a3d", "#7be0a4", "#8fc1ff", "#f3f7ee", "#ff9ecf"],
+    shadow: "#020a07",
+    surface: { style: "glass", alpha: { panel: 80, inset: 70, raised: 88 }, radius: 3 },
+    focus: "ring",
+    selection: "lit",
+    motion: "calm",
+    backdrop: "plain",
   },
   {
     // Clear, neutral glass in the manner of macOS/iOS (liquid-glass/): heavy blur, a white

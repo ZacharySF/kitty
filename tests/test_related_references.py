@@ -93,4 +93,3 @@ def test_flashcard_fields_are_indexed_and_exact_navigation_works(workspace):
     assert not any(ref["kind"] == "flashcard_note" and ref["id"] == card["id"]
                    for group in backlinks.related(conn, "mitochondrial ATP synthesis", f"flashcard_note:{card['id']}").values()
                    for ref in group)
-    assert flashcards.browser(conn, search=f"nid:{card['id']}")["notes"][0]["id"] == card["id"]

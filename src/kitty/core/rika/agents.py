@@ -2,12 +2,13 @@
 rika!'s herdr session, surfaced through Tern windows, plus coding agents a Tern pane runs.
 
 An agent is ``{id, kind, name, status: working|blocked|idle|done, task, line, since,
-where: {herdr_pane} | {tern_pane}, now, guarantee}``; ``id`` is ``herdr:<pane>`` or ``tern:<block>``
+where: {herdr_pane} | {tern_pane}, now, usage, guarantee}``; ``id`` is ``herdr:<pane>`` or ``tern:<block>``
 and ``since`` is epoch ms its status began. ``now`` is what it is using now
 (kitty.web_agent_skills: ``{skill, tool, intent, via, label}``), or None while
 "Show agent skills and activity" is off for its kind. ``guarantee`` is the mediation
 guarantee of the newest launch in its pane (kitty.core.agent_sessions.pane_guarantees:
-full, attribution or none), as /api/terminal/activity names it.
+full, attribution or none), as /api/terminal/activity names it. ``usage`` is its session's
+usage summary (kitty.web_usage), or None while usage is off for its kind.
 
 Starting one (after the user approved it) runs herdr headless when no page has
 attached it (the herdr dock is gone), starts the agent through
@@ -47,6 +48,15 @@ def brief(task: str, cwd: Path) -> str:
     return (f"Task from Rika, the rika! agent: {task.strip()}\n\n"
             f"Work in {cwd}. Ask if a decision has real stakes. When you finish, "
             "summarise what you changed and anything left undone.")[:BRIEF_MAX]
+
+
+def skill_line(kind: str, name: str, path: Path) -> str:
+    """What to type into a running agent so it loads a saved skill, in that agent's own terms."""
+    if kind == "omp":
+        return f"Load the {name} skill (read skill://{name}) and use it for the rest of this session."
+    if kind == "claude":
+        return f"Use the {name} skill for the rest of this session."
+    return f"Read {path} and follow it as a skill for the rest of this session."
 
 
 def _demo_roster() -> list[dict[str, Any]]:
@@ -106,12 +116,17 @@ class Agents:
         if self.app.settings.demo:
             with self._lock:
                 agents = [dict(agent) for agent in self._demo]
-            return [{**agent, "now": self._now(agent, {})} for agent in agents]
+            return [{**agent, "now": self._now(agent, {}), "usage": self._usage(agent, {})} for agent in agents]
         return [*self._herdr_agents(), *self._tern_agents()]
 
     def _now(self, agent: dict[str, Any], signals: dict[str, Any]) -> dict[str, Any] | None:
         skills = self._skills
         return skills.now({"id": agent["id"], "kind": agent["kind"], **signals}) if skills is not None else None
+
+    def _usage(self, agent: dict[str, Any], signals: dict[str, Any]) -> dict[str, Any] | None:
+        """The card's usage line (kitty.web_usage): None while usage is off for its kind."""
+        usage = getattr(self.app, "usage", None)
+        return usage.card({"id": agent["id"], "kind": agent["kind"], **signals}) if usage is not None else None
 
     def _guarantees(self, host: str) -> dict[str, str]:
         """Pane -> guarantee of its newest launch (the cards' badges, as /api/terminal/activity)."""
@@ -138,7 +153,8 @@ class Agents:
                          "task": card["task"] or self._briefs.get(card["pane"], "").split("\n")[0][:200],
                          "line": card["line"], "since": card["since"], "where": {"herdr_pane": card["pane"]},
                          "guarantee": guarantees.get(card["pane"], "none")}
-                found.append({**agent, "now": self._now(agent, card.get("signals") or {})})
+                signals = card.get("signals") or {}
+                found.append({**agent, "now": self._now(agent, signals), "usage": self._usage(agent, signals)})
         return found
 
     def _tern_agents(self) -> list[dict[str, Any]]:
@@ -164,7 +180,8 @@ class Agents:
                     agent = {"id": f"tern:{block['id']}", "kind": kind, "name": block["title"] or kind,
                              "status": state, "task": block["title"], "line": "", "since": since,
                              "where": {"tern_pane": block["id"]}, "guarantee": guarantees.get(str(block["id"]), "none")}
-                    found.append({**agent, "now": self._now(agent, {"cwd": block.get("cwd")})})
+                    signals = {"cwd": block.get("cwd")}
+                    found.append({**agent, "now": self._now(agent, signals), "usage": self._usage(agent, signals)})
         self._tern_states = seen
         return found
 
@@ -189,7 +206,7 @@ class Agents:
                          "task": task[:200], "line": "Reading the brief", "since": _now_ms(), "where": {"herdr_pane": pane},
                          "guarantee": "none"}
                 self._demo.append(agent)
-            return {**agent, "now": self._now(agent, {})}
+            return {**agent, "now": self._now(agent, {}), "usage": None}
         if self._herdr is None:
             raise AgentError("Worker agents need the Terminal module")
         from kitty.core.agent_sessions import GUARANTEE_LABELS, LaunchError
@@ -211,7 +228,7 @@ class Agents:
         agent = {"id": f"herdr:{started['pane']}", "kind": kind, "name": started["name"], "status": "working",
                  "task": task[:200], "line": "", "since": _now_ms(), "where": {"herdr_pane": started["pane"]},
                  "guarantee": mediation["guarantee"]}
-        return {**agent, "now": self._now(agent, {"pane": started["pane"]})}
+        return {**agent, "now": self._now(agent, {"pane": started["pane"]}), "usage": None}
 
     # Opening ------------------------------------------------------------------
 
@@ -246,6 +263,39 @@ class Agents:
         except (TerminalUnavailable, TernUnavailable) as exc:
             raise AgentError(str(exc)) from None
         raise LookupError("That agent is no longer running")
+
+    def use_skill(self, ident: str, path: str) -> dict[str, Any]:
+        """Hand one of the agent's saved skills to its running session: a line asking it to load it.
+
+        The skill must be one listed for the agent's kind (LookupError otherwise); the line
+        goes through herdr the way a task brief does, so it needs an agent that is ready
+        for input. Nothing is written to the agent's own configuration.
+        """
+        from kitty.core.terminal import TerminalUnavailable
+
+        agent = next((item for item in self.list() if item["id"] == ident), None)
+        if agent is None:
+            raise LookupError("That agent is no longer running")
+        skills = self._skills
+        if skills is None:
+            raise AgentError("Agent skills need the Terminal module")
+        target = skills.skill_path(agent["kind"], path)
+        name = next(skill["name"] for skill in skills.installed(agent["kind"])["skills"] if skill["path"] == path)
+        line = skill_line(agent["kind"], name, target)
+        if self.app.settings.demo:
+            with self._lock:
+                for item in self._demo:
+                    if item["id"] == ident:
+                        item["line"] = f"Loading the {name} skill"
+            return {"ok": True, "skill": name, "sent": line}
+        pane = agent["where"].get("herdr_pane")
+        if pane is None or self._herdr is None:
+            raise AgentError("Open this agent's window and ask it there: rika! can only type into herdr sessions")
+        try:
+            self._herdr.prompt(pane, line)
+        except TerminalUnavailable as exc:
+            raise AgentError(str(exc)) from None
+        return {"ok": True, "skill": name, "sent": line}
 
     def open_terminal(self) -> None:
         """A Tern window on rika!'s session (the bar's "open a terminal")."""

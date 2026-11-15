@@ -1,4 +1,6 @@
 /** Natural-language event text: "lunch with Mira fri 12:30 at Café Rose". */
+import { addDays } from "./dates.ts";
+
 export type QuickKind = "day" | "time" | "dur" | "where" | "repeat";
 export type QuickSpan = { start: number; end: number; kind: QuickKind };
 export type QuickEvent = {
@@ -33,11 +35,6 @@ const RULES: Rule[] = [
   ["where", /(?:\bat|@)\s+(\p{Lu}[\p{L}'’-]*(?:\s+\p{Lu}[\p{L}'’-]*)*)/gu],
 ];
 
-function addDays(day: string, count: number) {
-  const d = new Date(`${day}T12:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + count);
-  return d.toISOString().slice(0, 10);
-}
 /** Clock minutes; a bare 1–6 without am/pm reads as afternoon. */
 function clock(h: string | undefined, m: string | undefined, ampm: string | undefined) {
   let hours = Number(h ?? 9) % 24;

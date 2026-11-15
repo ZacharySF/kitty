@@ -1,4 +1,4 @@
-// Q13 atlas node choice, exercised through the real 2D home atlas.
+// Q13 atlas node choice, exercised through the real 2D atlas (the Brain view's 2D look).
 // Run with Node >=22 and a matching Playwright Chromium:
 // PLAYWRIGHT_BROWSERS_PATH=<Nix playwright-driver.browsers store path> \
 // PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true node --test tests/atlasNodes.browser.test.mjs
@@ -90,7 +90,7 @@ async function assertFits(page, tab, label) {
   return result.stage;
 }
 
-describe("2D home atlas", () => {
+describe("2D atlas", () => {
   test("dragging a node onto the Sections control hides it in every tab; dragging its dimmed row onto the graph shows it", async () => {
     const { page, problems } = await harness();
     await open(page, ["workspace", "applyai"]);
@@ -176,21 +176,16 @@ describe("2D home atlas", () => {
     await page.close();
   });
 
-  test("the 2D atlas stays fitted to its stage with the side rail expanded, collapsed and expanded again", async () => {
+  test("the 2D atlas stays fitted to its stage as the window narrows and widens again", async () => {
     const { page, problems } = await harness();
     await open(page, ["workspace", "applyai"]);
-    const expanded = await assertFits(page, 0, "expanded");
-    await page.locator(".tab-0").getByRole("button", { name: "Side widgets" }).click();
-    await page.locator(".tab-0 .side.collapsed").waitFor();
-    // Every tab's home follows the one remembered choice.
-    await page.locator(".tab-1 .side.collapsed").waitFor();
-    const collapsed = await assertFits(page, 0, "collapsed");
-    assert.ok(collapsed - expanded >= 150, `the stage only widened ${collapsed - expanded}px`);
-    assert.equal(await page.evaluate(() => localStorage.getItem("kitty.home.rail")), "collapsed");
-    await page.locator(".tab-1").getByRole("button", { name: "Side widgets" }).click();
-    await page.locator(".tab-0 .side:not(.collapsed)").waitFor();
-    const again = await assertFits(page, 0, "expanded again");
-    assert.ok(Math.abs(again - expanded) <= 1, "the stage did not return to its width");
+    const wide = await assertFits(page, 0, "wide");
+    await page.setViewportSize({ width: 800, height: 1160 });
+    const narrow = await assertFits(page, 0, "narrow");
+    assert.ok(wide - narrow >= 150, `the stage only narrowed ${wide - narrow}px`);
+    await page.setViewportSize({ width: 1100, height: 1160 });
+    const again = await assertFits(page, 0, "wide again");
+    assert.ok(Math.abs(again - wide) <= 1, "the stage did not return to its width");
     assert.deepEqual(problems, []);
     await page.close();
   });

@@ -11,6 +11,7 @@ import shutil
 import stat
 import subprocess
 import sys
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,8 @@ from terminal_support import make_root, site
 from test_web_tern import tern  # noqa: F401  (fixture)
 
 from kitty.core import tern_plugin
+from kitty.core.builds import project
+from kitty.db import connect
 
 PLUGIN = "/api/terminal/tern/plugin"
 STATUS_KEYS = {"available", "version", "dir", "installed", "installed_version", "current", "linked_elsewhere",
@@ -155,7 +158,8 @@ def test_the_build_switch_refuses_installing_but_not_removing(tmp_path, tern):
         data = json.loads(path.read_text())
         data["settings"] = {"tern": {"plugin": False}}
         path.write_text(json.dumps(data))
-        running.app.builds.refresh()
+        with closing(connect(settings.db_path)) as conn:  # what rika-server's build watcher does
+            project.sync(conn, settings.root)
         assert plugin_status(running)["enabled"] is False
         code, body = running.request(PLUGIN + "/install", {})
         assert code == 409 and "turned off" in body["error"]

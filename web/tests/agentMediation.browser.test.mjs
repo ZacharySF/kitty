@@ -198,9 +198,9 @@ test("Settings → Agents: an index page with the host's guarantee, the sessions
   await agents.getByRole("region", { name: "Retention" }).getByText("230").waitFor();
   await agents.getByRole("region", { name: "Purposes" }).getByText("Quick notes").waitFor();
   await agents.getByRole("region", { name: "Tools" }).getByText("append_blocks").waitFor();
-  // Q4: labels are Inter semibold sentence case; controls sit on the 28px line.
-  const label = await agents.locator(".set-label").first().evaluate((node) => getComputedStyle(node).fontFamily);
-  assert.match(label, /^"?Inter/);
+  // Labels are in the theme's text face; controls sit on the 28px line.
+  const [label, face] = await agents.locator(".set-label").first().evaluate((node) => [getComputedStyle(node).fontFamily, getComputedStyle(document.body).fontFamily]);
+  assert.equal(label, face);
   for (const name of ["Simulate", "Apply"]) assert.equal((await policy.getByRole("button", { name, exact: true }).boundingBox()).height, 28);
   assert.deepEqual(problems, []);
   await context.close();
@@ -356,20 +356,12 @@ test("Simulate lists the flips; Apply is enabled only after simulating that exac
   await context.close();
 });
 
-test("guarantee badges show per level on Rika's agent cards and bar chips, in every theme's roles", async () => {
+test("guarantee badges show per level on Rika's agent cards, in every theme's roles", async () => {
   const { page, problems, context } = await open("settings/agents");
   await agentsPage(page);
-  const chips = page.getByRole("group", { name: "Running agents" }).getByRole("button");
-  await chips.first().waitFor();
-  assert.deepEqual(await chips.evaluateAll((nodes) => nodes.map((node) => node.dataset.guarantee)), ["full", "attribution", "none"]);
-  await page.getByRole("button", { name: "omp · parser, working, Full: open its window" }).waitFor();
-  await page.getByRole("button", { name: "codex · cards, idle, Attribution only: open its window" }).waitFor();
-  await page.getByRole("button", { name: "claude · notes, blocked, Not mediated: open its window" }).waitFor();
-  assert.equal(await chips.locator(".guarantee").count(), 3);
-  assert.match(await chips.first().getAttribute("title"), /Guarantee: Full/);
-
-  await page.getByRole("button", { name: "Rika history", exact: true }).click();
-  const drawer = page.getByRole("dialog", { name: "Rika history" });
+  // Away from home, Ctrl + J opens Rika's drawer; its Agents section holds the cards.
+  await page.keyboard.press("Control+j");
+  const drawer = page.getByRole("dialog", { name: "Rika" });
   await drawer.getByRole("button", { name: /^Agents/ }).click();
   for (const [name, label] of [["omp · parser · working", "Full"], ["codex · cards · idle", "Attribution only"], ["claude · notes · blocked", "Not mediated"]]) {
     const card = drawer.getByRole("article", { name });
@@ -379,7 +371,7 @@ test("guarantee badges show per level on Rika's agent cards and bar chips, in ev
 
   // Each theme resolves the three levels to its own success, warning and error roles,
   // readable on its background (light themes included); each level also has its own mark,
-  // so a one-accent theme (red) still tells them apart.
+  // so a one-accent theme (red) and the accentless default (kitty) still tell them apart.
   const themes = await page.evaluate(async () => (await import("/src/lib/themes/catalog.ts")).THEMES.map((theme) => theme.id));
   assert.ok(themes.includes("speed") && themes.includes("bloodluxe"));
   for (const theme of themes) {
@@ -404,7 +396,7 @@ test("guarantee badges show per level on Rika's agent cards and bar chips, in ev
     });
     assert.deepEqual(tones.map((tone) => tone.level), ["full", "attribution", "none"], theme);
     assert.equal(new Set(tones.map((tone) => tone.mark)).size, 3, `${theme}: two levels share a mark`);
-    if (!["red"].includes(theme)) assert.equal(new Set(tones.map((tone) => tone.color)).size, 3, `${theme}: the three levels share a colour`);
+    if (!["red", "kitty"].includes(theme)) assert.equal(new Set(tones.map((tone) => tone.color)).size, 3, `${theme}: the three levels share a colour`);
     for (const tone of tones) assert.ok(tone.contrast >= 3, `${theme}: ${tone.level} badge contrast ${tone.contrast.toFixed(2)}`);
   }
   assert.deepEqual(problems, []);

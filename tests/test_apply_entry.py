@@ -558,12 +558,13 @@ def test_cli_resolve_dry_run_reports_without_writing(workspace, sites, monkeypat
     from typer.testing import CliRunner
 
     from kitty import cli
+    from kitty.cli import common as cli_common
 
     _job(workspace, "https://careers.synth.com/jobs/closed", title="Closed Intern")
     _job(workspace, "https://zapply.jobs/r/live", title="Live Intern")
     # Each run opens (and closes) its own fetchers.
     monkeypatch.setattr(resolve, "open_net", lambda settings: sites(_routes_for_three()).net)
-    monkeypatch.setattr(cli, "_open", lambda: SimpleNamespace(
+    monkeypatch.setattr(cli_common, "open_workspace", lambda _settings: SimpleNamespace(
         settings=workspace.settings, config=workspace.config, conn=workspace.conn, close=lambda: None))
     before = _state(workspace.conn)
     shown = CliRunner().invoke(cli.app, ["apply", "resolve", "--dry-run"])

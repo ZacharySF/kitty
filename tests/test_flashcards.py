@@ -1,4 +1,6 @@
-"""Consumer scheduling, archive round-trip and safe review invariants; no network."""
+"""Flashcards through rika-server (server/src/flashcards): scheduling, archive round-trips and
+safe review invariants; no network. The clock is the front's test clock (flashcards_front).
+"""
 from __future__ import annotations
 
 import base64
@@ -11,321 +13,310 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from kitty.core import flashcards as f
-from kitty.db import connect, migrate
-from kitty import web_atlas, web_flashcards
-from kitty.web_server import APIError
+from flashcards_front import flashcard_front
+from kitty import web_atlas
+
+
+@pytest.fixture(scope="module")
+def front(tmp_path_factory):
+    with flashcard_front(tmp_path_factory.mktemp("cards")) as running:
+        yield running
+
+
+@pytest.fixture(scope="module")
+def other_front(tmp_path_factory):
+    """A second workspace to import into."""
+    with flashcard_front(tmp_path_factory.mktemp("import"), "target") as running:
+        yield running
 
 
 @pytest.fixture
-def cards(tmp_path, monkeypatch):
-    conn = connect(tmp_path / "cards.sqlite")
-    migrate(conn)
-    moment = [datetime(2026, 10, 14, 12, tzinfo=timezone.utc)]
-    monkeypatch.setattr(f, "now", lambda: moment[0])
-    state = f.overview(conn)
-    yield conn, moment, state
-    conn.close()
+def cards(front):
+    front.reset()
+    return front
 
 
-def add(cards, kind="basic", fields=None, deck=None, tags=None):
-    conn, _, state = cards
-    typ = next(t for t in state["types"] if t["kind"] == kind)
-    fields = fields or ({"Text": "{{c1::hidden-one::hint}} + {{c2::hidden-two}} + {{c1::second-one}}", "Extra": "extra-only"} if kind == "cloze" else {"Front": "synthetic-question", "Back": "answer-only-secret"})
-    return f.save_note(conn, {"deck_id": deck or state["decks"][0]["id"], "type_id": typ["id"], "fields": fields, "tags": tags or []})
+@pytest.fixture
+def target(other_front):
+    other_front.reset()
+    return other_front
 
 
-def review_once(conn, rating, **kwargs):
-    card = f.start_review(conn, **kwargs)["card"]
-    assert card is not None
-    f.reveal(conn, card["token"])
-    result = f.grade(conn, card["token"], rating, 1234)
-    return card, result
+def export(cards, kind="apkg", deck=None) -> bytes:
+    body = {"format": kind} | ({"deck_id": deck} if deck else {})
+    return base64.b64decode(cards.ok("/api/flashcards/export", body)["data"])
+
+
+def import_apkg(cards, payload: bytes) -> dict:
+    return cards.ok("/api/flashcards/import", {"format": "apkg", "data": base64.b64encode(payload).decode()})
+
+
+def upload(cards, name, data):
+    return cards.ok("/api/flashcards/media", {"name": name, "data": base64.b64encode(data).decode()})
 
 
 def test_front_does_not_leak_answer_and_grading_requires_reveal(cards):
-    conn, _, _ = cards
-    add(cards)
-    response = f.start_review(conn)
+    cards.add()
+    response = cards.start()
     assert "answer-only-secret" not in json.dumps(response)
     token = response["card"]["token"]
-    with pytest.raises(ValueError, match="Reveal"):
-        f.grade(conn, token, 3)
-    revealed = f.reveal(conn, token)
+    cards.fails("/api/flashcards/grade", {"token": token, "rating": 3}, match="Reveal")
+    revealed = cards.reveal(token)
     assert "answer-only-secret" in revealed["back"]
     assert [x["rating"] for x in revealed["intervals"]] == [1, 2, 3, 4]
-    f.grade(conn, token, 3)
-    with pytest.raises(ValueError, match="expired"):
-        f.grade(conn, token, 3)
+    cards.grade(token, 3)
+    cards.fails("/api/flashcards/grade", {"token": token, "rating": 3}, match="expired")
 
 
-@pytest.mark.parametrize("rating,seconds,state", [(1,60,"learning"),(2,330,"learning"),(3,600,"learning"),(4,None,"review")])
+@pytest.mark.parametrize("rating,seconds,state", [(1, 60, "learning"), (2, 330, "learning"), (3, 600, "learning"), (4, None, "review")])
 def test_first_ratings_have_precise_fsrs_learning_boundaries(cards, rating, seconds, state):
-    conn, clock, _ = cards
-    add(cards)
-    card, _ = review_once(conn, rating)
-    persisted = f.require(conn, "flash_cards", card["id"])
+    cards.add()
+    card, _ = cards.review_once(rating)
+    persisted = cards.row("flash_cards", card["id"])
     assert persisted["state"] == state and persisted["reviews"] == 1
     due = datetime.fromisoformat(persisted["due"])
-    assert due > clock[0]
+    assert due > cards.now
     if seconds is not None:
-        assert due - clock[0] == timedelta(seconds=seconds)
-        clock[0] = due - timedelta(microseconds=1)
-        assert f.start_review(conn)["card"] is None
-        clock[0] = due
-        assert f.start_review(conn)["card"]["id"] == card["id"]
+        assert due - cards.now == timedelta(seconds=seconds)
+        cards.set_clock(due - timedelta(microseconds=1))
+        assert cards.start()["card"] is None
+        cards.set_clock(due)
+        assert cards.start()["card"]["id"] == card["id"]
 
 
 def test_daily_limits_learning_bypass_local_midnight_and_parent_budget(cards):
-    conn, clock, state = cards
-    parent = f.save_deck(conn, {"name": "Parent", "settings": {"new_limit":1,"review_limit":0,"timezone":"America/New_York"}})
-    child = f.save_deck(conn, {"name":"Parent::Child", "settings":{"new_limit":20,"timezone":"America/New_York"}})
-    add(cards, deck=child["id"])
-    add(cards, deck=child["id"])
-    assert f.start_review(conn, parent["id"])["remaining"] == 1
-    card, _ = review_once(conn, 1, deck_id=parent["id"])
-    assert f.start_review(conn, parent["id"])["card"] is None
-    clock[0] += timedelta(seconds=60)
-    assert f.start_review(conn, parent["id"])["card"]["id"] == card["id"]
-    review_once(conn, 4, deck_id=parent["id"])
-    clock[0] = datetime(2026,10,15,3,59,tzinfo=timezone.utc)
-    assert f.start_review(conn, parent["id"])["card"] is None
-    clock[0] = datetime(2026,10,15,4,0,tzinfo=timezone.utc)
-    assert f.start_review(conn, parent["id"])["card"]["state"] == "new"
+    parent = cards.deck(name="Parent", settings={"new_limit": 1, "review_limit": 0, "timezone": "America/New_York"})
+    child = cards.deck(name="Parent::Child", settings={"new_limit": 20, "timezone": "America/New_York"})
+    cards.add(deck=child["id"])
+    cards.add(deck=child["id"])
+    assert cards.start(deck_id=parent["id"])["remaining"] == 1
+    card, _ = cards.review_once(1, deck_id=parent["id"])
+    assert cards.start(deck_id=parent["id"])["card"] is None
+    cards.set_clock(cards.now + timedelta(seconds=60))
+    assert cards.start(deck_id=parent["id"])["card"]["id"] == card["id"]
+    cards.review_once(4, deck_id=parent["id"])
+    cards.set_clock(datetime(2026, 10, 15, 3, 59, tzinfo=timezone.utc))
+    assert cards.start(deck_id=parent["id"])["card"] is None
+    cards.set_clock(datetime(2026, 10, 15, 4, 0, tzinfo=timezone.utc))
+    assert cards.start(deck_id=parent["id"])["card"]["state"] == "new"
+
+
+def card_rows(cards, note_id):
+    with cards.db() as conn:
+        return [dict(r) for r in conn.execute("SELECT * FROM flash_cards WHERE note_id=? ORDER BY ordinal", (note_id,))]
 
 
 def test_cloze_indices_hide_only_target_and_sibling_bury_undo(cards):
-    conn, _, _ = cards
-    note = add(cards, "cloze")
-    response = f.start_review(conn)
+    note = cards.add("cloze")
+    response = cards.start()
     front = response["card"]["front"]
     assert "hidden-one" not in front and "second-one" not in front
     assert "hidden-two" in front and "hint" in front and "extra-only" not in front
-    original = [dict(r) for r in conn.execute("SELECT * FROM flash_cards WHERE note_id=? ORDER BY ordinal", (note["id"],))]
-    f.reveal(conn, response["card"]["token"])
-    f.grade(conn, response["card"]["token"], 4)
-    sibling = f.require(conn, "flash_cards", original[1]["id"])
+    original = card_rows(cards, note["id"])
+    cards.reveal(response["card"]["token"])
+    cards.grade(response["card"]["token"], 4)
+    sibling = cards.row("flash_cards", original[1]["id"])
     assert sibling["buried_until"].startswith("2026-10-15T00:00")
-    assert f.start_review(conn)["card"] is None
-    f.undo(conn)
-    restored = [dict(r) for r in conn.execute("SELECT * FROM flash_cards WHERE note_id=? ORDER BY ordinal", (note["id"],))]
-    for before, after in zip(original, restored):
-        for key in ("state","due","fsrs","buried_until","reviews","lapses"):
+    assert cards.start()["card"] is None
+    cards.undo()
+    for before, after in zip(original, card_rows(cards, note["id"])):
+        for key in ("state", "due", "fsrs", "buried_until", "reviews", "lapses"):
             assert before[key] == after[key]
-    assert f.history(conn)["reviews"][0]["undone"] == 1
+    assert cards.ok("/api/flashcards/history")["reviews"][0]["undone"] == 1
 
 
 def test_practice_does_not_change_schedule_limits_or_streak(cards):
-    conn, _, _ = cards
-    note = add(cards, tags=["custom"])
-    before = dict(conn.execute("SELECT * FROM flash_cards WHERE note_id=?", (note["id"],)).fetchone())
-    review_once(conn, 1, mode="filtered", search="tag:custom")
-    review_once(conn, 4, mode="cram", search="tag:custom")
-    after = f.require(conn, "flash_cards", before["id"])
-    assert after == before
-    assert f.overview(conn)["stats"]["streak"] == 0
-    assert len(f.history(conn)["reviews"]) == 2
-    f.undo(conn)
-    assert f.require(conn, "flash_cards", before["id"]) == before
+    note = cards.add(tags=["custom"])
+    before = card_rows(cards, note["id"])[0]
+    cards.review_once(1, mode="filtered", search="tag:custom")
+    cards.review_once(4, mode="cram", search="tag:custom")
+    assert cards.row("flash_cards", before["id"]) == before
+    assert cards.overview()["stats"]["streak"] == 0
+    assert len(cards.ok("/api/flashcards/history")["reviews"]) == 2
+    cards.undo()
+    assert cards.row("flash_cards", before["id"]) == before
 
 
 def test_leech_lapse_relearning_suspend_and_undo(cards):
-    conn, clock, state = cards
-    deck = state["decks"][0]
-    f.save_deck(conn, {"id":deck["id"],"revision":deck["revision"],"name":deck["name"],"settings":{"leech_threshold":1}})
-    add(cards)
-    card, _ = review_once(conn, 4)
-    clock[0] = datetime.fromisoformat(f.require(conn,"flash_cards",card["id"])["due"])
-    review_once(conn, 1)
-    failed = f.require(conn,"flash_cards",card["id"])
+    deck = cards.overview()["decks"][0]
+    cards.deck(id=deck["id"], revision=deck["revision"], name=deck["name"], settings={"leech_threshold": 1})
+    cards.add()
+    card, _ = cards.review_once(4)
+    cards.set_clock(datetime.fromisoformat(cards.row("flash_cards", card["id"])["due"]))
+    cards.review_once(1)
+    failed = cards.row("flash_cards", card["id"])
     assert failed["state"] == "relearning" and failed["lapses"] == 1
     assert failed["leech"] == failed["suspended"] == 1
-    assert datetime.fromisoformat(failed["due"])-clock[0] == timedelta(seconds=600)
-    assert f.start_review(conn)["card"] is None
-    f.undo(conn)
-    restored = f.require(conn,"flash_cards",card["id"])
+    assert datetime.fromisoformat(failed["due"]) - cards.now == timedelta(seconds=600)
+    assert cards.start()["card"] is None
+    cards.undo()
+    restored = cards.row("flash_cards", card["id"])
     assert restored["state"] == "review" and not restored["leech"] and not restored["suspended"]
 
 
 def test_optimistic_edits_and_archive_invalidate_review(cards):
-    conn, _, _ = cards
-    note = add(cards)
-    card = f.start_review(conn)["card"]
-    f.reveal(conn, card["token"])
-    f.action(conn, {"id":note["id"],"revision":note["revision"],"action":"archive"})
-    with pytest.raises(ValueError, match="eligible"):
-        f.grade(conn,card["token"],3)
-    with pytest.raises(ValueError, match="changed"):
-        f.save_note(conn,{"id":note["id"],"revision":note["revision"],"deck_id":note["deck_id"],"type_id":note["type_id"],"fields":json.loads(note["fields"]),"tags":[]})
-    assert f.browser(conn,search="is:archived")["total"] == 1
+    note = cards.add()
+    card = cards.start()["card"]
+    cards.reveal(card["token"])
+    cards.action(id=note["id"], revision=note["revision"], action="archive")
+    cards.fails("/api/flashcards/grade", {"token": card["token"], "rating": 3}, match="eligible")
+    cards.fails("/api/flashcards/note", {"id": note["id"], "revision": note["revision"], "deck_id": note["deck_id"],
+                                         "type_id": note["type_id"], "fields": json.loads(note["fields"]), "tags": []}, match="changed")
+    assert cards.browser(search="is:archived")["total"] == 1
 
 
-def test_review_state_survives_reopening(cards, tmp_path):
-    conn, _, _ = cards
-    add(cards)
-    card, _ = review_once(conn, 3)
-    expected = f.require(conn,"flash_cards",card["id"])
-    reopened = connect(tmp_path/"cards.sqlite")
-    try:
-        assert f.require(reopened,"flash_cards",card["id"]) == expected
-        assert f.overview(reopened)["stats"]["streak"] == 1
-    finally:
-        reopened.close()
+def test_review_state_survives_the_front_reopening_the_database(cards):
+    cards.add()
+    card, _ = cards.review_once(3)
+    expected = cards.row("flash_cards", card["id"])
+    with cards.db() as conn:
+        assert dict(conn.execute("SELECT * FROM flash_cards WHERE id=?", (card["id"],)).fetchone()) == expected
+    assert cards.overview()["stats"]["streak"] == 1
 
 
 def test_safe_html_local_media_and_remote_js_are_not_rendered(cards):
-    conn, _, _ = cards
     png = b"\x89PNG\r\n\x1a\nsynthetic-local-image"
-    f.upload_media(conn,"local.png",png)
-    rendered = f.safe_html(conn, '<script>alert("private")</script><img src="https://attacker.invalid/x" onerror="alert(1)"><img src="local.png"><a href="javascript:alert(1)">safe text</a><b style="background:url(https://attacker.invalid)">bold</b>')
+    upload(cards, "local.png", png)
+    cards.add(fields={"Front": '<script>alert("private")</script><img src="https://attacker.invalid/x" onerror="alert(1)">'
+                               '<img src="local.png"><a href="javascript:alert(1)">safe text</a>'
+                               '<b style="background:url(https://attacker.invalid)">bold</b>', "Back": "b"})
+    rendered = cards.start()["card"]["front"]
     assert "attacker" not in rendered and "javascript" not in rendered and "onerror" not in rendered and "private" not in rendered
     assert "data:image/png;base64," in rendered and "<b>bold</b>" in rendered
-    for name, payload in (("../escape.png",png),("bad.svg",b'<svg onload="alert(1)"/>'),("bad.html",b'<html>')):
-        with pytest.raises(ValueError): f.upload_media(conn,name,payload)
+    for name, payload in (("../escape.png", png), ("bad.svg", b'<svg onload="alert(1)"/>'), ("bad.html", b"<html>")):
+        cards.fails("/api/flashcards/media", {"name": name, "data": base64.b64encode(payload).decode()})
 
 
-def test_apkg_roundtrip_preserves_cards_cloze_media_and_exact_fsrs(cards, tmp_path):
-    conn, _, _ = cards
-    add(cards,"cloze")
-    add(cards,"reversed",fields={"Front":'<img src="local.png">synthetic',"Back":"roundtrip-answer"})
-    f.upload_media(conn,"local.png",b"\x89PNG\r\n\x1a\nsynthetic-media")
-    review_once(conn,3)
-    payload=f.export_apkg(conn)
+def test_apkg_roundtrip_preserves_cards_cloze_media_and_exact_fsrs(cards, target):
+    cards.add("cloze")
+    cards.add("reversed", fields={"Front": '<img src="local.png">synthetic', "Back": "roundtrip-answer"})
+    upload(cards, "local.png", b"\x89PNG\r\n\x1a\nsynthetic-media")
+    cards.review_once(3)
+    payload = export(cards)
     with zipfile.ZipFile(io.BytesIO(payload)) as archive:
         assert archive.read("collection.anki2").startswith(b"SQLite format 3\0")
-        assert json.loads(archive.read("media")) == {"0":"local.png"}
-    target=connect(tmp_path/"import.sqlite")
-    try:
-        migrate(target); f.bootstrap(target)
-        result=f.import_apkg(target,payload)
-        assert result["imported"] == 2
-        originals=f.browser(conn,limit=100)["notes"]
-        imported=f.browser(target,limit=100)["notes"]
-        assert sum(len(n["cards"]) for n in imported) == 4
-        by_guid={r["guid"]:dict(r) for r in target.execute("SELECT * FROM flash_notes")}
+        assert json.loads(archive.read("media")) == {"0": "local.png"}
+    assert import_apkg(target, payload)["imported"] == 2
+    originals = cards.browser(limit=100)["notes"]
+    imported = target.browser(limit=100)["notes"]
+    assert sum(len(n["cards"]) for n in imported) == 4
+    with target.db() as conn:
+        by_guid = {r["guid"]: dict(r) for r in conn.execute("SELECT * FROM flash_notes")}
         for note in originals:
-            original=f.require(conn,"flash_notes",note["id"])
-            matching=by_guid[original["guid"]]
+            matching = by_guid[note["guid"]]
             assert json.loads(matching["fields"]) == note["fields"]
             for card in note["cards"]:
-                before=f.require(conn,"flash_cards",card["id"])
-                after=dict(target.execute("SELECT * FROM flash_cards WHERE note_id=? AND ordinal=?",(matching["id"],card["ordinal"])).fetchone())
-                for key in ("state","due","buried_until","reviews","lapses","leech","suspended"):
+                before = cards.row("flash_cards", card["id"])
+                after = dict(conn.execute("SELECT * FROM flash_cards WHERE note_id=? AND ordinal=?", (matching["id"], card["ordinal"])).fetchone())
+                for key in ("state", "due", "buried_until", "reviews", "lapses", "leech", "suspended"):
                     assert before[key] == after[key]
                 if before["fsrs"]:
-                    a,b=json.loads(before["fsrs"]),json.loads(after["fsrs"])
-                    a.pop("card_id");b.pop("card_id");assert a==b
-        assert target.execute("SELECT content FROM flash_media WHERE name='local.png'").fetchone()[0] == conn.execute("SELECT content FROM flash_media WHERE name='local.png'").fetchone()[0]
-        assert f.import_apkg(target,payload)["duplicates"] == 2
-    finally: target.close()
+                    a, b = json.loads(before["fsrs"]), json.loads(after["fsrs"])
+                    a.pop("card_id"); b.pop("card_id")
+                    assert a == b
+        media = conn.execute("SELECT content FROM flash_media WHERE name='local.png'").fetchone()[0]
+    with cards.db() as conn:
+        assert media == conn.execute("SELECT content FROM flash_media WHERE name='local.png'").fetchone()[0]
+    assert import_apkg(target, payload)["duplicates"] == 2
 
 
 def test_csv_tsv_unicode_quotes_and_atomic_invalid_import(cards):
-    conn, _, state = cards
+    state = cards.overview()
     deck, typ = state["decks"][0]["id"], state["types"][0]["id"]
-    f.import_text(conn,'Front,Back,Tags\n"question, comma","answer\nline",one two\n',deck,typ)
-    exported=f.export_text(conn,deck,delimiter="\t").decode()
-    assert 'question, comma' in exported and 'answer\nline' in exported
-    assert f.import_text(conn,exported,deck,typ,delimiter="\t")["imported"] == 1
-    before=f.overview(conn)["stats"]["total"]
-    with pytest.raises(ValueError): f.import_text(conn,"valid,first\ninvalid\n",deck,typ)
-    assert f.overview(conn)["stats"]["total"] == before
+    cards.ok("/api/flashcards/import", {"format": "csv", "text": 'Front,Back,Tags\n"question, comma","answer\nline",one two\n',
+                                        "deck_id": deck, "type_id": typ})
+    exported = export(cards, "tsv", deck).decode()
+    assert "question, comma" in exported and "answer\nline" in exported
+    assert cards.ok("/api/flashcards/import", {"format": "tsv", "text": exported, "deck_id": deck, "type_id": typ})["imported"] == 1
+    before = cards.overview()["stats"]["total"]
+    cards.fails("/api/flashcards/import", {"format": "csv", "text": "valid,first\ninvalid\n", "deck_id": deck, "type_id": typ})
+    assert cards.overview()["stats"]["total"] == before
 
 
 def test_api_consumer_validation_and_no_answer_in_review(cards):
-    conn, _, _ = cards
-    add(cards)
-    assert web_flashcards.get(None,conn,"/api/not-flashcards",{}) is None
-    with pytest.raises(APIError): web_flashcards.post(None,conn,"/api/flashcards/import",{"format":"apkg","data":"not base64"})
-    with pytest.raises(APIError): web_flashcards.get(None,conn,"/api/flashcards/browser",{"limit":"0"})
-    response=web_flashcards.post(None,conn,"/api/flashcards/review",{})
+    cards.add()
+    cards.fails("/api/flashcards/import", {"format": "apkg", "data": "not base64"}, match="base64")
+    cards.fails("/api/flashcards/browser?limit=0", match="Invalid browser page")
+    cards.fails("/api/flashcards/unknown", {}, status=404, match="API route not found")
+    response = cards.start()
     assert "answer-only-secret" not in json.dumps(response)
-    with pytest.raises(APIError): web_flashcards.post(None,conn,"/api/flashcards/grade",{"token":response["card"]["token"],"rating":3})
+    cards.fails("/api/flashcards/grade", {"token": response["card"]["token"], "rating": 3})
+    cards.fails("/api/flashcards?x=1", match="Overview takes no parameters")
+    cards.fails("/api/flashcards/deck?x=1", {"name": "x"}, match="does not accept query parameters")
 
 
 def test_nested_optional_templates_skip_blank_cards_and_keep_schedules(cards):
-    conn, _, state = cards
-    typ = f.save_type(conn, {
-        "name": "Optional reverse", "kind": "template",
-        "fields": ["Front", "Back", "Reverse"],
+    typ = cards.ok("/api/flashcards/type", {
+        "name": "Optional reverse", "kind": "template", "fields": ["Front", "Back", "Reverse"],
         "templates": [
             {"name": "Forward", "front": "{{#Front}}{{#Front}}{{Front}}{{/Front}}{{/Front}}", "back": "{{Back}}"},
             {"name": "Reverse", "front": "{{#Reverse}}{{Back}}{{/Reverse}}", "back": "{{Front}}"},
         ],
-    })
-    note = f.save_note(conn, {"deck_id": state["decks"][0]["id"], "type_id": typ["id"],
-                              "fields": {"Front": "question", "Back": "answer", "Reverse": ""}})
-    assert [c["ordinal"] for c in f.browser(conn)["notes"][0]["cards"]] == [0]
-    reviewed, _ = review_once(conn, 4)
-    scheduled = f.require(conn, "flash_cards", reviewed["id"])
-    f.save_note(conn, {"id": note["id"], "revision": note["revision"], "deck_id": note["deck_id"],
-                       "type_id": typ["id"], "fields": {"Front": "question", "Back": "answer", "Reverse": "yes"}})
-    cards_after = f.browser(conn)["notes"][0]["cards"]
-    assert {c["ordinal"] for c in cards_after} == {0, 1}
-    assert f.require(conn, "flash_cards", reviewed["id"])["fsrs"] == scheduled["fsrs"]
-    with pytest.raises(ValueError, match="nested"):
-        f.save_type(conn, {"name": "Broken", "kind": "template", "fields": ["Front"],
-                           "templates": [{"name": "Card", "front": "{{#Front}}q{{/Wrong}}", "back": "a"}]})
+    })["type"]
+    default = cards.overview()["decks"][0]["id"]
+    note = cards.ok("/api/flashcards/note", {"deck_id": default, "type_id": typ["id"],
+                                             "fields": {"Front": "question", "Back": "answer", "Reverse": ""}})["note"]
+    assert [c["ordinal"] for c in cards.browser()["notes"][0]["cards"]] == [0]
+    reviewed, _ = cards.review_once(4)
+    scheduled = cards.row("flash_cards", reviewed["id"])
+    cards.ok("/api/flashcards/note", {"id": note["id"], "revision": note["revision"], "deck_id": note["deck_id"],
+                                      "type_id": typ["id"], "fields": {"Front": "question", "Back": "answer", "Reverse": "yes"}})
+    assert {c["ordinal"] for c in cards.browser()["notes"][0]["cards"]} == {0, 1}
+    assert cards.row("flash_cards", reviewed["id"])["fsrs"] == scheduled["fsrs"]
+    cards.fails("/api/flashcards/type", {"name": "Broken", "kind": "template", "fields": ["Front"],
+                                         "templates": [{"name": "Card", "front": "{{#Front}}q{{/Wrong}}", "back": "a"}]}, match="nested")
 
 
 def test_cloze_extra_field_does_not_generate_unanswerable_card(cards):
-    conn, _, _ = cards
-    add(cards, "cloze", fields={"Text": "{{c1::actual-answer}}", "Extra": "{{c9::not-on-the-front}}"})
-    note = f.browser(conn)["notes"][0]
-    assert [c["ordinal"] for c in note["cards"]] == [0]
-    response = f.start_review(conn)
+    cards.add("cloze", fields={"Text": "{{c1::actual-answer}}", "Extra": "{{c9::not-on-the-front}}"})
+    assert [c["ordinal"] for c in cards.browser()["notes"][0]["cards"]] == [0]
+    response = cards.start()
     assert "actual-answer" not in json.dumps(response)
-    assert "actual-answer" in f.reveal(conn, response["card"]["token"])["back"]
+    assert "actual-answer" in cards.reveal(response["card"]["token"])["back"]
 
 
 def test_typed_template_prompts_input_without_sending_expected_answer(cards):
-    conn, _, state = cards
-    typ = f.save_type(conn, {"name": "Typing", "kind": "template", "fields": ["Front", "Back"],
-                             "templates": [{"name": "Typed", "front": "{{Front}}<br>{{type:Back}}", "back": "{{Back}}"}]})
-    f.save_note(conn, {"deck_id": state["decks"][0]["id"], "type_id": typ["id"],
-                       "fields": {"Front": "question", "Back": "typed-answer-secret"}})
-    response = web_flashcards.post(None, conn, "/api/flashcards/review", {})
+    typ = cards.ok("/api/flashcards/type", {"name": "Typing", "kind": "template", "fields": ["Front", "Back"],
+                                            "templates": [{"name": "Typed", "front": "{{Front}}<br>{{type:Back}}", "back": "{{Back}}"}]})["type"]
+    cards.ok("/api/flashcards/note", {"deck_id": cards.overview()["decks"][0]["id"], "type_id": typ["id"],
+                                      "fields": {"Front": "question", "Back": "typed-answer-secret"}})
+    response = cards.start()
     assert response["card"]["typed"] is True
     assert "typed-answer-secret" not in json.dumps(response)
-    assert "typed-answer-secret" in web_flashcards.post(None, conn, "/api/flashcards/reveal", {"token": response["card"]["token"]})["back"]
+    assert "typed-answer-secret" in cards.reveal(response["card"]["token"])["back"]
 
 
 def test_unsuspending_leech_allows_successful_relearning(cards):
-    conn, clock, state = cards
-    deck = state["decks"][0]
-    f.save_deck(conn, {"id": deck["id"], "revision": deck["revision"], "name": deck["name"],
-                       "settings": {"leech_threshold": 1}})
-    add(cards)
-    card, _ = review_once(conn, 4)
-    clock[0] = datetime.fromisoformat(f.require(conn, "flash_cards", card["id"])["due"])
-    review_once(conn, 1)
-    leech = f.require(conn, "flash_cards", card["id"])
-    f.action(conn, {"id": leech["id"], "revision": leech["revision"], "action": "suspend", "value": False})
-    clock[0] = datetime.fromisoformat(leech["due"])
-    review_once(conn, 3)
-    recovered = f.require(conn, "flash_cards", card["id"])
+    deck = cards.overview()["decks"][0]
+    cards.deck(id=deck["id"], revision=deck["revision"], name=deck["name"], settings={"leech_threshold": 1})
+    cards.add()
+    card, _ = cards.review_once(4)
+    cards.set_clock(datetime.fromisoformat(cards.row("flash_cards", card["id"])["due"]))
+    cards.review_once(1)
+    leech = cards.row("flash_cards", card["id"])
+    cards.action(id=leech["id"], revision=leech["revision"], action="suspend", value=False)
+    cards.set_clock(datetime.fromisoformat(leech["due"]))
+    cards.review_once(3)
+    recovered = cards.row("flash_cards", card["id"])
     assert recovered["leech"] == 1 and recovered["suspended"] == 0
     assert recovered["state"] == "review"
 
 
 def test_consecutive_undo_restores_learning_and_reusable_reveal_session(cards):
-    conn, clock, _ = cards
-    add(cards, "reversed")
-    first, _ = review_once(conn, 1)
-    learning = f.require(conn, "flash_cards", first["id"])
-    clock[0] = datetime.fromisoformat(learning["due"])
-    second, _ = review_once(conn, 3)
-    f.undo(conn)
-    restored = f.require(conn, "flash_cards", first["id"])
-    assert restored["fsrs"] == learning["fsrs"]
-    with pytest.raises(ValueError, match="Reveal"):
-        f.grade(conn, second["token"], 3)
-    assert "answer-only-secret" in f.reveal(conn, second["token"])["back"]
-    f.undo(conn)
-    assert f.require(conn, "flash_cards", first["id"])["state"] == "new"
-    assert all(not c["buried_until"] for c in f.browser(conn)["notes"][0]["cards"])
-    assert f.start_review(conn)["remaining"] == 2
-    assert f.overview(conn)["stats"]["streak"] == 0
+    cards.add("reversed")
+    first, _ = cards.review_once(1)
+    learning = cards.row("flash_cards", first["id"])
+    cards.set_clock(datetime.fromisoformat(learning["due"]))
+    second, _ = cards.review_once(3)
+    cards.undo()
+    assert cards.row("flash_cards", first["id"])["fsrs"] == learning["fsrs"]
+    cards.fails("/api/flashcards/grade", {"token": second["token"], "rating": 3}, match="Reveal")
+    assert "answer-only-secret" in cards.reveal(second["token"])["back"]
+    cards.undo()
+    assert cards.row("flash_cards", first["id"])["state"] == "new"
+    assert all(not c["buried_until"] for c in cards.browser()["notes"][0]["cards"])
+    assert cards.start()["remaining"] == 2
+    assert cards.overview()["stats"]["streak"] == 0
 
 
 def _proto_field(number, value):
@@ -392,88 +383,69 @@ def modern_apkg(payload, tmp_path, corrupt_media=False):
     return output.getvalue()
 
 
-def test_modern_normalized_apkg_import_media_cloze_templates_and_legacy_export(cards, tmp_path):
-    conn, _, _ = cards
-    deck = f.save_deck(conn, {"name": "Portable::Child"})
-    add(cards, "cloze", deck=deck["id"])
-    add(cards, "reversed", deck=deck["id"], fields={"Front": '<img src="local.png">question', "Back": "portable-answer"})
-    f.upload_media(conn, "local.png", b"\x89PNG\r\n\x1a\nportable-media")
-    modern = modern_apkg(f.export_apkg(conn, deck["id"]), tmp_path)
-    target = connect(tmp_path / "modern-import.sqlite")
-    try:
-        migrate(target); f.bootstrap(target)
-        response = web_flashcards.post(None, target, "/api/flashcards/import", {"format": "apkg", "data": base64.b64encode(modern).decode()})
-        assert response["imported"] == 2
-        assert f.overview(target)["stats"]["total"] == 4
-        imported_deck = next(d for d in f.overview(target)["decks"] if d["name"] == "Portable::Child")
-        front = f.start_review(target, imported_deck["id"])["card"]
-        assert "hidden-one" not in front["front"]
-        f.reveal(target, front["token"]); f.grade(target, front["token"], 4)
-        next_card = f.start_review(target, imported_deck["id"])["card"]
-        assert "data:image/png;base64," in next_card["front"]
-        assert "portable-answer" not in next_card["front"]
-        assert "portable-answer" in f.reveal(target, next_card["token"])["back"]
-        assert f.import_apkg(target, modern)["duplicates"] == 2
-        exported = f.export_apkg(target, imported_deck["id"])
-        with zipfile.ZipFile(io.BytesIO(exported)) as archive:
-            assert archive.read("collection.anki2").startswith(b"SQLite format 3\0")
-            assert json.loads(archive.read("media")) == {"0": "local.png"}
-    finally:
-        target.close()
+def test_modern_normalized_apkg_import_media_cloze_templates_and_legacy_export(cards, target, tmp_path):
+    deck = cards.deck(name="Portable::Child")
+    cards.add("cloze", deck=deck["id"])
+    cards.add("reversed", deck=deck["id"], fields={"Front": '<img src="local.png">question', "Back": "portable-answer"})
+    upload(cards, "local.png", b"\x89PNG\r\n\x1a\nportable-media")
+    modern = modern_apkg(export(cards, deck=deck["id"]), tmp_path)
+    assert import_apkg(target, modern)["imported"] == 2
+    assert target.overview()["stats"]["total"] == 4
+    imported_deck = next(d for d in target.overview()["decks"] if d["name"] == "Portable::Child")
+    front = target.start(deck_id=imported_deck["id"])["card"]
+    assert "hidden-one" not in front["front"]
+    target.reveal(front["token"]); target.grade(front["token"], 4)
+    next_card = target.start(deck_id=imported_deck["id"])["card"]
+    assert "data:image/png;base64," in next_card["front"]
+    assert "portable-answer" not in next_card["front"]
+    assert "portable-answer" in target.reveal(next_card["token"])["back"]
+    assert import_apkg(target, modern)["duplicates"] == 2
+    with zipfile.ZipFile(io.BytesIO(export(target, deck=imported_deck["id"]))) as archive:
+        assert archive.read("collection.anki2").startswith(b"SQLite format 3\0")
+        assert json.loads(archive.read("media")) == {"0": "local.png"}
 
 
-def test_corrupt_modern_media_fails_atomically_with_clear_error(cards, tmp_path):
-    conn, _, _ = cards
-    add(cards, fields={"Front": '<img src="local.png">question', "Back": "answer"})
-    f.upload_media(conn, "local.png", b"\x89PNG\r\n\x1a\nportable-media")
-    corrupt = modern_apkg(f.export_apkg(conn), tmp_path, corrupt_media=True)
-    target = connect(tmp_path / "bad-import.sqlite")
-    try:
-        migrate(target); f.bootstrap(target)
-        with pytest.raises(APIError, match="checksum"):
-            web_flashcards.post(None, target, "/api/flashcards/import", {"format": "apkg", "data": base64.b64encode(corrupt).decode()})
-        assert f.overview(target)["stats"]["total"] == 0
-        assert f.overview(target)["media"] == []
-    finally:
-        target.close()
+def test_corrupt_modern_media_fails_atomically_with_clear_error(cards, target, tmp_path):
+    cards.add(fields={"Front": '<img src="local.png">question', "Back": "answer"})
+    upload(cards, "local.png", b"\x89PNG\r\n\x1a\nportable-media")
+    corrupt = modern_apkg(export(cards), tmp_path, corrupt_media=True)
+    target.fails("/api/flashcards/import", {"format": "apkg", "data": base64.b64encode(corrupt).decode()}, match="checksum")
+    assert target.overview()["stats"]["total"] == 0
+    assert target.overview()["media"] == []
 
 
 def test_apkg_exports_actual_dynamic_attachments_not_plain_filename_mentions(cards):
-    conn, _, state = cards
     image = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=")
-    f.upload_media(conn, "local ü.png", image)
-    f.upload_media(conn, "private.png", image)
-    typ = f.save_type(conn, {"name": "Image field", "kind": "template", "fields": ["Prompt", "Image", "Answer"],
-                             "templates": [{"name": "Image", "front": '{{Prompt}}<img src="{{Image}}">', "back": "{{Answer}}"}]})
-    f.save_note(conn, {"deck_id": state["decks"][0]["id"], "type_id": typ["id"],
-                       "fields": {"Prompt": "The text mentions private.png but does not attach it.",
-                                  "Image": "local%20%C3%BC.png", "Answer": "answer"}})
-    assert "data:image/png;base64," in f.start_review(conn)["card"]["front"]
-    with zipfile.ZipFile(io.BytesIO(f.export_apkg(conn))) as archive:
+    upload(cards, "local ü.png", image)
+    upload(cards, "private.png", image)
+    typ = cards.ok("/api/flashcards/type", {"name": "Image field", "kind": "template", "fields": ["Prompt", "Image", "Answer"],
+                                            "templates": [{"name": "Image", "front": '{{Prompt}}<img src="{{Image}}">', "back": "{{Answer}}"}]})["type"]
+    cards.ok("/api/flashcards/note", {"deck_id": cards.overview()["decks"][0]["id"], "type_id": typ["id"],
+                                      "fields": {"Prompt": "The text mentions private.png but does not attach it.",
+                                                 "Image": "local%20%C3%BC.png", "Answer": "answer"}})
+    assert "data:image/png;base64," in cards.start()["card"]["front"]
+    with zipfile.ZipFile(io.BytesIO(export(cards))) as archive:
         assert json.loads(archive.read("media")) == {"0": "local ü.png"}
         assert archive.read("0") == image
 
 
 def test_undo_does_not_clobber_intervening_sibling_edits(cards):
-    conn, _, _ = cards
-    add(cards, "reversed")
-    reviewed, _ = review_once(conn, 4)
-    sibling = next(c for c in f.browser(conn)["notes"][0]["cards"] if c["id"] != reviewed["id"])
-    f.action(conn, {"id": sibling["id"], "revision": sibling["revision"], "action": "suspend"})
-    with pytest.raises(ValueError, match="Sibling changed"):
-        f.undo(conn)
-    assert f.require(conn, "flash_cards", sibling["id"])["suspended"] == 1
-    assert f.require(conn, "flash_cards", reviewed["id"])["state"] == "review"
+    cards.add("reversed")
+    reviewed, _ = cards.review_once(4)
+    sibling = next(c for c in cards.browser()["notes"][0]["cards"] if c["id"] != reviewed["id"])
+    cards.action(id=sibling["id"], revision=sibling["revision"], action="suspend")
+    cards.fails("/api/flashcards/undo", {}, match="Sibling changed")
+    assert cards.row("flash_cards", sibling["id"])["suspended"] == 1
+    assert cards.row("flash_cards", reviewed["id"])["state"] == "review"
 
 
 @pytest.mark.parametrize("modern,keep_memory", [(False, False), (False, True), (True, True)])
-def test_external_anki_scheduled_cards_preserve_memory_and_can_be_reviewed(cards, tmp_path, modern, keep_memory):
-    conn, clock, _ = cards
-    add(cards)
-    reviewed, _ = review_once(conn, 4)
-    original = f.require(conn, "flash_cards", reviewed["id"])
+def test_external_anki_scheduled_cards_preserve_memory_and_can_be_reviewed(cards, target, tmp_path, modern, keep_memory):
+    cards.add()
+    reviewed, _ = cards.review_once(4)
+    original = cards.row("flash_cards", reviewed["id"])
     original_fsrs = json.loads(original["fsrs"])
-    payload = f.export_apkg(conn)
+    payload = export(cards)
     if modern:
         payload = modern_apkg(payload, tmp_path)
     else:
@@ -485,143 +457,123 @@ def test_external_anki_scheduled_cards_preserve_memory_and_can_be_reviewed(cards
         if not keep_memory:
             database.execute("UPDATE cards SET data=''")
             database.execute("INSERT INTO revlog VALUES(?,?,0,4,1,0,2500,1000,0)",
-                             (int(clock[0].timestamp() * 1000), reviewed["id"]))
+                             (int(cards.now.timestamp() * 1000), reviewed["id"]))
         database.commit(); database.close()
         output = io.BytesIO()
         with zipfile.ZipFile(output, "w") as archive:
             archive.writestr("collection.anki21", path.read_bytes())
             archive.writestr("media", "{}")
         payload = output.getvalue()
-    target = connect(tmp_path / "external-import.sqlite")
-    try:
-        migrate(target); f.bootstrap(target)
-        assert f.import_apkg(target, payload)["imported"] == 1
-        imported = f.browser(target)["notes"][0]["cards"][0]
-        scheduled = f.require(target, "flash_cards", imported["id"])
-        memory = json.loads(scheduled["fsrs"])
-        assert scheduled["state"] == "review" and scheduled["reviews"] == 1
-        assert memory["last_review"] == original_fsrs["last_review"]
-        assert datetime.fromisoformat(scheduled["due"]).date() == datetime.fromisoformat(original["due"]).date()
-        if keep_memory:
-            assert memory["stability"] == original_fsrs["stability"]
-            assert memory["difficulty"] == original_fsrs["difficulty"]
-        else:
-            assert memory["stability"] > 0 and 1 <= memory["difficulty"] <= 10
-        clock[0] = datetime.fromisoformat(scheduled["due"])
-        review_once(target, 3)
-        assert f.require(target, "flash_cards", imported["id"])["reviews"] == 2
-    finally:
-        target.close()
+    assert import_apkg(target, payload)["imported"] == 1
+    imported = target.browser()["notes"][0]["cards"][0]
+    scheduled = target.row("flash_cards", imported["id"])
+    memory = json.loads(scheduled["fsrs"])
+    assert scheduled["state"] == "review" and scheduled["reviews"] == 1
+    assert memory["last_review"] == original_fsrs["last_review"]
+    assert datetime.fromisoformat(scheduled["due"]).date() == datetime.fromisoformat(original["due"]).date()
+    if keep_memory:
+        assert memory["stability"] == original_fsrs["stability"]
+        assert memory["difficulty"] == original_fsrs["difficulty"]
+    else:
+        assert memory["stability"] > 0 and 1 <= memory["difficulty"] <= 10
+    target.set_clock(datetime.fromisoformat(scheduled["due"]))
+    target.review_once(3)
+    assert target.row("flash_cards", imported["id"])["reviews"] == 2
 
 
 def test_changing_note_type_updates_same_note_and_invalidates_old_review(cards):
-    conn, _, state = cards
-    note = add(cards)
-    pending = f.start_review(conn)["card"]
-    reversed_type = next(t for t in state["types"] if t["kind"] == "reversed")
-    web_flashcards.post(None, conn, "/api/flashcards/note", {
-        "id": note["id"], "revision": note["revision"], "deck_id": note["deck_id"],
-        "type_id": reversed_type["id"], "fields": json.loads(note["fields"]), "tags": [],
-    })
-    browser = f.browser(conn)
+    note = cards.add()
+    pending = cards.start()["card"]
+    reversed_type = next(t for t in cards.overview()["types"] if t["kind"] == "reversed")
+    cards.ok("/api/flashcards/note", {"id": note["id"], "revision": note["revision"], "deck_id": note["deck_id"],
+                                      "type_id": reversed_type["id"], "fields": json.loads(note["fields"]), "tags": []})
+    browser = cards.browser()
     assert browser["total"] == 1 and browser["notes"][0]["id"] == note["id"]
     assert len(browser["notes"][0]["cards"]) == 2
     assert browser["notes"][0]["fields"]["Back"] == "answer-only-secret"
-    with pytest.raises(ValueError, match="Card changed"):
-        f.reveal(conn, pending["token"])
+    cards.fails("/api/flashcards/reveal", {"token": pending["token"]}, match="Card changed")
 
 
 def test_flashcard_schema_contains_all_logical_notes_real_subdecks_and_archives(cards):
-    conn, _, state = cards
-    child = f.save_deck(conn, {"name": "Graph parent::Child", "settings": {}})
-    parent = conn.execute("SELECT id FROM flash_decks WHERE name='Graph parent'").fetchone()[0]
-    empty = f.save_deck(conn, {"name": "Empty graph deck", "settings": {}})
-    note = add(cards, kind="reversed", deck=child["id"])
-    f.action(conn, {"action": "archive", "id": note["id"], "revision": note["revision"], "value": True})
-    conn.execute("UPDATE flash_decks SET archived=1 WHERE id=?", (child["id"],))
+    child = cards.deck(name="Graph parent::Child", settings={})
+    empty = cards.deck(name="Empty graph deck", settings={})
+    note = cards.add(kind="reversed", deck=child["id"])
+    cards.action(action="archive", id=note["id"], revision=note["revision"], value=True)
+    with cards.db() as conn:
+        parent = conn.execute("SELECT id FROM flash_decks WHERE name='Graph parent'").fetchone()[0]
+        conn.execute("UPDATE flash_decks SET archived=1 WHERE id=?", (child["id"],))
     expected = {note["id"]}
     for _ in range(web_atlas.SECTION_LIMIT + 3):
-        expected.add(add(cards)["id"])
-    graph = web_atlas.get(None, conn, "/api/atlas/sections/flashcards", {})
-    nodes = {node["id"]: node for node in graph["nodes"]}
-    assert graph["total"] == graph["shown"] == len(nodes)
-    assert {node["ref"] for node in nodes.values() if node["entity"] == "flashcard_note"} == expected
-    assert {node["ref"] for node in nodes.values() if node["entity"] == "deck"} == {
-        row[0] for row in conn.execute("SELECT id FROM flash_decks")}
-    edges = {(link["source"], link["target"]) for link in graph["links"]}
-    assert (f"deck:{parent}", f"deck:{child['id']}") in edges
-    assert (f"deck:{child['id']}", f"flashcard_note:{note['id']}") in edges
-    assert nodes[f"flashcard_note:{note['id']}"]["detail"] == "2 generated cards · archived"
-    assert nodes[f"deck:{empty['id']}"]["detail"] == "0 notes · 0 cards"
-    assert "answer-only-secret" not in json.dumps(graph)
-    assert "synthetic-question" not in json.dumps(graph)
-    focused = web_atlas.get(None, conn, "/api/atlas/sections/flashcards", {"focus": f"deck:{parent}"})
-    assert {node["id"] for node in focused["nodes"]} == {
-        f"deck:{parent}", f"deck:{child['id']}", f"flashcard_note:{note['id']}"}
-    exact = web_flashcards.get(None, conn, "/api/flashcards/note", {"id": str(note["id"])})["note"]
+        expected.add(cards.add()["id"])
+    with cards.db() as conn:
+        graph = web_atlas.get(None, conn, "/api/atlas/sections/flashcards", {})
+        nodes = {node["id"]: node for node in graph["nodes"]}
+        assert graph["total"] == graph["shown"] == len(nodes)
+        assert {node["ref"] for node in nodes.values() if node["entity"] == "flashcard_note"} == expected
+        assert {node["ref"] for node in nodes.values() if node["entity"] == "deck"} == {row[0] for row in conn.execute("SELECT id FROM flash_decks")}
+        edges = {(link["source"], link["target"]) for link in graph["links"]}
+        assert (f"deck:{parent}", f"deck:{child['id']}") in edges
+        assert (f"deck:{child['id']}", f"flashcard_note:{note['id']}") in edges
+        assert nodes[f"flashcard_note:{note['id']}"]["detail"] == "2 generated cards · archived"
+        assert nodes[f"deck:{empty['id']}"]["detail"] == "0 notes · 0 cards"
+        assert "answer-only-secret" not in json.dumps(graph) and "synthetic-question" not in json.dumps(graph)
+        focused = web_atlas.get(None, conn, "/api/atlas/sections/flashcards", {"focus": f"deck:{parent}"})
+        assert {node["id"] for node in focused["nodes"]} == {f"deck:{parent}", f"deck:{child['id']}", f"flashcard_note:{note['id']}"}
+    exact = cards.ok(f"/api/flashcards/note?id={note['id']}")["note"]
     assert exact["id"] == note["id"] and exact["deck_id"] == child["id"]
     assert exact["archived"] == 1 and len(exact["cards"]) == 2
     # Existing exact nid reference links retain their browser behavior.
-    browser = web_flashcards.get(None, conn, "/api/flashcards/browser", {"search": f"nid:{note['id']}"})
-    assert [row["id"] for row in browser["notes"]] == [note["id"]]
+    assert [row["id"] for row in cards.browser(search=f"nid:{note['id']}")["notes"]] == [note["id"]]
 
 
 def test_flashcard_schema_and_exact_editor_handle_zero_cards_and_deleted_items(cards):
-    conn, _, _ = cards
-    note = add(cards)
-    conn.execute("DELETE FROM flash_cards WHERE note_id=?", (note["id"],))
-    graph = web_atlas.get(None, conn, "/api/atlas/sections/flashcards", {})
-    assert any(node["id"] == f"flashcard_note:{note['id']}" and node["detail"] == "0 generated cards"
-               for node in graph["nodes"])
-    exact = web_flashcards.get(None, conn, "/api/flashcards/note", {"id": str(note["id"])})["note"]
+    note = cards.add()
+    with cards.db() as conn:
+        conn.execute("DELETE FROM flash_cards WHERE note_id=?", (note["id"],))
+        graph = web_atlas.get(None, conn, "/api/atlas/sections/flashcards", {})
+    assert any(node["id"] == f"flashcard_note:{note['id']}" and node["detail"] == "0 generated cards" for node in graph["nodes"])
+    exact = cards.ok(f"/api/flashcards/note?id={note['id']}")["note"]
     assert exact["id"] == note["id"] and exact["cards"] == []
-    f.action(conn, {"action": "delete", "id": note["id"], "revision": note["revision"]})
-    with pytest.raises(APIError, match="no longer exists") as error:
-        web_flashcards.get(None, conn, "/api/flashcards/note", {"id": str(note["id"])})
-    assert error.value.status == 404
-    graph = web_atlas.get(None, conn, "/api/atlas/sections/flashcards", {})
-    assert not any(node["entity"] == "flashcard_note" for node in graph["nodes"])
-    deck = conn.execute("INSERT INTO flash_decks(name,settings,created_at) VALUES('Deleted deck','{}','')").lastrowid
-    conn.execute("DELETE FROM flash_decks WHERE id=?", (deck,))
-    with pytest.raises(APIError, match="no longer exists") as error:
-        web_atlas.get(None, conn, "/api/atlas/sections/flashcards", {"focus": f"deck:{deck}"})
-    assert error.value.status == 404
+    cards.action(action="delete", id=note["id"], revision=note["revision"])
+    cards.fails(f"/api/flashcards/note?id={note['id']}", status=404, match="no longer exists")
+    with cards.db() as conn:
+        graph = web_atlas.get(None, conn, "/api/atlas/sections/flashcards", {})
+        assert not any(node["entity"] == "flashcard_note" for node in graph["nodes"])
 
 
 def test_overview_splits_each_deck_load_and_measures_recall(cards):
-    conn, clock, _ = cards
-    deck = f.save_deck(conn, {"name": "Load", "settings": {}})
-    child = f.save_deck(conn, {"name": "Load::Child", "settings": {}})
+    deck = cards.deck(name="Load", settings={})
+    child = cards.deck(name="Load::Child", settings={})
     for _ in range(3):
-        add(cards, deck=child["id"])
-    review_once(conn, 1, deck_id=deck["id"])  # new → learning
-    review_once(conn, 4, deck_id=deck["id"])  # new → review
-    decks = {d["name"]: d for d in f.overview(conn)["decks"]}
+        cards.add(deck=child["id"])
+    cards.review_once(1, deck_id=deck["id"])  # new → learning
+    cards.review_once(4, deck_id=deck["id"])  # new → review
+    decks = {d["name"]: d for d in cards.overview()["decks"]}
     assert (decks["Load"]["new"], decks["Load"]["learning"], decks["Load"]["review"]) == (1, 0, 0)
     assert decks["Load"]["recall"] is None
-    clock[0] += timedelta(days=30)
-    decks = {d["name"]: d for d in f.overview(conn)["decks"]}
+    cards.set_clock(cards.now + timedelta(days=30))
+    decks = {d["name"]: d for d in cards.overview()["decks"]}
     for name in ("Load", "Load::Child"):
         assert (decks[name]["due"], decks[name]["new"], decks[name]["learning"], decks[name]["review"]) == (2, 1, 1, 1)
-    review_once(conn, 3, deck_id=deck["id"])  # a learning step, not a due review
-    review_once(conn, 1, deck_id=deck["id"])  # the review card lapses
-    decks = {d["name"]: d for d in f.overview(conn)["decks"]}
+    cards.review_once(3, deck_id=deck["id"])  # a learning step, not a due review
+    cards.review_once(1, deck_id=deck["id"])  # the review card lapses
+    decks = {d["name"]: d for d in cards.overview()["decks"]}
     assert decks["Load"]["recall"] == decks["Load::Child"]["recall"] == 0.0
     assert decks["Default"]["recall"] is None and decks["Default"]["learning"] == 0
-    clock[0] += timedelta(days=91)
-    assert {d["name"]: d for d in f.overview(conn)["decks"]}["Load"]["recall"] is None
+    cards.set_clock(cards.now + timedelta(days=91))
+    assert {d["name"]: d for d in cards.overview()["decks"]}["Load"]["recall"] is None
 
 
 def test_stats_forecast_retention_maturity_heatmap_and_queue_for_a_scope(cards):
-    conn, clock, _ = cards
-    deck = f.save_deck(conn, {"name": "Stats", "settings": {"retention": 0.85}})
-    child = f.save_deck(conn, {"name": "Stats::Child", "settings": {}})
-    other = f.save_deck(conn, {"name": "Other", "settings": {}})
-    notes = [add(cards, deck=child["id"]) for _ in range(4)]
-    add(cards, deck=other["id"])
-    review_once(conn, 4, deck_id=deck["id"])  # new → review, due in days
-    review_once(conn, 1, deck_id=deck["id"])  # new → learning, due in a minute
-    scoped = f.stats(conn, deck["id"], "UTC")
+    deck = cards.deck(name="Stats", settings={"retention": 0.85})
+    child = cards.deck(name="Stats::Child", settings={})
+    other = cards.deck(name="Other", settings={})
+    notes = [cards.add(deck=child["id"]) for _ in range(4)]
+    cards.add(deck=other["id"])
+    cards.review_once(4, deck_id=deck["id"])  # new → review, due in days
+    cards.review_once(1, deck_id=deck["id"])  # new → learning, due in a minute
+    stats = lambda deck_id=None, zone="UTC": cards.ok("/api/flashcards/stats?timezone=" + zone + (f"&deck_id={deck_id}" if deck_id else ""))
+    scoped = stats(deck["id"])
     assert len(scoped["forecast"]) == 30 and scoped["forecast"][0]["day"] == "2026-10-14"
     assert scoped["forecast"][0]["learning"] == 1
     assert sum(day["review"] for day in scoped["forecast"]) == 1
@@ -633,64 +585,156 @@ def test_stats_forecast_retention_maturity_heatmap_and_queue_for_a_scope(cards):
     assert retention["target"] == 0.85 and 0 < retention["decay"] < 1
     assert retention["stability"]["weak"] == retention["stability"]["strong"] > 0
     assert retention["measured"] == []
-    whole = f.stats(conn, None, "UTC")
+    whole = stats()
     assert whole["maturity"]["new"] == 3 and whole["retention"]["target"] == 0.9
     # Overdue cards fold into today; a remembered due review is measured.
-    clock[0] += timedelta(days=60)
-    later = f.stats(conn, deck["id"], "UTC")
+    cards.set_clock(cards.now + timedelta(days=60))
+    later = stats(deck["id"])
     assert (later["forecast"][0]["review"], later["forecast"][0]["learning"]) == (1, 1)
     assert later["queue"]["learning"] == 1 and later["queue"]["review"] == 1
     assert later["streak"] == 0 and later["heatmap"][-1]["reviews"] == 0
-    review_once(conn, 3, deck_id=deck["id"])  # the learning step
-    review_once(conn, 4, deck_id=deck["id"])  # the overdue review, remembered
-    measured = f.stats(conn, deck["id"], "UTC")["retention"]["measured"]
+    cards.review_once(3, deck_id=deck["id"])  # the learning step
+    cards.review_once(4, deck_id=deck["id"])  # the overdue review, remembered
+    measured = stats(deck["id"])["retention"]["measured"]
     assert [(bucket["n"], bucket["r"]) for bucket in measured] == [(1, 1.0)] and measured[0]["t"] >= 30
-    assert f.stats(conn, deck["id"], "UTC")["maturity"]["mature"] == 1
+    assert stats(deck["id"])["maturity"]["mature"] == 1
     # Suspended, leech and buried cards leave today's queue and are counted.
-    new_cards = [conn.execute("SELECT id,revision FROM flash_cards WHERE note_id=? AND state='new'", (note["id"],)).fetchone() for note in notes]
-    new_cards = [card for card in new_cards if card]
-    f.action(conn, {"action": "suspend", "id": new_cards[0]["id"], "revision": new_cards[0]["revision"]})
-    f.action(conn, {"action": "bury", "id": new_cards[1]["id"], "revision": new_cards[1]["revision"]})
-    queue = f.stats(conn, deck["id"], "UTC")["queue"]
+    with cards.db() as conn:
+        new_cards = [conn.execute("SELECT id,revision FROM flash_cards WHERE note_id=? AND state='new'", (note["id"],)).fetchone() for note in notes]
+    new_cards = [dict(card) for card in new_cards if card]
+    cards.action(action="suspend", id=new_cards[0]["id"], revision=new_cards[0]["revision"])
+    cards.action(action="bury", id=new_cards[1]["id"], revision=new_cards[1]["revision"])
+    queue = stats(deck["id"])["queue"]
     assert (queue["new"], queue["suspended"], queue["buried"]) == (0, 1, 1)
-    routed = web_flashcards.get(None, conn, "/api/flashcards/stats", {"deck_id": str(deck["id"]), "timezone": "America/New_York"})
-    assert routed["forecast"][0]["day"] == "2026-12-13"
-    with pytest.raises(APIError, match="timezone"):
-        web_flashcards.get(None, conn, "/api/flashcards/stats", {"timezone": "Mars/Base"})
+    assert stats(deck["id"], "America/New_York")["forecast"][0]["day"] == "2026-12-13"
+    cards.fails("/api/flashcards/stats?timezone=Mars/Base", match="timezone")
 
 
 def test_card_detail_reports_rendered_faces_memory_state_and_parking(cards):
-    conn, clock, _ = cards
-    note = add(cards)
-    ident = conn.execute("SELECT id FROM flash_cards WHERE note_id=?", (note["id"],)).fetchone()[0]
-    fresh = web_flashcards.get(None, conn, "/api/flashcards/card", {"id": str(ident)})
+    note = cards.add()
+    with cards.db() as conn:
+        ident = conn.execute("SELECT id FROM flash_cards WHERE note_id=?", (note["id"],)).fetchone()[0]
+    fresh = cards.ok(f"/api/flashcards/card?id={ident}")
     assert fresh["card"]["state"] == "new" and fresh["card"]["memory"] is None
     assert "synthetic-question" in fresh["card"]["front"] and "answer-only-secret" in fresh["card"]["back"]
     assert fresh["card"]["deck"] == "Default" and fresh["card"]["note_id"] == note["id"]
-    card, _ = review_once(conn, 4)
-    clock[0] += timedelta(days=3)
-    detail = web_flashcards.get(None, conn, "/api/flashcards/card", {"id": str(card["id"])})["card"]
+    card, _ = cards.review_once(4)
+    cards.set_clock(cards.now + timedelta(days=3))
+    detail = cards.ok(f"/api/flashcards/card?id={card['id']}")["card"]
     memory = detail["memory"]
     assert detail["state"] == "review" and detail["reviews"] == 1
     assert memory["stability"] > 3 and 1 <= memory["difficulty"] <= 10 and 0 < memory["retrievability"] < 1
-    f.action(conn, {"action": "bury", "id": card["id"], "revision": detail["revision"]})
-    assert web_flashcards.get(None, conn, "/api/flashcards/card", {"id": str(card["id"])})["card"]["buried_until"] > clock[0].isoformat()
-    with pytest.raises(APIError, match="no longer exists") as error:
-        web_flashcards.get(None, conn, "/api/flashcards/card", {"id": "999999"})
-    assert error.value.status == 404
+    cards.action(action="bury", id=card["id"], revision=detail["revision"])
+    assert cards.ok(f"/api/flashcards/card?id={card['id']}")["card"]["buried_until"] > cards.now.isoformat()
+    cards.fails("/api/flashcards/card?id=999999", status=404, match="no longer exists")
 
 
 def test_fronts_lists_each_note_first_field_in_exactly_that_deck(cards):
-    conn, _, state = cards
-    default = state["decks"][0]["id"]
-    child = f.save_deck(conn, {"name": "Default::Child", "settings": {}})["id"]
-    add(cards, fields={"Front": "Capital of <b>Peru</b>?", "Back": "Lima"})
-    add(cards, kind="cloze")
-    add(cards, fields={"Front": "In the subdeck", "Back": "only"}, deck=child)
-    fronts = web_flashcards.get(None, conn, "/api/flashcards/fronts", {"deck_id": str(default)})["fronts"]
+    default = cards.overview()["decks"][0]["id"]
+    child = cards.deck(name="Default::Child", settings={})["id"]
+    cards.add(fields={"Front": "Capital of <b>Peru</b>?", "Back": "Lima"})
+    cards.add(kind="cloze")
+    cards.add(fields={"Front": "In the subdeck", "Back": "only"}, deck=child)
+    fronts = cards.ok(f"/api/flashcards/fronts?deck_id={default}")["fronts"]
     assert sorted(fronts) == sorted(["Capital of <b>Peru</b>?", "{{c1::hidden-one::hint}} + {{c2::hidden-two}} + {{c1::second-one}}"])
-    assert web_flashcards.get(None, conn, "/api/flashcards/fronts", {"deck_id": str(child)})["fronts"] == ["In the subdeck"]
-    with pytest.raises(APIError, match="deck"):
-        web_flashcards.get(None, conn, "/api/flashcards/fronts", {})
-    with pytest.raises(APIError):
-        web_flashcards.get(None, conn, "/api/flashcards/fronts", {"deck_id": "999999"})
+    assert cards.ok(f"/api/flashcards/fronts?deck_id={child}")["fronts"] == ["In the subdeck"]
+    cards.fails("/api/flashcards/fronts", match="deck")
+    cards.fails("/api/flashcards/fronts?deck_id=999999")
+
+
+def test_mutations_are_recorded_for_the_brain_and_practice_is_not(cards):
+    note = cards.add()
+    cards.review_once(3)
+    cards.action(id=note["id"], revision=cards.row("flash_notes", note["id"])["revision"], action="archive")
+    with cards.db() as conn:
+        events = [tuple(row) for row in conn.execute("SELECT section, entity, entity_id, action, route FROM record_events WHERE seq > ? ORDER BY seq", (cards.events_from,))]
+    assert events == [("flashcards", "note", str(note["id"]), "create", "/api/flashcards/note"),
+                      ("flashcards", "note", str(note["id"]), "archive", "/api/flashcards/action")]
+
+
+def test_flashcard_routes_are_refused_without_the_workspace_module(tmp_path):
+    from terminal_support import front_site
+    from test_web_modules import make_root, refused
+
+    settings = make_root(tmp_path, ("applyai",))
+    with front_site(settings) as running:
+        assert refused(*running.request("/api/flashcards"))
+        assert refused(*running.request("/api/flashcards/deck", {"name": "x"}))
+
+
+@pytest.mark.parametrize("kind,fields,tags", [
+    ("basic", {"Front": "<b>Bold</b> & **strong** `code`", "Back": "back"}, ["z", "a", "a"]),
+    ("reversed", {"Front": "front", "Back": ""}, []),
+    ("cloze", {"Text": "{{c2::two}} and {{c1::one::hint}}", "Extra": ""}, ["tag"]),
+    ("basic", {"Front": "", "Back": "only a back"}, []),
+    ("basic", {"Front": "x"}, []),
+    ("basic", {"Front": "x", "Back": "y"}, ["has space"]),
+])
+def test_rika_tools_python_note_save_agrees_with_the_route(cards, kind, fields, tags):
+    """Rika's in-app tools still save notes in Python (kitty.core.flashcards.save_note)."""
+    from kitty.core import flashcards
+
+    state = cards.overview()
+    typ = next(t for t in state["types"] if t["kind"] == kind)
+    body = {"deck_id": state["decks"][0]["id"], "type_id": typ["id"], "fields": fields, "tags": tags}
+    status, routed = cards.call("/api/flashcards/note", body)
+    with cards.db() as conn:
+        try:
+            python = flashcards.save_note(conn, body)
+        except ValueError as error:
+            assert status == 400 and routed["error"] == str(error)
+            return
+        assert status == 200, routed
+        routed = routed["note"]
+        shape = lambda note: ({k: v for k, v in note.items() if k not in {"id", "guid", "created_at", "updated_at"}},
+                              [(r["ordinal"], r["state"], r["revision"]) for r in conn.execute(
+                                  "SELECT * FROM flash_cards WHERE note_id=? ORDER BY ordinal", (note["id"],))])
+        assert shape(python) == shape(routed)
+        pairs = conn.execute("SELECT p.ordinal, r.id FROM flash_cards p JOIN flash_cards r ON r.ordinal=p.ordinal "
+                             "WHERE p.note_id=? AND r.note_id=?", (python["id"], routed["id"])).fetchall()
+        expected = {ordinal: [flashcards.render(conn, {"note_id": python["id"], "ordinal": ordinal}, answer)
+                              for answer in (False, True)] for ordinal, _ in pairs}
+    for ordinal, card in pairs:
+        detail = cards.ok(f"/api/flashcards/card?id={card}")["card"]
+        assert [detail["front"], detail["back"]] == expected[ordinal]
+
+
+TRICKY_HTML = [
+    '<b>bold</b><i>it</i><u>u</u><s>s</s><br><hr/><p>para</p><ul><li>one</li></ul><table><tr><td>1</td></tr></table>',
+    '<script>alert(1)</script>after<style>x{}</style><iframe src="x"></iframe><object>o</object>',
+    '<SCRIPT>alert(1)</SCRIPT >tail</script><b>b</b>', '<img src="local.png" alt=x><img src=local.png><img src>',
+    '<img src="missing.png"><img src=\'local%2Epng\'><img src="local.png" src="other.png">', '[sound:beep.wav] and [sound:none.mp3]',
+    '&amp; &lt; &gt; &quot; &#39; &#x41; &#65 &copy &notin; &bogus; &#0; &#xD800; &', 'a < b > c & d', '<<b>>', '</>x</ b><//b>',
+    '<!-- comment --><!--x--!><!doctype html><![CDATA[cdata]]><?pi?><!bogus>text', '<b title="a>b">quoted</b><b title=\'x\'>s</b>',
+    '<div\nclass="x"\n>multi line</div>', '<xmp><b>raw</b></xmp><textarea>&amp;<b></textarea><title>t</title>',
+    '**strong** `code` **un*closed', 'line\nbreak\n\n', '<b/>self<br/><span/>', '<a href="javascript:alert(1)">link</a>',
+    'ünïcödé <b>ü</b> &eacute;', '<b', 'text <b class="', '<scr<script>ipt>x</script>', '<noscript><b>n</b></noscript>',
+    '<plaintext><b>p</b>', 'x &am', 'x &amp', '<B>Upper</B><Img Src="local.png">',
+]
+
+
+def test_review_html_is_sanitized_exactly_as_the_python_parser_did(cards):
+    """server/src/flashcards/html.rs against Python's html.parser via kitty.core.flashcards.safe_html."""
+    import random
+
+    from kitty.core import flashcards
+
+    upload(cards, "local.png", b"\x89PNG\r\n\x1a\nsynthetic")
+    upload(cards, "beep.wav", b"RIFF\0\0\0\0WAVEfmt synthetic")
+    rng = random.Random(5)
+    pieces = ["<b>", "</b>", "<i ", ">", "&amp;", "&", "<", "</", "x", " ", "\n", '"', "'", "=", "<img src=local.png>",
+              "<script>", "</script>", "<!--", "-->", "**", "`", "[sound:beep.wav]", "<br/>", "é"]
+    samples = TRICKY_HTML + ["".join(rng.choice(pieces) for _ in range(rng.randint(1, 30))) for _ in range(150)]
+    typ = cards.ok("/api/flashcards/type", {"name": "Raw", "kind": "template", "fields": ["Front", "Back"],
+                                            "templates": [{"name": "Raw", "front": "{{Back}}", "back": "{{Front}}"}]})["type"]
+    deck = cards.overview()["decks"][0]["id"]
+    for sample in samples:
+        note = cards.ok("/api/flashcards/note", {"deck_id": deck, "type_id": typ["id"], "fields": {"Front": sample, "Back": "q"}})["note"]
+        with cards.db() as conn:
+            card = conn.execute("SELECT id FROM flash_cards WHERE note_id=?", (note["id"],)).fetchone()[0]
+            try:
+                expected = flashcards.safe_html(conn, sample)
+            except TypeError as error:
+                cards.fails(f"/api/flashcards/card?id={card}", match=str(error))
+                continue
+        assert cards.ok(f"/api/flashcards/card?id={card}")["card"]["back"] == expected, sample

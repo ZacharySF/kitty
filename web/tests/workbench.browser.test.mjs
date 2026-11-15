@@ -1,6 +1,6 @@
 // The real app in a real browser against the disposable synthetic backend
-// (`kitty-web --demo`); no private workspace is read. Covers the Brain home fitting
-// the window above the Rika bar, and selected toggles staying readable.
+// (`kitty-web --demo`); no private workspace is read. Covers home and the Brain
+// fitting the window, and selected toggles staying readable.
 // Run from web/ with Node >=22, uv and a matching Playwright Chromium:
 // PLAYWRIGHT_BROWSERS_PATH=<Nix playwright-driver.browsers store path> \
 // PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true node --test tests/workbench.browser.test.mjs
@@ -94,7 +94,7 @@ before(async () => {
   });
   await server.listen();
   base = server.resolvedUrls.local[0];
-  // Home is the Brain, which needs WebGL: software rendering where there is no GPU. Rika's
+  // The Brain view needs WebGL: software rendering where there is no GPU. Rika's
   // voice tests use Chromium's fake microphone, which needs no permission prompt.
   browser = await chromium.launch({ args: ["--enable-unsafe-swiftshader", "--use-angle=swiftshader",
     "--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"] });
@@ -165,9 +165,8 @@ async function prefIs(read, value, what) {
 }
 
 const rect = (locator) => locator.evaluate((node) => node.getBoundingClientRect().toJSON());
-/** Viewport bottom not covered by the Rika bar. */
-const visibleBottom = (page) => page.evaluate(() =>
-  innerHeight - (parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--rika-space")) || 0));
+/** The modules of a workspace with everything but the Brain. */
+const NO_BRAIN = ["applyai", "workspace", "terminal"];
 
 /**
  * Polls until the Brain's WebGL canvas has drawn the workspace and fills its stage,
@@ -184,78 +183,72 @@ async function fitted(page) {
   }, null, { timeout: 20_000, polling: 200 });
 }
 
-/** The atlas ends above the Rika bar, the page does not scroll and the graph is fitted. */
-async function assertAtlasFits(page, label) {
-  const atlas = page.locator(".atlas");
-  await atlas.waitFor();
-  await fitted(page).catch(() => assert.fail(`${label}: the Brain is not fitted to its visible stage`));
-  const bottom = await visibleBottom(page);
-  const box = await rect(atlas);
-  assert.ok(box.top >= 0 && box.bottom <= bottom + 1, `${label}: atlas ${box.top}–${box.bottom} is not within 0–${bottom}`);
-  assert.ok(box.height >= 120, `${label}: atlas collapsed to ${box.height}px`);
+/** `selector` ends inside the window and the page does not scroll. */
+async function assertFits(page, selector, label) {
+  const region = page.locator(selector);
+  await region.waitFor();
+  const box = await rect(region);
+  const bottom = await page.evaluate(() => innerHeight);
+  assert.ok(box.top >= 0 && box.bottom <= bottom + 1, `${label}: ${selector} ${box.top}–${box.bottom} is not within 0–${bottom}`);
+  assert.ok(box.height >= 120, `${label}: ${selector} collapsed to ${box.height}px`);
   const overflow = await page.evaluate(() => document.documentElement.scrollHeight - innerHeight);
   assert.ok(overflow <= 1, `${label}: page scrolls ${overflow}px below the window`);
 }
 
-/**
- * Every home control outside the drawing (both widget rails, the rail's collapse chevron
- * and the stage's corner controls) can be focused and is then above the Rika bar and
- * hit-testable.
- */
-async function assertSidebarReachable(page, label) {
-  const unreachable = await page.locator(".atlas").evaluate((atlas) => {
-    const space = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--rika-space")) || 0;
+/** The Brain view ends inside the window, the page does not scroll and the graph is fitted. */
+async function assertAtlasFits(page, label) {
+  await page.locator(".atlas").waitFor();
+  await fitted(page).catch(() => assert.fail(`${label}: the Brain is not fitted to its visible stage`));
+  await assertFits(page, ".atlas", label);
+}
+
+/** Every control inside every element matching `selector` can be focused and is then on screen and hit-testable. */
+async function assertReachable(page, selector, label) {
+  const unreachable = (await page.locator(selector).evaluateAll((roots) => roots.map((root) => {
     const missing = [];
-    const controls = atlas.querySelectorAll(":is(.rail, [data-home-corner]) :is(a[href], button, input, textarea, summary), .rail-toggle");
-    if (!atlas.querySelector("[data-home-corner] button")) missing.push("no corner controls");
-    for (const control of controls) {
+    for (const control of root.querySelectorAll("a[href], button, input, textarea, summary")) {
       if (!control.getClientRects().length || control.disabled || control.closest("details:not([open]) > :not(summary)")) continue;
       control.focus();
       const box = control.getBoundingClientRect();
       const x = box.left + box.width / 2, y = box.top + box.height / 2;
       const hit = document.elementFromPoint(x, y);
-      if (y < 0 || y > innerHeight - space || !hit || !(control === hit || control.contains(hit)))
+      if (y < 0 || y > innerHeight || !hit || !(control === hit || control.contains(hit)))
         missing.push(control.getAttribute("aria-label") || control.textContent.trim().slice(0, 30));
     }
     return missing;
-  });
-  assert.deepEqual(unreachable, [], `${label}: home controls cannot be reached`);
+  }))).flat();
+  assert.deepEqual(unreachable, [], `${label}: controls cannot be reached`);
 }
 
-const RAIL_KEY = "kitty.home.rail";
-
-describe("the Brain home fills the window above the Rika bar", () => {
+describe("home and the Brain fill the window", () => {
   for (const viewport of [DEFAULT, MINIMUM, SCALED_MINIMUM]) {
     const size = `${viewport.width}×${viewport.height}`;
-    for (const [name, options] of [
-      ["all modules", {}],
-      ["all modules, rail collapsed", { storage: { [RAIL_KEY]: "collapsed" } }],
-      ["core only", { modules: [] }],
-    ]) {
-      test(`${size}, ${name}`, async () => {
-        const { page, problems, context } = await open("today", { viewport, ...options });
-        await page.getByRole("region", { name: "Rika" }).waitFor();
-        if (options.storage) await page.locator(".atlas .side.collapsed").waitFor();
-        await assertAtlasFits(page, `${size} ${name}`);
-        await assertSidebarReachable(page, `${size} ${name}`);
+    for (const [name, modules] of [["all modules", undefined], ["no Brain", NO_BRAIN], ["core only", []]]) {
+      test(`${size}, home with ${name}: widgets and the Rika panel fit; no Brain card`, async () => {
+        const { page, problems, context } = await open("today", { viewport, modules });
+        const panel = page.locator(".home").getByRole("region", { name: "Rika" });
+        await panel.waitFor();
+        await assertFits(page, ".home", `${size} ${name}`);
+        const field = await rect(panel.getByRole("textbox", { name: "Ask Rika" }));
+        assert.ok(field.bottom <= viewport.height, `${size} ${name}: Rika's field is below the window`);
+        await assertReachable(page, ".home", `${size} ${name}`);
+        assert.equal(await page.getByRole("heading", { name: "Brain isn't installed" }).count(), 0, "the home offers the Brain's download");
+        assert.equal(await page.locator(".atlas, [data-brain-stage]").count(), 0, "the home draws an atlas");
+        const brainNav = page.getByRole("navigation", { name: "Workspace groups" }).getByRole("button", { name: "Brain" });
+        assert.equal(await brainNav.count(), modules ? 0 : 1, `${size} ${name}: the Brain's nav entry`);
         assert.deepEqual(problems, []);
         await context.close();
       });
     }
 
-    test(`${size}, no dock: the Rika bar is the bottom edge, the page takes the full height above it, and F fullscreens the Brain over both`, async () => {
+    test(`${size}, the Brain view: its own place, fitted, F fullscreens it`, async () => {
       const { page, problems, context } = await open("today", { viewport });
-      const bar = page.getByRole("region", { name: "Rika" });
-      await bar.waitFor();
-      await assertAtlasFits(page, `${size} initial`);
+      await page.getByRole("navigation", { name: "Workspace groups" }).getByRole("button", { name: "Brain" }).click();
+      await page.waitForFunction(() => location.hash === "#brain");
+      await assertAtlasFits(page, `${size} Brain`);
+      await assertReachable(page, "[data-home-corner]", `${size} Brain corners`);
+      assert.equal(await page.locator(".rika-bar").count(), 0, `${size}: a Rika bar is drawn`);
       assert.equal(await page.locator('[data-kitty-panel="dock"], .dock-handle, .dock-pill, [aria-label="Dock"]').count(), 0, `${size}: a dock is rendered`);
-      assert.equal(await page.getByRole("button", { name: /dock/i }).count(), 0, `${size}: a dock control is rendered`);
-      const box = await rect(bar);
-      assert.deepEqual([box.left, box.width, Math.round(box.bottom)], [0, viewport.width, viewport.height], `${size}: the bar is not along the bottom`);
-      assert.ok(box.height <= 60, `${size}: the bar is not slim (${box.height}px)`);
-      assert.equal(await visibleBottom(page), viewport.height - Math.round(box.height), `${size}: the page does not reserve exactly the bar`);
-      const atlas = await rect(page.locator(".atlas"));
-      assert.ok(atlas.bottom <= box.top + 1 && atlas.bottom >= box.top - 24, `${size}: the atlas ends at ${atlas.bottom}, not just above the bar at ${box.top}`);
       const stage = page.locator('[data-kitty-panel="graph"]');
       await stage.focus();
       await page.keyboard.press("f");
@@ -263,16 +256,28 @@ describe("the Brain home fills the window above the Rika bar", () => {
       await fitted(page);
       const full = await rect(stage);
       assert.deepEqual([full.top, full.left, full.width, full.height], [0, 0, viewport.width, viewport.height]);
-      // Hidden, the bar leaves the accessibility tree, so it is found by its class.
-      assert.equal(await page.locator(".rika-bar").evaluate((node) => getComputedStyle(node).visibility), "hidden", `${size}: the bar shows over the fullscreen panel`);
       await page.keyboard.press("Escape");
       await assertAtlasFits(page, `${size} after Escape`);
-      await assertSidebarReachable(page, `${size} after Escape`);
-      assert.equal(await page.evaluate(() => localStorage.getItem("kitty.dock")), null, `${size}: the retired dock state was written`);
       assert.deepEqual(problems, []);
       await context.close();
     });
   }
+
+  test("core and the Brain: the Brain view draws the pack's Brain", async () => {
+    const { page, problems, context } = await open("brain", { modules: ["brain"] });
+    await assertAtlasFits(page, "core and the Brain");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("without the Brain module #brain is not a place: it says so and stays home", async () => {
+    const { page, problems, context } = await open("brain", { modules: NO_BRAIN });
+    await page.locator(".home").waitFor();
+    await page.waitForFunction(() => location.hash === "#today");
+    await page.getByRole("status").filter({ hasText: /Brain belongs to the Brain module/ }).waitFor();
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
 });
 
 /** WCAG contrast of two [r, g, b] colors. */
@@ -338,7 +343,10 @@ describe("selected job views stay readable", () => {
         const views = page.getByRole("navigation", { name: "Jobs view" });
         const map = views.getByRole("button", { name: "Map", exact: true });
         const list = views.getByRole("button", { name: "List", exact: true });
-        await assertSelection(page, map, list, `${themeName} ${viewport.width} initial`);
+        await assertSelection(page, list, map, `${themeName} ${viewport.width} initial`);
+        await map.click();
+        await page.mouse.move(0, 0);
+        await assertSelection(page, map, list, `${themeName} ${viewport.width} after choosing Map first`);
         await list.focus();
         await page.keyboard.press("Enter");
         await page.waitForFunction(() => document.querySelector('nav[aria-label="Jobs view"] button:nth-child(2)')?.getAttribute("aria-pressed") === "true");
@@ -357,7 +365,7 @@ describe("selected job views stay readable", () => {
 });
 
 describe("type system", () => {
-  test("the page title is Fraunces; headings and labels are Inter, never italic; the wordmark is Fredoka", async () => {
+  test("the title, headings and labels share the text face at 16px, never italic; the wordmark is Fredoka", async () => {
     const { page, problems, context } = await open("settings");
     await page.locator("h1").first().waitFor();
     const type = await page.evaluate(async () => {
@@ -383,14 +391,11 @@ describe("type system", () => {
         loadedFamilies: [...document.fonts].filter((f) => f.status === "loaded").map((f) => f.family.replace(/["']/g, "")),
       };
     });
-    assert.equal(type.body, "13px");
-    assert.equal(type.title?.family, "Fraunces Variable");
-    assert.equal(type.heading?.family, "Inter Variable");
-    assert.equal(type.panel?.family, "Inter Variable");
-    assert.equal(type.label?.family, "Inter Variable");
+    assert.equal(type.body, "16px");
+    for (const part of ["title", "heading", "panel", "label"]) assert.equal(type[part]?.family, "TeX Gyre Heros", part);
     assert.equal(type.label?.style, "normal");
     assert.equal(type.wordmark?.family, "Fredoka Variable");
-    for (const family of ["Fraunces Variable", "Fredoka Variable", "Inter Variable"])
+    for (const family of ["TeX Gyre Heros", "Fredoka Variable"])
       assert.ok(type.loadedFamilies.includes(family), `${family} was not downloaded and applied (loaded: ${type.loadedFamilies.join(", ")})`);
     for (const family of ["Space Grotesk Variable", "Newsreader Variable"])
       assert.ok(!type.loadedFamilies.includes(family), `${family} is still bundled`);
@@ -463,29 +468,43 @@ describe("command palette", () => {
   });
 });
 
-describe("workspace tabs", () => {
-  test("underline tabs: icon per tab, the active tab underlined in its group colour, close shown on hover", async () => {
+describe("top bar", () => {
+  test("one row: brand left, groups centred without Settings, a tab switcher and a search icon; no tab strip, bell, theme or refresh", async () => {
     const { page, problems, context } = await open("calendar");
-    const bar = page.getByRole("navigation", { name: "Workspace tabs" });
-    await bar.waitFor();
+    const bar = page.locator(".system-bar");
+    const groups = page.getByRole("navigation", { name: "Workspace groups" });
+    await groups.waitFor();
+    assert.deepEqual(await groups.getByRole("button").allTextContents(), ["Brain", "Plan", "Study", "Job search", "Rika"]);
+    assert.equal(await bar.getByRole("button", { name: /Theme|Refresh|^Notifications/ }).count(), 0, "the bar still carries theme, refresh or the bell");
+    assert.ok(!/Search anything/.test(await bar.innerText()), "the search button still has words");
+    assert.equal(await page.locator('.workbench-top [role="tab"], .workbench-top [role="tablist"]').count(), 0, "a tab strip is still drawn");
+    const boxes = await page.evaluate(() => [".wordmark", ".workspace-groups", ".tab-trigger", ".system-command"]
+      .map((selector) => document.querySelector(selector).getBoundingClientRect().toJSON()));
+    const middles = boxes.map((box) => box.top + box.height / 2);
+    assert.ok(Math.max(...middles) - Math.min(...middles) <= 2, `the bar is not one row: ${middles}`);
+    const centre = boxes[1].left + boxes[1].width / 2;
+    assert.ok(Math.abs(centre - DEFAULT.width / 2) <= 24, `the groups are not centred (${centre})`);
+    const trigger = page.getByRole("button", { name: "1 open tab" });
     await page.keyboard.press("Control+t");
-    await page.waitForFunction(() => document.querySelectorAll('[role="tab"]').length === 2);
-    const tabs = bar.locator(".tab");
-    const [first, second] = [tabs.nth(0), tabs.nth(1)];
-    assert.equal(await second.getAttribute("class").then((c) => c.includes("active")), true, "new tab is not active");
-    for (const tab of [first, second]) assert.equal(await tab.locator("svg").count(), 1, "tab has no icon");
-    const underline = (tab) => tab.evaluate((node) => {
-      const after = getComputedStyle(node, "::after");
-      return { height: after.height, color: after.backgroundColor, tone: getComputedStyle(node).getPropertyValue("--tone").trim() };
-    });
-    const active = await underline(second);
-    assert.equal(active.height, "2px", "active tab has no underline");
-    assert.notEqual(active.tone, "", "active tab has no group tone");
-    assert.notEqual((await underline(first)).height, "2px", "inactive tab is underlined");
-    const close = first.locator(".close-tab");
-    assert.equal(await close.evaluate((node) => getComputedStyle(node).visibility), "hidden", "inactive close button shows at rest");
-    await first.hover();
-    assert.equal(await close.evaluate((node) => getComputedStyle(node).visibility), "visible", "close button does not show on hover");
+    await page.getByRole("button", { name: "2 open tabs" }).click();
+    const list = page.getByRole("dialog", { name: "Open tabs" });
+    await list.waitFor();
+    assert.deepEqual((await list.locator(".tab-name").allTextContents()), ["Calendar", "Home"]);
+    assert.equal(await list.locator('.tab-row[aria-current="page"] .tab-name').textContent(), "Home");
+    await list.locator(".tab-pick").first().click();
+    await page.waitForFunction(() => location.hash === "#calendar");
+    await page.getByRole("button", { name: "2 open tabs" }).click();
+    await list.getByRole("button", { name: "Close Home tab" }).click();
+    // The list stays open after a close, so more tabs can go in one visit.
+    await trigger.waitFor();
+    assert.equal(await list.locator(".tab-row").count(), 1);
+    await list.getByRole("button", { name: /^Settings/ }).click();
+    await page.waitForFunction(() => location.hash.startsWith("#settings"));
+    await page.keyboard.press("Control+k");
+    await page.getByRole("dialog", { name: "Search rika!" }).getByRole("combobox").fill("theme");
+    await page.waitForFunction(() => document.querySelector('[role="option"][data-top="true"]')?.textContent?.includes("Theme"));
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => location.hash === "#settings/appearance");
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -511,7 +530,7 @@ describe("empty states", () => {
 });
 
 describe("loaders", () => {
-  test("lists load behind shimmering skeleton rows; whole views behind the theme's loader (Kitty: the blinking cat in a petal spinner)", async () => {
+  test("lists and whole views load behind the point-cloud brain and a caption that names them", async () => {
     const { page, problems, context } = await open("today");
     await page.locator(".wordmark").waitFor();
     let release;
@@ -520,19 +539,22 @@ describe("loaders", () => {
     await page.evaluate(() => (location.hash = "inbox"));
     const rows = page.locator('[role="status"].kitty-loader[data-kind="rows"]');
     await rows.waitFor();
-    assert.ok((await rows.locator(".skeleton-row").count()) >= 3, "too few skeleton rows");
-    assert.match(await rows.getAttribute("aria-label"), /loading/i);
-    assert.notEqual(await rows.locator(".skeleton-row span").first().evaluate((node) => getComputedStyle(node).animationName), "none");
+    assert.equal(await rows.locator(".skeleton-row").count(), 0, "skeleton rows are back");
+    assert.match(await rows.innerText(), /Loading opportunities/);
+    // The brain is drawn: some of its canvas is inked.
+    const inked = (scope) => scope.locator("canvas.brain-cloud").evaluate((node) =>
+      node.getContext("2d").getImageData(0, 0, node.width, node.height).data.some((value, index) => index % 4 === 3 && value > 0));
+    assert.ok(await inked(rows), "the list loader's brain is blank");
     release();
     await rows.waitFor({ state: "detached" });
     let releaseBrain;
     const brainHeld = new Promise((resolve) => (releaseBrain = resolve));
     await page.route((url) => url.pathname === "/api/brain", async (route) => { await brainHeld; await route.continue(); });
-    await page.keyboard.press("Control+t");
+    // The Brain is its own view (home is a dashboard).
+    await page.evaluate(() => (location.hash = "brain"));
     const eyes = page.locator('[role="status"].kitty-loader[data-kind="view"]').filter({ hasText: "Waking the brain…" });
     await eyes.waitFor();
-    assert.equal(await eyes.locator(".eye").count(), 2);
-    assert.notEqual(await eyes.locator(".eye").first().evaluate((node) => getComputedStyle(node).animationName), "none", "eyes do not blink");
+    assert.ok(await inked(eyes), "the view loader's brain is blank");
     releaseBrain();
     await eyes.waitFor({ state: "detached" });
     assert.deepEqual(problems, []);
@@ -782,8 +804,8 @@ describe("study focus-first", () => {
     assert.ok(Math.abs((area.top + area.bottom) / 2 - (card.top + card.bottom) / 2) < 24, "the timer is not centred vertically");
     const overflow = await page.evaluate(() => document.documentElement.scrollHeight - innerHeight);
     assert.ok(overflow <= 1, `the Study page scrolls ${overflow}px at 1440×900`);
-    const floor = await visibleBottom(page);
-    assert.ok(area.bottom <= floor && area.bottom >= floor - 20, `the session page ends at ${area.bottom}, not just above the Rika bar at ${floor}`);
+    const floor = await page.evaluate(() => innerHeight);
+    assert.ok(area.bottom <= floor && area.bottom >= floor - 20, `the session page ends at ${area.bottom}, not at the window's foot ${floor}`);
     for (const name of ["Subjects & tasks", "Guide & notes"]) {
       const edge = page.getByRole("button", { name, exact: true });
       assert.ok(await edge.isVisible(), `${name} edge tab is hidden`);
@@ -1062,120 +1084,88 @@ describe("study streak", () => {
   });
 });
 
-describe("home rails", () => {
+describe("home dashboard", () => {
   for (const viewport of [DEFAULT, SCALED_MINIMUM]) {
-    test(`home at ${viewport.width}×${viewport.height}: widgets only in both rails around the Brain; Sections and the look switch sit in the stage's corner`, async () => {
+    test(`home at ${viewport.width}×${viewport.height}: the day's widgets on the left, Rika filling the right-hand column`, async () => {
       const { page, problems, context } = await open("today", { viewport });
-      const left = page.getByRole("complementary", { name: "Home widgets" });
-      const right = page.getByRole("complementary", { name: "Activity" });
-      const stage = page.locator('[data-kitty-panel="graph"]');
-      await Promise.all([left.waitFor(), right.waitFor(), stage.waitFor()]);
-      const [l, s, r] = await Promise.all([rect(left), rect(stage), rect(right)]);
-      assert.ok(l.right <= s.left && s.right <= r.left, `rails do not flank the atlas: ${l.left}-${l.right} | ${s.left}-${s.right} | ${r.left}-${r.right}`);
-      assert.ok(s.width > l.width && s.width > r.width, `the atlas (${s.width}px) is not the widest column`);
-      for (const [name, box] of [["left", l], ["right", r]])
-        assert.ok(Math.abs(box.top - s.top) <= 1 && Math.abs(box.bottom - s.bottom) <= 1, `${name} rail is not as tall as the atlas`);
-      // The rails hold only widgets: the morning brief, Today and Quick note, Agents and Up next.
-      const titles = (rail) => rail.locator(":scope > section h3").allInnerTexts();
-      await left.getByRole("region", { name: "Morning brief" }).waitFor();
-      assert.deepEqual(await titles(left), ["Morning brief", "Today", "Quick note"]);
-      assert.deepEqual(await titles(right), ["Agents", "Up next"]);
-      for (const rail of [left, right]) {
-        assert.equal(await rail.getByRole("searchbox").count(), 0, "a rail still holds the section search");
-        assert.equal(await rail.getByRole("navigation").count(), 0, "a rail still holds the Sections list");
-        assert.ok(["auto", "scroll"].includes(await rail.evaluate((node) => getComputedStyle(node).overflowY)), "a rail does not scroll on its own");
-      }
+      const board = page.getByRole("region", { name: "Home widgets" });
+      const panel = page.locator(".home").getByRole("region", { name: "Rika" });
+      await Promise.all([board.waitFor(), panel.waitFor()]);
+      await board.getByRole("region", { name: "Up next" }).waitFor();
+      const [b, r, home] = await Promise.all([rect(board), rect(panel), rect(page.locator(".home"))]);
+      // Home keeps the page's side margins (its padding); Rika fills the right-hand column inside them.
+      const pad = await page.locator(".home").evaluate((node) => { const s = getComputedStyle(node); return { right: parseFloat(s.paddingRight), top: parseFloat(s.paddingTop) }; });
+      assert.ok(b.right <= r.left, `the widgets and Rika overlap: ${b.left}-${b.right} | ${r.left}-${r.right}`);
+      assert.ok(Math.abs(r.right - (home.right - pad.right)) <= 1 && Math.abs(r.top - (home.top + pad.top)) <= 1 && Math.abs(r.bottom - home.bottom) <= 1, "Rika does not fill the right-hand column");
+      assert.ok(r.width >= 300, `the Rika panel is only ${r.width}px wide`);
+      // Design review: fewer, larger widgets. The brief is Rika's chip, sections are in search,
+      // agents show only while a session runs (the demo has none).
+      const titles = await board.locator(".home-widget > header h3").allInnerTexts();
+      // The demo has an agent session to show; a real workspace shows it once usage is switched on.
+      assert.deepEqual(titles, ["Today", "Quick note", "Focus", "Up next", "Agent session"]);
+      // Two columns of widgets when there is room, one when there is not.
+      const lefts = new Set(await board.locator(".column").evaluateAll((nodes) => nodes.map((node) => Math.round(node.getBoundingClientRect().left))));
+      assert.equal(lefts.size, viewport.width >= 1200 ? 2 : 1, `${lefts.size} widget columns at ${viewport.width}px`);
+      assert.ok(["auto", "scroll"].includes(await board.evaluate((node) => getComputedStyle(node).overflowY)), "the widgets do not scroll on their own");
       assert.equal(await page.evaluate(() => document.scrollingElement.scrollTop), 0);
-
-      // The corner control row: Sections top-left, the Brain/2D switch top-right beside View.
-      const sections = stage.getByRole("button", { name: /^Sections \d/ });
-      const looks = stage.getByRole("group", { name: "Home look" });
-      const view = stage.getByRole("button", { name: "View" });
-      await Promise.all([sections.waitFor(), looks.waitFor(), view.waitFor()]);
-      const [sb, lb, vb] = await Promise.all([rect(sections), rect(looks), rect(view)]);
-      assert.ok(sb.top - s.top <= 20 && sb.left - s.left <= 20, `Sections is not in the stage's top-left corner: ${JSON.stringify(sb)}`);
-      assert.ok(lb.top - s.top <= 20 && lb.right <= vb.left && vb.left - lb.right <= 12, "the look switch is not beside View");
-      assert.ok(Math.abs((lb.top + lb.bottom) / 2 - (vb.top + vb.bottom) / 2) <= 2, "the look switch and View are not one row");
-      for (const box of [sb, lb, vb]) assert.equal(Math.round(box.height), 28, "corner controls are not 28px");
-
-      // "/" opens the Sections popover on its search; the list filters, and each row's ⋯ opens, locates, hides.
+      // "/" asks Rika.
       await page.locator("body").press("/");
-      const popover = page.getByRole("dialog", { name: "Sections" });
-      await popover.waitFor();
-      const find = popover.getByRole("searchbox", { name: "Find a section" });
-      assert.ok(await find.evaluate((node) => node === document.activeElement), "the section search is not focused");
-      assert.ok(await popover.getByRole("link", { name: /^Calendar\b/ }).isVisible());
-      await find.fill("Flash");
-      await popover.getByRole("link", { name: /^Flashcards\b/ }).waitFor();
-      assert.equal(await popover.getByRole("link", { name: /^Calendar\b/ }).count(), 0, "the list does not filter");
-      await popover.getByRole("button", { name: "Flashcards options" }).click();
-      const menu = page.getByRole("menu", { name: "Flashcards options" });
-      assert.deepEqual(await menu.getByRole("menuitem").allInnerTexts(), ["Open", "Show on the map", "Hide from the atlas"]);
-      await page.keyboard.press("Escape");
-      await menu.waitFor({ state: "detached" });
-      assert.ok(await popover.isVisible(), "Escape in the row menu closed the Sections popover");
-      await find.press("Escape");
-      await popover.waitFor({ state: "detached" });
-      await assertAtlasFits(page, `${viewport.width} rails`);
+      await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Ask Rika");
+      assert.ok(await panel.getByRole("textbox", { name: "Ask Rika" }).evaluate((node) => node === document.activeElement));
+      await assertFits(page, ".home", `${viewport.width} home`);
       assert.deepEqual(problems, []);
       await context.close();
     });
   }
 
-  test("the side rail collapses to an edge strip by its chevron or ], the Brain widens and refits, and the choice is remembered", async () => {
+  test("home has no Sections link wall; Ctrl K finds every section", async () => {
     const { page, problems, context } = await open("today");
-    const rail = page.getByRole("complementary", { name: "Activity" });
-    const stage = page.locator('[data-kitty-panel="graph"]');
-    const toggle = page.getByRole("button", { name: "Side widgets" });
-    await Promise.all([rail.waitFor(), toggle.waitFor()]);
-    await assertAtlasFits(page, "expanded");
-    assert.equal(await toggle.getAttribute("aria-expanded"), "true");
-    // The chevron sits on the rail's inner edge, between the stage and the rail.
-    const [railBox, chevron, wide] = await Promise.all([rect(rail), rect(toggle), rect(stage)]);
-    assert.ok(chevron.left >= wide.right - 12 && chevron.right <= railBox.left + 12, `the chevron is not on the rail's inner edge: ${JSON.stringify(chevron)}`);
-    assert.match(await toggle.getAttribute("title"), /\]/, "the chevron's tooltip does not name its shortcut");
-
-    await toggle.click();
-    await rail.waitFor({ state: "detached" });
-    assert.equal(await toggle.getAttribute("aria-expanded"), "false");
-    const strip = await rect(page.locator(".atlas .side"));
-    assert.ok(strip.width > 0 && strip.width <= 24, `the collapsed rail is ${strip.width}px, not a thin strip`);
-    await assertAtlasFits(page, "collapsed");
-    const grown = await rect(stage);
-    assert.ok(grown.width - wide.width >= 150, `the Brain only grew ${grown.width - wide.width}px`);
-    assert.ok(strip.left - grown.right <= 14, "the Brain does not fill the rail's space");
-    assert.equal(await page.evaluate((key) => localStorage.getItem(key), RAIL_KEY), "collapsed");
-
-    await page.reload();
-    await page.locator(".atlas .side.collapsed").waitFor();
-    assert.equal(await rail.count(), 0, "the collapsed rail is not remembered");
-    await assertAtlasFits(page, "collapsed after reload");
-
-    // ] toggles it from anywhere on home except while typing.
-    await page.getByRole("textbox", { name: "Quick note" }).click();
-    await page.keyboard.press("]");
-    assert.equal(await rail.count(), 0, "] typed into a note toggled the rail");
-    await page.getByRole("textbox", { name: "Quick note" }).fill("");
-    await page.keyboard.press("Escape");
-    await page.keyboard.press("]");
-    await rail.waitFor();
-    assert.equal(await page.getByRole("button", { name: "Side widgets" }).getAttribute("aria-expanded"), "true");
-    await assertAtlasFits(page, "expanded again");
-    assert.equal(Math.round((await rect(stage)).width), Math.round(wide.width), "the Brain did not return to its width");
-    assert.equal(await page.evaluate((key) => localStorage.getItem(key), RAIL_KEY), "expanded");
+    await page.getByRole("region", { name: "Home widgets" }).waitFor();
+    assert.equal(await page.getByRole("navigation", { name: "Workspace sections" }).count(), 0, "home still lists every section");
+    await page.keyboard.press("Control+k");
+    const palette = page.getByRole("dialog", { name: "Search rika!" });
+    await palette.getByRole("combobox").fill("Flash");
+    await palette.getByRole("option", { name: /Flashcards/ }).first().waitFor();
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => location.hash === "#flashcards");
     assert.deepEqual(problems, []);
     await context.close();
   });
 
-  test("Ctrl K still finds every section without the rail list", async () => {
+  test("with every module off, home says so in one quiet line that leads to Settings → Modules", async () => {
+    const { page, problems, context } = await open("today", { modules: [] });
+    const line = page.locator(".home").getByText("Modules are off.");
+    await line.waitFor();
+    assert.equal(await page.getByRole("heading", { name: "Modules are off" }).count(), 0, "the notice is still a widget");
+    await page.getByRole("button", { name: "Turn some on" }).click();
+    await page.waitForFunction(() => location.hash === "#settings/modules");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("on home the panel stands in for the drawer and toasts; elsewhere Ctrl + J opens the drawer", async () => {
     const { page, problems, context } = await open("today");
-    await page.locator(".atlas").waitFor();
-    await page.keyboard.press("Control+k");
-    const palette = page.getByRole("dialog", { name: "Search rika!" });
-    await palette.getByRole("combobox").fill("Calen");
-    await palette.getByRole("option", { name: /Calendar/ }).first().waitFor();
-    await page.keyboard.press("Enter");
+    const panel = page.locator(".home").getByRole("region", { name: "Rika" });
+    const field = panel.getByRole("textbox", { name: "Ask Rika" });
+    await field.fill("add a task Water the plants");
+    await field.press("Enter");
+    await panel.getByRole("article").filter({ hasText: /Water the plants/i }).first().waitFor();
+    assert.equal(await page.getByRole("list", { name: "Rika replies" }).count(), 0, "a reply toast showed beside the panel");
+    await page.locator("body").click({ position: { x: 5, y: 5 } });
+    await page.keyboard.press("Control+j");
+    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Ask Rika");
+    assert.equal(await page.getByRole("dialog", { name: "Rika" }).count(), 0, "Ctrl + J opened the drawer over the panel");
+    await page.getByRole("navigation", { name: "Workspace groups" }).getByRole("button", { name: "Plan" }).click();
+    await page.waitForFunction(() => location.hash === "#goals");
+    await page.evaluate(() => (location.hash = "calendar"));
     await page.waitForFunction(() => location.hash === "#calendar");
+    await page.keyboard.press("Control+j");
+    const drawer = page.getByRole("dialog", { name: "Rika" });
+    await drawer.getByText("add a task Water the plants").waitFor();
+    assert.ok(await drawer.getByRole("textbox", { name: "Ask Rika" }).evaluate((node) => node === document.activeElement), "the drawer's field is not focused");
+    // Back home the drawer gives way to the panel.
+    await page.getByRole("link", { name: "rika! home" }).click();
+    await drawer.waitFor({ state: "detached" });
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -1207,13 +1197,13 @@ describe("home widgets", () => {
     await page.route((url) => url.pathname === "/api/calendar", (route) => route.fulfill({ json: calendar() }));
     await page.route((url) => url.pathname === "/api/terminal/activity", (route) => route.fulfill({ json: ACTIVITY }));
     await page.reload();
-    const left = page.getByRole("complementary", { name: "Home widgets" });
+    const left = page.getByRole("region", { name: "Home widgets" });
     const agenda = left.getByRole("region", { name: "Today" });
     const note = left.getByRole("region", { name: "Quick note" });
-    const agents = page.getByRole("complementary", { name: "Activity" }).getByRole("region", { name: "Agents" });
+    const agents = left.getByRole("region", { name: "Agents" });
     await Promise.all([agenda.waitFor(), note.waitFor(), agents.waitFor()]);
 
-    // Q19 hairline minimal: no fill or box, a rule above, a small Inter title, any tag on the right.
+    // Q19 hairline minimal: no fill or box, a rule above, a large title in the text face (design review), any tag on the right.
     for (const widget of [agenda, note, agents]) {
       const frame = await widget.evaluate((node) => {
         const style = getComputedStyle(node);
@@ -1228,8 +1218,8 @@ describe("home widgets", () => {
       assert.equal(frame.fill, "rgba(0, 0, 0, 0)", "widget has a fill");
       assert.equal(frame.top, "1px");
       assert.deepEqual(frame.sides, ["0px", "0px", "0px"], "widget is boxed");
-      assert.match(frame.font, /Inter/);
-      assert.ok(frame.size <= 14, `title is ${frame.size}px`);
+      assert.doesNotMatch(frame.font, /Mono|Fraunces/);
+      assert.ok(frame.size >= 20, `title is only ${frame.size}px`);
       if (frame.eyebrow) assert.ok(frame.eyebrowLeft > frame.titleRight && frame.sameRow, "eyebrow is not on the right of the title");
     }
     // Q9 purpose check: the shortcut is the Save button's tooltip, not a tag; the agents' state is the tag.
@@ -1313,7 +1303,7 @@ describe("home widgets", () => {
         await context.route((url) => url.pathname === "/api/math/sprints/history", (route) => route.fulfill({ json: { sprints: [], streak_days: 0 } }));
       },
     });
-    const upNext = page.getByRole("complementary", { name: "Activity" }).getByRole("region", { name: "Up next" });
+    const upNext = page.getByRole("region", { name: "Home widgets" }).getByRole("region", { name: "Up next" });
     await upNext.getByText("Overdue essay").waitFor();
     const rows = await upNext.getByRole("listitem").allInnerTexts();
     const order = ["Overdue essay", "Flashcards", "Arch problem set", "Finish eigenvalue set", "Northwind Labs"];
@@ -1376,20 +1366,20 @@ describe("appearance settings", () => {
     const titleFont = () => page.getByRole("heading", { level: 1, name: "Settings" }).evaluate((node) => getComputedStyle(node).fontFamily);
     const bodySize = () => page.evaluate(() => getComputedStyle(document.body).fontSize);
 
-    // Defaults: Kitty, Fraunces titles, compact 13px, full motion, a Brain home, 2D section graphs, blossoms, nebula.
-    for (const name of ["Kitty", "Fraunces", "Compact · 13px", "Full", "Brain", "2D", "Nebula"]) assert.equal(await radio(name).isChecked(), true, `${name} is not the default`);
+    // Defaults: Kitty, titles in the text face, Standard text size (16px in Kitty), full motion, a Brain home, 2D section graphs, nebula.
+    for (const name of ["Black", "Plain", "Standard", "Full", "Brain", "2D", "Nebula"]) assert.equal(await radio(name).isChecked(), true, `${name} is not the default`);
     assert.equal(await panel.getByRole("group", { name: "Home" }).getByRole("radio").count(), 2, "home offers Brain and 2D only");
     await radio("2D map").check();
     await prefIs(() => prefs.ui?.home?.look, "2d", "home look not saved to the build");
     await radio("Brain").check();
     await prefIs(() => prefs.ui?.home?.look, "brain", "home look not saved to the build");
     assert.equal(await panel.getByRole("checkbox", { name: /Theme motif/ }).isChecked(), true);
-    assert.match(await titleFont(), /Fraunces/);
-    assert.equal(await bodySize(), "13px");
+    assert.doesNotMatch(await titleFont(), /Fraunces/);
+    assert.equal(await bodySize(), "16px");
 
     // A preset sets every control at once, the app and the preview follow.
     await panel.getByRole("button", { name: /^Minimal/ }).click();
-    for (const name of ["Harness", "Plain", "Compact · 13px", "Reduced", "2D", "Nebula"]) assert.equal(await radio(name).isChecked(), true, `Minimal did not set ${name}`);
+    for (const name of ["Harness", "Plain", "Standard", "Reduced", "2D", "Nebula"]) assert.equal(await radio(name).isChecked(), true, `Minimal did not set ${name}`);
     assert.equal(await panel.getByRole("checkbox", { name: /Theme motif/ }).isChecked(), false);
     assert.equal(await panel.getByRole("button", { name: /^Minimal/ }).getAttribute("aria-pressed"), "true");
     assert.equal(await root("theme"), "harness");
@@ -1400,7 +1390,7 @@ describe("appearance settings", () => {
     assert.equal(prefs.theme?.base, "harness");
 
     // Any single setting still changes afterwards; the preset no longer matches.
-    await radio("Comfortable · 14px").check();
+    await radio("Larger").check();
     assert.equal(await bodySize(), "14px");
     assert.equal(await preview.getAttribute("data-density"), "comfortable");
     assert.equal(await panel.getByRole("button", { name: /^Minimal/ }).getAttribute("aria-pressed"), "false");
@@ -1580,24 +1570,29 @@ describe("calendar redesign", () => {
     return [1, 3, 5].map((i) => parseInt(value.slice(i, i + 2), 16)).join(",");
   }));
 
-  test("week events are filled palette blocks with readable text and a blossom now-marker", async () => {
+  test("week events are soft tints of a palette colour with a full-colour bar and readable text; now is one line with its time in the gutter", async () => {
     const { page, problems, context } = await open("calendar");
     await page.getByRole("region", { name: "Week calendar" }).waitFor();
     await addEvent(page, { title: "Pastel standup", start: at(0, 10), end: at(0, 11) });
     await page.reload();
     const block = page.getByRole("group", { name: "Pastel standup" }).first();
     await block.waitFor();
-    for (const [theme, minimum] of [["kitty", 4.5], ["gruvbox", 3], ["one-dark", 3]]) {
+    for (const [theme, minimum] of [["kitty", 4.5], ["gruvbox", 4.5], ["one-dark", 4.5]]) {
       await setTheme(page, theme);
       const { ratio, alpha } = await textContrast(block);
-      assert.equal(alpha, 1, `${theme}: block is not a solid fill`);
+      assert.equal(alpha, 1, `${theme}: the grid shows through the block`);
       assert.ok(ratio >= minimum, `${theme}: block text contrast ${ratio.toFixed(2)} < ${minimum}`);
     }
-    const { fill } = await textContrast(block);
-    assert.ok((await palette(page)).includes(fill), `block fill ${fill} is not a theme palette colour`);
+    const look = await block.evaluate((node) => {
+      const style = getComputedStyle(node);
+      return { bar: style.borderLeftColor.match(/\d+/g).slice(0, 3).join(","), width: style.borderLeftWidth, radius: style.borderTopRightRadius, outline: style.borderTopWidth };
+    });
+    assert.ok((await palette(page)).includes(look.bar), `block bar ${look.bar} is not a theme palette colour`);
+    assert.notEqual((await textContrast(block)).fill, look.bar, "the block should be a tint of its colour, not a solid fill");
+    assert.deepEqual([look.width, look.radius, look.outline], ["3px", "8px", "0px"]);
     const now = page.getByRole("img", { name: /^Now / });
-    assert.equal(await now.count(), 1, "today has no labelled now-marker");
-    assert.match(await now.textContent(), /✿/, "now-marker has no blossom");
+    assert.equal(await now.count(), 1, "today has no labelled now line");
+    assert.match(await page.locator(".time-axis .now-time").textContent(), /^\d\d:\d\d$/, "the gutter does not show the time beside the now line");
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -1610,8 +1605,8 @@ describe("calendar redesign", () => {
     const d = new Date();
     const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
     const slotButton = (time) => page.getByRole("button", { name: `Create event ${day} ${time}`, exact: true });
-    // A slot (Enter, a click or a drag) prefills the pill's quick add with its time.
-    const quick = page.getByRole("dialog", { name: "Add event or task" });
+    // A slot (Enter, a click or a drag) prefills the header's quick add with its time.
+    const quick = page.getByRole("dialog", { name: "New event" });
     await slotButton("14:00").focus();
     await page.keyboard.press("ArrowDown");
     await page.keyboard.press("Enter");
@@ -1629,7 +1624,7 @@ describe("calendar redesign", () => {
     await page.keyboard.press("Escape");
     await quick.waitFor({ state: "detached" });
     const block = page.getByRole("group", { name: "Move me" });
-    // Native automated drags are flaky in Chromium (and cancel on the tiny ↔ handle); dispatch the same DOM events.
+    // Native automated drags are flaky in Chromium (and cancel on the thin resize edge); dispatch the same DOM events.
     const dragOnto = async (source, target) => {
       const transfer = await page.evaluateHandle(() => new DataTransfer());
       await source.dispatchEvent("dragstart", { dataTransfer: transfer });
@@ -1645,7 +1640,7 @@ describe("calendar redesign", () => {
     await context.close();
   });
 
-  test("month cells show up to four calendar dots and clicking a date fills the side agenda", async () => {
+  test("month cells list up to three one-line events and '+N more', which fills the rail's selected day", async () => {
     const { page, problems, context } = await open("calendar");
     await page.getByRole("region", { name: "Week calendar" }).waitFor();
     const now = new Date();
@@ -1658,37 +1653,44 @@ describe("calendar redesign", () => {
     const cell = grid.getByRole("gridcell", { name: / 20, 5 events$/ }).first();
     await cell.waitFor();
     assert.match(await cell.getAttribute("aria-label"), /5 events/);
-    assert.equal(await cell.locator(".dots > *").count(), 4, "a busy day should show four dots");
-    assert.equal(await grid.getByText("Dot 8").count(), 0, "month cells still list event titles");
-    await cell.click();
-    const agenda = page.getByRole("complementary", { name: "Day agenda" });
-    await agenda.getByRole("heading", { name: "5 events" }).waitFor();
+    const chips = cell.getByRole("button", { name: /^Dot \d+/ });
+    assert.equal(await chips.count(), 3, "a busy day should list three events");
+    assert.match(await chips.first().textContent(), /Dot 8\s*08:00/);
+    assert.ok(await chips.first().evaluate((node) => node.offsetHeight) <= 24, "a month event takes more than one line");
+    // The grid takes the calendar's whole width; the picked day's agenda is in the rail.
+    const [gridBox, mainBox] = [await grid.boundingBox(), await page.locator(".calendar-main").boundingBox()];
+    assert.ok(gridBox.width >= mainBox.width - 2, `the month grid is ${gridBox.width}px of ${mainBox.width}px`);
+    await cell.getByRole("button", { name: "+2 more" }).click();
+    const agenda = page.getByRole("complementary", { name: "Selected date plan" }).getByRole("region", { name: "Selected day" });
     const items = agenda.getByRole("button", { name: /Dot \d+/ });
+    await items.nth(4).waitFor();
     assert.equal(await items.count(), 5);
-    assert.match(await items.nth(2).textContent(), /12:00[\s\S]*Dot 12[\s\S]*Room 5/);
+    assert.match(await items.nth(2).textContent(), /Dot 12[\s\S]*12:00[\s\S]*Room 5/);
     assert.deepEqual(problems, []);
     await context.close();
   });
 
-  test("a floating range pill switches views and D/W/M/A, J/K and T work while the calendar has focus", async () => {
+  test("one header row above the grid: the range, ‹ Today ›, the views as words, Calendars and New event; D/W/M/A, J/K and T work while the calendar has focus", async () => {
     const { page, problems, context } = await open("calendar");
     const week = page.getByRole("region", { name: "Week calendar" });
     await week.waitFor();
     assert.equal(await page.getByRole("combobox", { name: "Calendar view" }).count(), 0, "native view select is still shown");
-    const pill = page.getByRole("toolbar", { name: "Calendar range" });
-    await page.locator(".calendar-main").evaluate((node) => node.scrollIntoView());
-    const box = await pill.boundingBox();
-    const main = await page.locator(".calendar-main").boundingBox();
-    const floor = Math.min(main.y + main.height, 850);
-    assert.ok(box.y + box.height <= floor && box.y >= floor - 70,
-      `range pill (${box.y}) does not float over the visible bottom of the calendar (${floor})`);
-    assert.ok(Math.abs(box.x + box.width / 2 - (main.x + main.width / 2)) < 4, "range pill is not centred over the calendar");
+    const bar = page.getByRole("toolbar", { name: "Calendar range" });
+    // The row sits above the grid, which starts right under it; nothing floats over the grid.
+    const [box, grid] = [await bar.boundingBox(), await week.boundingBox()];
+    assert.ok(box.y + box.height <= grid.y && grid.y - (box.y + box.height) <= 24, `the grid (${grid.y}) does not start right under the header row (${box.y + box.height})`);
+    assert.equal(await bar.evaluate((node) => getComputedStyle(node).position), "static");
+    assert.deepEqual(await bar.getByRole("navigation", { name: "Calendar view" }).getByRole("button").allTextContents(), ["Day", "Week", "Month", "Agenda", "Year", "Plan"]);
+    const order = await bar.getByRole("button").evaluateAll((nodes) => nodes.map((node) => node.textContent.trim()));
+    assert.deepEqual([order.at(-2), order.at(-1)], ["Calendars", "New event"]);
+    assert.equal(await page.getByText("Calendars & display settings").count(), 0, "the settings disclosure still sits above the grid");
     const views = ["Day", "Week", "Month", "Agenda"];
-    for (const name of views) assert.equal(await pill.getByRole("button", { name, exact: true }).getAttribute("aria-keyshortcuts"), name[0]);
-    await pill.getByRole("button", { name: "Month", exact: true }).click();
+    for (const name of views) assert.equal(await bar.getByRole("button", { name, exact: true }).getAttribute("aria-keyshortcuts"), name[0]);
+    await bar.getByRole("button", { name: "Month", exact: true }).click();
     await page.getByRole("grid", { name: "Month calendar" }).waitFor();
-    assert.equal(await pill.getByRole("button", { name: "Month", exact: true }).getAttribute("aria-pressed"), "true");
-    const range = pill.getByRole("button", { name: /Back to today/ });
+    assert.equal(await bar.getByRole("button", { name: "Month", exact: true }).getAttribute("aria-pressed"), "true");
+    assert.equal(await bar.getByRole("heading").count(), 1, "the range is not the row's title");
+    const range = bar.locator(".range");
     await page.getByRole("button", { name: /^Select \d{4}-/ }).first().focus();
     await page.keyboard.press("w");
     await week.waitFor();
@@ -1700,6 +1702,10 @@ describe("calendar redesign", () => {
     await page.keyboard.press("k");
     await page.keyboard.press("t");
     await page.waitForFunction((old) => document.querySelector('[aria-label="Calendar range"] .range')?.textContent === old, thisWeek);
+    await bar.getByRole("button", { name: "Next week" }).click();
+    await page.waitForFunction((old) => document.querySelector('[aria-label="Calendar range"] .range')?.textContent !== old, thisWeek);
+    await bar.getByRole("button", { name: "Today", exact: true }).click();
+    await page.waitForFunction((old) => document.querySelector('[aria-label="Calendar range"] .range')?.textContent === old, thisWeek);
     await page.keyboard.press("d");
     await page.getByRole("region", { name: "Day calendar" }).waitFor();
     await page.keyboard.press("a");
@@ -1707,8 +1713,104 @@ describe("calendar redesign", () => {
     await page.getByRole("searchbox").fill("dwm");
     assert.equal(await page.getByRole("region", { name: "Agenda" }).count(), 1, "typing in search switched views");
     // Shortcuts live in tooltips now that the Shortcuts fold-out is gone.
-    assert.equal(await pill.getByRole("button", { name: "Day", exact: true }).getAttribute("title"), "Day (D)");
-    assert.equal(await pill.getByRole("button", { name: "Add event or task" }).getAttribute("aria-keyshortcuts"), "N");
+    assert.equal(await bar.getByRole("button", { name: "Day", exact: true }).getAttribute("title"), "Day (D)");
+    assert.equal(await bar.getByRole("button", { name: "New event", exact: true }).getAttribute("aria-keyshortcuts"), "N");
+    // Calendars and the display time zone are behind the quiet Calendars button.
+    await bar.getByRole("button", { name: "Calendars", exact: true }).click();
+    const calendars = page.getByRole("dialog", { name: "Calendars" });
+    await calendars.getByRole("checkbox").first().waitFor();
+    await calendars.getByRole("combobox", { name: "Display timezone" }).waitFor();
+    await page.keyboard.press("Escape");
+    await calendars.waitFor({ state: "detached" });
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("the week opens on now with today's number in a filled circle, a one-line zone, hairlines, 58px hours, and an all-day add that shows on hover or focus", async () => {
+    const { page, problems, context } = await open("calendar");
+    const week = page.getByRole("region", { name: "Week calendar" });
+    await week.waitFor();
+    const today = week.getByRole("button", { name: /^Select / }).and(week.locator('[aria-current="date"]'));
+    assert.equal(await today.count(), 1);
+    assert.equal(await week.getByText("Today", { exact: true }).count(), 0, "the header still spells out Today");
+    const mark = await today.evaluate((node) => {
+      const [box, number] = [getComputedStyle(node), getComputedStyle(node.querySelector("strong"))];
+      const ink = getComputedStyle(document.documentElement).getPropertyValue("--ink").trim();
+      const probe = Object.assign(document.createElement("i"), { style: `color:${ink}` });
+      document.body.append(probe);
+      const want = getComputedStyle(probe).color;
+      probe.remove();
+      return { border: box.borderTopWidth, fill: number.backgroundColor === want, round: parseFloat(number.borderTopLeftRadius) >= node.querySelector("strong").offsetHeight / 2 };
+    });
+    assert.deepEqual(mark, { border: "0px", fill: true, round: true });
+    const zone = week.locator(".time-zone");
+    assert.match(await zone.textContent(), /^(GMT|UTC)([+-]\d{1,2}(:\d\d)?)?$/);
+    assert.ok(await zone.evaluate((node) => node.scrollWidth <= node.clientWidth && node.offsetHeight < 60), "the zone wraps in the gutter");
+    // Now is in view: its line, its dot and its time in the gutter.
+    const [line, frame] = [await week.getByRole("img", { name: /^Now / }).boundingBox(), await week.boundingBox()];
+    assert.ok(line.y > frame.y && line.y < frame.y + frame.height, `now (${line.y}) is outside the opened grid (${frame.y}–${frame.y + frame.height})`);
+    const d = new Date();
+    const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const lines = await week.getByRole("group", { name: `${day} 10:00`, exact: true }).evaluate((hour) => {
+      const half = hour.nextElementSibling;
+      return { hour: getComputedStyle(hour).borderTopWidth, half: getComputedStyle(half).borderTopWidth, height: hour.offsetHeight + half.offsetHeight };
+    });
+    assert.deepEqual(lines, { hour: "1px", half: "0px", height: 58 });
+    // The all-day add is hidden until its cell is hovered or it takes focus.
+    const cell = week.getByRole("group", { name: `All-day events and tasks on ${day}` });
+    const add = cell.getByRole("button", { name: `Create all-day event on ${day}` });
+    const shown = () => add.evaluate((node) => getComputedStyle(node).opacity);
+    await page.mouse.move(0, 0);
+    assert.equal(await shown(), "0");
+    await cell.hover();
+    assert.equal(await shown(), "1");
+    await page.mouse.move(0, 0);
+    await add.focus();
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Shift+Tab");
+    assert.equal(await shown(), "1", "the add stays hidden from the keyboard");
+    await page.keyboard.press("Enter");
+    await page.getByRole("dialog", { name: "New event" }).getByText("All day").waitFor();
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("no calendar view draws text under 13px, and the rail is plain sections without boxes", async () => {
+    const { page, problems, context } = await open("calendar");
+    await page.getByRole("region", { name: "Week calendar" }).waitFor();
+    await addEvent(page, { title: "Small type", start: at(0, 10), end: at(0, 10, 30) });
+    await page.evaluate(() => fetch("/api/calendar/tasks", { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1", "X-Kitty-Secret": window.__KITTY_UI_SECRET__ },
+      body: JSON.stringify({ title: "Small task", priority: "normal", status: "todo" }) }));
+    await page.reload();
+    const bar = page.getByRole("toolbar", { name: "Calendar range" });
+    await bar.waitFor();
+    for (const name of ["Week", "Day", "Month", "Agenda", "Year", "Plan"]) {
+      await bar.getByRole("button", { name, exact: true }).click();
+      await page.waitForTimeout(300);
+      const small = await page.locator(".calendar-workspace").evaluate((root) => {
+        const found = new Set();
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          const parent = node.parentElement;
+          if (node.textContent.trim() && parent.getClientRects().length && parseFloat(getComputedStyle(parent).fontSize) < 13)
+            found.add(`${parent.className || parent.tagName}: ${node.textContent.trim().slice(0, 20)}`);
+        }
+        return [...found];
+      });
+      assert.deepEqual(small, [], `${name} view draws text under 13px`);
+    }
+    const rail = page.getByRole("complementary", { name: "Selected date plan" });
+    const boxed = await rail.evaluate((node) => [...node.querySelectorAll("section, .mini, .br-panel, .br-card, .tray-task")].filter((part) => {
+      const style = getComputedStyle(part);
+      return parseFloat(style.borderLeftWidth) > 0 || parseFloat(style.borderRightWidth) > 0 || parseFloat(style.borderBottomWidth) > 0;
+    }).length);
+    assert.equal(boxed, 0, "a rail section is still a bordered box");
+    // The tasks section's heading carries its quiet toggle.
+    const tray = rail.getByRole("region", { name: "Tasks to schedule" });
+    await tray.getByRole("button", { name: "Small task" }).waitFor();
+    await tray.getByRole("button", { name: "Hide", exact: true }).click();
+    assert.equal(await tray.getByRole("button", { name: "Small task" }).count(), 0);
+    assert.equal(await tray.getByRole("button", { name: "Show", exact: true }).getAttribute("aria-expanded"), "false");
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -1721,22 +1823,22 @@ describe("calendar redesign", () => {
     await page.evaluate(() => fetch("/api/calendar/tasks", { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1", "X-Kitty-Secret": window.__KITTY_UI_SECRET__ },
       body: JSON.stringify({ title: "Plan me", priority: "normal", status: "todo" }) }));
     await page.reload();
-    const pill = page.getByRole("toolbar", { name: "Calendar range" });
+    const bar = page.getByRole("toolbar", { name: "Calendar range" });
     const tomorrow = new Date(at(1, 12));
     const iso = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, "0")}-${String(tomorrow.getDate()).padStart(2, "0")}`;
 
     // Mini-month navigator: ISO week numbers, a hover preview and click-to-jump.
     const mini = page.getByRole("grid", { name: /^Mini month/ });
     await mini.waitFor();
-    assert.ok(await mini.getByText(/^W\d{1,2}$/).count() >= 4, "no ISO week numbers");
+    assert.ok(await mini.getByRole("rowheader", { name: /^Week \d{1,2}$/ }).count() >= 4, "no ISO week numbers");
     await mini.getByRole("row").nth(2).hover();
-    await page.getByRole("status", { name: "Week preview" }).getByText(/^week \d+ · \d+ events/).waitFor();
+    await page.getByRole("status", { name: "Week preview" }).getByText(/^Week \d+ · \d+ events?/).waitFor();
     await mini.getByRole("gridcell").filter({ hasText: /^15$/ }).first().click();
     await page.getByRole("region", { name: "Week calendar" }).getByRole("button", { name: /^Select \w+, \w+ 15$/ }).waitFor();
     assert.equal(await mini.getByRole("gridcell", { selected: true }).textContent(), "15");
 
     // Year overview: twelve months; a day reads out its booked time on hover and pins on click.
-    await pill.getByRole("button", { name: "Year", exact: true }).click();
+    await bar.getByRole("button", { name: "Year", exact: true }).click();
     const year = page.getByRole("region", { name: "Year overview" });
     await year.waitFor();
     assert.equal(await year.getByRole("group").count(), 12);
@@ -1747,10 +1849,10 @@ describe("calendar redesign", () => {
     assert.equal(await day.getAttribute("aria-pressed"), "true");
 
     // Today plan: Plan drops the task into the first free half hour after the busy morning.
-    await pill.getByRole("button", { name: "Plan", exact: true }).click();
+    await bar.getByRole("button", { name: "Plan", exact: true }).click();
     await page.getByRole("region", { name: "Day plan" }).waitFor();
-    await pill.getByRole("button", { name: /Back to today/ }).click();
-    await pill.getByRole("button", { name: "Next day" }).click();
+    await bar.getByRole("button", { name: "Today", exact: true }).click();
+    await bar.getByRole("button", { name: "Next day" }).click();
     const plan = page.getByRole("region", { name: "Day plan" });
     await plan.getByText("Plan busy 2").waitFor();
     await plan.getByRole("button", { name: "Plan Plan me" }).click();
@@ -1765,9 +1867,9 @@ describe("calendar redesign", () => {
   test("quick add understands 'lunch with Mira fri 12:30' and More opens the new event in the side drawer", async () => {
     const { page, problems, context } = await open("calendar");
     await page.getByRole("region", { name: "Week calendar" }).waitFor();
-    await page.getByRole("toolbar", { name: "Calendar range" }).getByRole("button", { name: "Add event or task" }).click();
-    const quick = page.getByRole("dialog", { name: "Add event or task" });
-    await quick.getByRole("textbox", { name: "Add event or task" }).fill("lunch with Mira fri 12:30 at Café Rose");
+    await page.getByRole("toolbar", { name: "Calendar range" }).getByRole("button", { name: "New event", exact: true }).click();
+    const quick = page.getByRole("dialog", { name: "New event" });
+    await quick.getByRole("textbox", { name: "New event" }).fill("lunch with Mira fri 12:30 at Café Rose");
     await quick.getByText(/^Fri/).waitFor();
     await quick.getByText("12:30–13:30").waitFor();
     await quick.getByRole("button", { name: /^More/ }).click();
@@ -1809,14 +1911,18 @@ describe("calendar redesign", () => {
   });
 });
 
-describe("notes tabs and floating outline", () => {
-  test("browser-style page tabs, the library slides over the page, and 'On this page' jumps to blocks", async () => {
+describe("notes pages as app tabs and floating outline", () => {
+  test("each open page is an app tab (no strip inside Notes), the library slides over the page, and 'On this page' jumps to blocks", async () => {
     const { page, problems, context } = await open("notes");
     const title = page.getByRole("textbox", { name: "Page title" });
     await title.waitFor();
-    const tabs = page.getByRole("navigation", { name: "Open note pages" });
-    assert.equal(await tabs.locator('[aria-current="page"]').count(), 1, "the open page is not the current tab");
-    assert.equal(await tabs.getByRole("button", { name: "New page" }).count(), 1, "tab strip has no + new page");
+    assert.equal(await page.locator(".notes-workspace .note-tabs").count(), 0, "Notes still draws its own tab strip");
+    assert.equal(await page.locator(".notes-heading").getByRole("button", { name: "New page", exact: true }).count(), 1, "the header has no new page");
+    const switcher = page.getByRole("dialog", { name: "Open tabs" });
+    const current = await title.inputValue();
+    await page.locator(".tab-trigger").click();
+    assert.deepEqual(await switcher.locator(".tab-name").allTextContents(), [current || "Untitled"], "the tab is not named after its page");
+    await page.keyboard.press("Escape");
     // The library is a drawer: hidden at rest, sliding over the page without moving it.
     const library = page.getByRole("navigation", { name: "Folders, notebooks and pages" });
     assert.equal(await library.isVisible(), false, "the library is open at rest");
@@ -1829,6 +1935,27 @@ describe("notes tabs and floating outline", () => {
     assert.deepEqual(await rect(title), before, "opening the library moved the page");
     await page.keyboard.press("Escape");
     await library.waitFor({ state: "hidden" });
+    // A new page replaces this tab's page; Ctrl click opens the first page in a new app tab, and
+    // opening it again from the first tab brings that tab forward instead of a second copy.
+    const shows = (name) => page.waitForFunction((name) => [...document.querySelectorAll('[aria-label="Page title"]')].some((node) => node.offsetParent && node.value === name), name);
+    await page.locator(".notes-heading").getByRole("button", { name: "New page", exact: true }).click();
+    await page.waitForFunction((name) => [...document.querySelectorAll('[aria-label="Page title"]')].some((node) => node.offsetParent && node.value !== name), current);
+    await title.fill("Second page");
+    await page.keyboard.press("Control+s");
+    await toggle.click();
+    await library.locator(".page-item", { hasText: current }).first().click({ modifiers: ["Control"] });
+    await page.getByRole("button", { name: "2 open tabs" }).waitFor();
+    await shows(current);
+    await page.keyboard.press("Control+Tab");
+    await shows("Second page");
+    await toggle.click();
+    await library.locator(".page-item", { hasText: current }).first().click();
+    await shows(current);
+    assert.equal(await page.getByRole("button", { name: "2 open tabs" }).count(), 1, "opening an open page made a second copy");
+    await page.locator(".tab-trigger").click();
+    assert.deepEqual(await switcher.locator(".tab-name").allTextContents(), ["Second page", current]);
+    assert.equal(await switcher.locator('.tab-row[aria-current="page"] .tab-name').textContent(), current);
+    await page.keyboard.press("Escape");
     // Write three blocks; the floating outline lists them and jumps to one. The block editor
     // offers "Start writing…" on a page without blocks, else its first block takes the caret.
     const first = page.getByRole("button", { name: /^Start writing/ }).or(page.getByRole("textbox", { name: "Block 1", exact: true })).first();
@@ -2179,7 +2306,7 @@ describe("notes canvas background", () => {
       return node?.width > 0 && Math.abs(node.getBoundingClientRect().width - node.closest(".canvas-stage").clientWidth) < 1;
     });
     const kitty = await sample();
-    assert.equal(kitty.void, "#1a1319", "the default theme is not Kitty");
+    assert.equal(kitty.void, "#000000", "the default theme is not Kitty");
     assert.deepEqual(kitty.colours, [kitty.void], "the empty canvas is not one flat void colour (grid, dots or nebula showed)");
     await page.evaluate(async () => (await import("/src/lib/build.svelte.ts")).setTheme("harness"));
     await page.waitForFunction(() => getComputedStyle(document.documentElement).getPropertyValue("--solid-void").trim() === "#141414");
@@ -2542,7 +2669,7 @@ describe("one mind-map editor", () => {
     const region = await rect(schema), stage = await rect(schema.locator("svg.stage"));
     assert.ok(stage.top - region.top <= 48, `the canvas starts ${Math.round(stage.top - region.top)}px down`);
     assert.ok(Math.abs(stage.bottom - region.bottom) <= 2 && Math.abs(stage.left - region.left) <= 2 && Math.abs(stage.right - region.right) <= 2, "the canvas does not fill the editor");
-    assert.ok(region.bottom >= (await visibleBottom(page)) - 24, `the editor ends at ${Math.round(region.bottom)}px, not just above the Rika bar`);
+    assert.ok(region.bottom >= (await page.evaluate(() => innerHeight)) - 24, `the editor ends at ${Math.round(region.bottom)}px, not at the window's foot`);
     assert.equal(await schema.locator("p:visible").count(), 0, "help text is shown at rest");
     assert.equal(await schema.locator("select, summary, details").count(), 0, "native selects or fold-outs remain");
     // The building tools are the Notes canvas pill itself.
@@ -2606,7 +2733,7 @@ describe("one mind-map editor", () => {
     await create.click();
     const root = schema.locator("svg.stage [data-node].root");
     await root.waitFor();
-    const tab = (await page.getByRole("navigation", { name: "Open note pages" }).locator('[aria-current="page"]').textContent()).trim();
+    const tab = await page.getByRole("textbox", { name: "Page title", includeHidden: true }).inputValue();
     assert.equal((await root.locator("text.label").textContent()).replace(/^▤ /, ""), tab, "the map is not the page's");
     // The same editor (its pill and topic bar), but the page keeps its own header: no second top bar.
     await schema.getByRole("toolbar", { name: "Map tools" }).waitFor();
@@ -2674,23 +2801,37 @@ describe("pipeline swimlanes", () => {
 });
 
 describe("Rika against the demo's scripted responder", () => {
-  const ask = async (page, text) => {
-    const field = page.getByRole("textbox", { name: "Ask Rika" });
-    await field.fill(text);
-    await field.press("Enter");
+  const field = (page) => page.getByRole("textbox", { name: "Ask Rika" });
+  const drawer = (page) => page.getByRole("dialog", { name: "Rika" });
+  /** Away from home Rika's field is in the drawer. Ctrl + J only works once the app has mounted,
+   *  so wait for it rather than pressing into a page that is still loading. */
+  const openDrawer = async (page) => {
+    await page.locator("#main-content").waitFor();
+    if (!(await drawer(page).count())) await page.keyboard.press("Control+j");
+    await drawer(page).waitFor();
   };
-  const drawer = (page) => page.getByRole("dialog", { name: "Rika history" });
+  const ask = async (page, text) => {
+    await page.locator("#main-content").waitFor();
+    if (!(await field(page).count())) await openDrawer(page);
+    await field(page).fill(text);
+    await field(page).press("Enter");
+  };
   const replies = (page) => page.getByRole("list", { name: "Rika replies" });
+  /** The demo's modules plus voice (its own module, whose pack the demo stands in for). */
+  const withVoice = (context) => context.route("**/api/bootstrap", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    if (!body.modules.enabled.includes("voice")) body.modules.enabled.push("voice");
+    await route.fulfill({ response, json: body });
+  });
 
   test("typing a request produces a toast with its tier and a drawer entry; Undo reverts it", async () => {
     const { page, problems, context } = await open("settings");
-    await page.getByRole("region", { name: "Rika" }).waitFor();
     await ask(page, "add a task Buy oat milk");
     const toast = replies(page).getByRole("listitem").filter({ hasText: /oat milk/i });
     await toast.getByRole("button", { name: "Undo" }).waitFor();
     // A phrase runs its tool with no model, so its chip reads Direct (Q13 readout).
     assert.match(await toast.locator("[data-tier]").innerText(), /^direct$/i);
-    await page.keyboard.press("Control+j");
     const history = drawer(page);
     await history.getByText("add a task Buy oat milk").waitFor();
     const action = history.getByRole("article").filter({ hasText: /oat milk/i }).first();
@@ -2703,29 +2844,25 @@ describe("Rika against the demo's scripted responder", () => {
     await context.close();
   });
 
-  test("starting an agent asks first: the drawer opens by itself, Approve continues and closes it", async () => {
+  test("starting an agent asks first; Approve continues the turn", async () => {
     const { page, problems, context } = await open("settings");
-    await page.getByRole("region", { name: "Rika" }).waitFor();
     await ask(page, "start omp to tidy the fixtures");
     const history = drawer(page);
-    const card = history.getByRole("article").filter({ has: page.getByRole("button", { name: "Approve" }) });
-    await card.waitFor();
-    assert.match(await card.innerText(), /approval/i);
+    const pending = history.getByRole("article").filter({ has: page.getByRole("button", { name: "Approve" }) });
+    await pending.waitFor();
+    assert.match(await pending.innerText(), /Needs you/);
+    // Once decided the Approve button is gone, so follow the card by its label, not the button.
+    const card = history.getByRole("article", { name: await pending.getAttribute("aria-label"), exact: true });
     await card.getByRole("button", { name: "Approve" }).click();
-    await history.waitFor({ state: "detached" });
-    await page.keyboard.press("Control+j");
-    await drawer(page).getByText("Approved").first().waitFor();
+    await card.getByText("Approved").waitFor();
     assert.deepEqual(problems, []);
     await context.close();
   });
 
-  test("the demo's running agents collapse to a count past four; the drawer's Agents cards open their windows", async () => {
+  test("the demo's running agents are cards in the drawer's Agents section, which open their windows", async () => {
     const { page, problems, context } = await open("settings");
-    const chips = page.getByRole("group", { name: "Running agents" });
-    const count = chips.getByRole("button", { name: /\d+ agents/ });
-    await count.waitFor();
-    assert.equal(await chips.getByRole("button").count(), 1);
-    await count.click();
+    await openDrawer(page);
+    await drawer(page).getByRole("group", { name: "Rika sections" }).getByRole("button", { name: /^Agents/ }).click();
     const section = drawer(page).getByRole("region", { name: "Agents" });
     await section.getByRole("article").first().waitFor();
     assert.ok(await section.getByRole("article").count() > 4);
@@ -2747,7 +2884,6 @@ describe("Rika against the demo's scripted responder", () => {
         return route.fulfill({ status: 409, json: { error: "Tern is not installed" } });
       }),
     });
-    await page.getByRole("region", { name: "Rika" }).waitFor();
     await ask(page, "open calendar");
     await page.waitForFunction(() => location.hash === "#calendar");
     await page.keyboard.press("Control+k");
@@ -2774,17 +2910,20 @@ describe("Rika against the demo's scripted responder", () => {
 
   test("holding Space hears the demo's canned command; it runs on the fast tier and the demo speaks no reply", async () => {
     const { page, problems, context } = await open("settings", {
-      setup: (context) => context.addInitScript(() => {
-        window.__played = [];
-        HTMLMediaElement.prototype.play = function play() { window.__played.push(this.src); return Promise.resolve(); };
-      }),
+      setup: async (context) => {
+        await withVoice(context);
+        await context.addInitScript(() => {
+          window.__played = [];
+          HTMLMediaElement.prototype.play = function play() { window.__played.push(this.src); return Promise.resolve(); };
+        });
+      },
     });
     const foreign = local(page);
-    const field = page.getByRole("textbox", { name: "Ask Rika" });
-    await field.focus();
+    await openDrawer(page);
+    await field(page).focus();
     await page.keyboard.down(" ");
     await page.waitForFunction(() => document.querySelector('[aria-label="Ask Rika"]').placeholder.startsWith("Add a task"), null, { timeout: 15_000 });
-    assert.equal(await page.getByRole("region", { name: "Rika" }).getAttribute("data-listening"), "command");
+    assert.equal(await page.locator(".rika-field").getAttribute("data-listening"), "command");
     const spoken = page.waitForResponse((response) => /\/api\/rika\/speech\//.test(response.url()), { timeout: 20_000 });
     await page.keyboard.up(" ");
     const toast = replies(page).getByRole("listitem").filter({ hasText: "Added the task Read chapter 3" });
@@ -2804,9 +2943,9 @@ describe("Rika against the demo's scripted responder", () => {
   });
 
   test("a brain dump from Ctrl K plans by area; approving the ticked items makes them and the dump note links them", async () => {
-    const { page, problems, context } = await open("settings");
+    const { page, problems, context } = await open("settings", { setup: withVoice });
     const foreign = local(page);
-    await page.getByRole("region", { name: "Rika" }).waitFor();
+    await page.locator("#main-content").waitFor();
     await page.keyboard.press("Control+k");
     const search = page.getByRole("dialog", { name: "Search rika!" }).getByRole("combobox");
     await search.fill("Brain dump");
@@ -2814,7 +2953,7 @@ describe("Rika against the demo's scripted responder", () => {
     const history = drawer(page);
     const transcript = history.getByRole("region", { name: "Brain dump transcript" });
     await transcript.getByText(/orgo midterm/i).waitFor({ timeout: 20_000 });
-    await history.getByRole("button", { name: "Done · make plan" }).click();
+    await history.getByRole("button", { name: "Make plan" }).click();
     const plan = history.getByRole("article", { name: "Brain dump plan" });
     await plan.waitFor({ timeout: 15_000 });
     assert.deepEqual(await plan.getByRole("region").evaluateAll((nodes) => nodes.map((node) => node.getAttribute("aria-label"))),
@@ -2846,7 +2985,7 @@ describe("Rika against the demo's scripted responder", () => {
     await drawer(page).waitFor({ state: "detached" });
     // The plan's toast lists the first changes and offers one Undo all, which reverts them all.
     const toast = replies(page).getByRole("listitem").filter({ hasText: "Done: 8 items" });
-    await toast.getByText(/^\d+ more in Rika history$/).waitFor();
+    await toast.getByText(/^\d+ more in Rika$/).waitFor();
     await toast.getByRole("button", { name: "Undo all" }).click();
     const undone = () => page.evaluate(async () => {
       const items = (await (await fetch("/api/rika/history", { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).items;
@@ -3287,10 +3426,9 @@ describe("notifications", () => {
     assert.match(await followup.textContent(), /Job search/);
     const box = await stack.boundingBox();
     const viewport = page.viewportSize();
-    // Bottom-right, stacked just above the Rika bar rather than over it.
-    const bar = await page.getByRole("region", { name: "Rika" }).boundingBox();
-    assert.ok(viewport.width - (box.x + box.width) < 40 && box.y + box.height <= bar.y - 8 && bar.y - (box.y + box.height) < 24,
-      `stack ${JSON.stringify(box)} is not bottom-right just above the Rika bar ${JSON.stringify(bar)}`);
+    // Bottom-right, in the window's corner.
+    assert.ok(viewport.width - (box.x + box.width) < 40 && box.y + box.height <= viewport.height - 8 && viewport.height - (box.y + box.height) < 24,
+      `stack ${JSON.stringify(box)} is not in the bottom-right corner`);
     // Stacked, the toasts overlap; hovering fans them out and freezes their countdown.
     const overlap = async () => {
       const [a, b] = [await lecture.boundingBox(), await followup.boundingBox()];
@@ -3319,18 +3457,21 @@ describe("notifications", () => {
     await context.close();
   });
 
-  test("reminder toasts stack above Rika's reply toasts, which sit just above the bar; neither covers the other", async () => {
+  test("reminder toasts stack above Rika's reply toasts, which sit in the corner beside the drawer; neither covers the other", async () => {
     const { page, problems, context } = await open("settings", { setup: (context) => mockReminders(context, { calendar: [LECTURE], job: [FOLLOWUP] }) });
     await page.waitForFunction(() => document.querySelectorAll('[aria-label="New notifications"] > li').length === 2);
-    const field = page.getByRole("textbox", { name: "Ask Rika" });
+    await page.keyboard.press("Control+j");
+    const field = page.getByRole("dialog", { name: "Rika" }).getByRole("textbox", { name: "Ask Rika" });
     await field.fill("add a task Water the plants");
     await field.press("Enter");
     const replies = page.getByRole("list", { name: "Rika replies" });
     await replies.getByRole("listitem").filter({ hasText: /plants/i }).getByRole("button", { name: "Undo" }).waitFor();
-    const [bar, rika, reminders] = await Promise.all([
-      page.getByRole("region", { name: "Rika" }).boundingBox(), replies.boundingBox(), page.getByRole("list", { name: "New notifications" }).boundingBox(),
+    const [side, rika, reminders] = await Promise.all([
+      page.getByRole("dialog", { name: "Rika" }).boundingBox(), replies.boundingBox(), page.getByRole("list", { name: "New notifications" }).boundingBox(),
     ]);
-    assert.ok(rika.y + rika.height <= bar.y - 8 && bar.y - (rika.y + rika.height) < 24, `replies ${JSON.stringify(rika)} are not just above the bar ${JSON.stringify(bar)}`);
+    const foot = page.viewportSize().height;
+    assert.ok(rika.y + rika.height <= foot - 8 && foot - (rika.y + rika.height) < 24, `replies ${JSON.stringify(rika)} are not at the window's foot`);
+    assert.ok(rika.x + rika.width <= side.x, `replies ${JSON.stringify(rika)} are under the drawer ${JSON.stringify(side)}`);
     await page.waitForFunction(() => {
       const [top, bottom] = ['[aria-label="New notifications"]', '[aria-label="Rika replies"]'].map((label) => document.querySelector(label).getBoundingClientRect());
       return top.bottom <= bottom.top && bottom.top - top.bottom < 16;
@@ -3339,14 +3480,14 @@ describe("notifications", () => {
     await context.close();
   });
 
-  test("the bell counts unread notifications and opens a center with All/Unread, sources and mark all read", async () => {
+  test("the tab menu counts unread notifications and opens a center with All/Unread, sources and mark all read", async () => {
     const { page, problems, context } = await open("settings", {
       setup: (context) => mockReminders(context, { calendar: [LECTURE], job: [FOLLOWUP] }),
     });
-    const bell = page.getByRole("button", { name: "Notifications, 2 unread" });
-    await bell.waitFor();
-    assert.equal((await bell.textContent()).trim(), "2");
-    await bell.click();
+    await page.getByRole("button", { name: "1 open tab" }).click();
+    const entry = page.getByRole("dialog", { name: "Open tabs" }).getByRole("button", { name: "Notifications 2 unread" });
+    await entry.waitFor();
+    await entry.click();
     const center = page.getByRole("dialog", { name: "Notification center" });
     await center.waitFor();
     const items = center.getByRole("listitem");
@@ -3360,13 +3501,19 @@ describe("notifications", () => {
     await center.getByRole("tab", { name: /Unread/ }).click();
     assert.equal(await items.count(), 2);
     await center.getByRole("button", { name: "Mark all read" }).click();
-    await page.getByRole("button", { name: "Notifications, 0 unread" }).waitFor();
     await center.getByText("You're all caught up.").waitFor();
     await center.getByRole("tab", { name: "All" }).click();
     assert.equal(await items.count(), 2);
-    // Read state survives a reload.
+    // Read state survives a reload; search opens the center too.
     await page.reload();
-    await page.getByRole("button", { name: "Notifications, 0 unread" }).waitFor();
+    await page.locator(".wordmark").waitFor();
+    await page.keyboard.press("Control+k");
+    await page.getByRole("dialog", { name: "Search rika!" }).getByRole("combobox").fill("notif");
+    await page.waitForFunction(() => document.querySelector('[role="option"][data-top="true"]')?.textContent?.includes("Notifications"));
+    await page.keyboard.press("Enter");
+    await center.waitFor();
+    await center.getByRole("tab", { name: /Unread/ }).click();
+    await center.getByText("You're all caught up.").waitFor();
     await page.keyboard.press("Escape");
     assert.deepEqual(problems, []);
     await context.close();
@@ -3391,7 +3538,9 @@ describe("notifications", () => {
     assert.match(await until.getAttribute("aria-valuetext"), /^\d\d:\d\d$/);
     assert.match(await from.getAttribute("aria-valuetext"), /^\d\d:\d\d$/);
     // Held: nothing toasts, yet the center lists both as held and unread.
-    await page.getByRole("button", { name: "Notifications, 2 unread" }).waitFor();
+    await page.getByRole("button", { name: "1 open tab" }).click();
+    await page.getByRole("dialog", { name: "Open tabs" }).getByRole("button", { name: "Notifications 2 unread" }).waitFor();
+    await page.keyboard.press("Escape");
     assert.equal(await page.locator('[aria-label="New notifications"] > li').count(), 0, "a reminder toasted during quiet hours");
     await panel.getByText("Held now: 1 calendar · 1 job search").waitFor();
     // Pull the end of the window back past now: the held reminders arrive together as the digest.
@@ -3509,7 +3658,7 @@ describe("Google calendar conflicts", () => {
 describe("agent skills against the demo's synthetic catalogue", () => {
   test("All agent skills sits under Plan; turning omp on lists its skills and the drawer's cards show what each uses now", async () => {
     const { page, problems, context } = await open("settings");
-    await page.getByRole("region", { name: "Rika" }).waitFor();
+    await page.locator("#main-content").waitFor();
     await page.keyboard.press("Control+k");
     const search = page.getByRole("dialog", { name: "Search rika!" }).getByRole("combobox");
     await search.fill("All agent skills");
@@ -3524,8 +3673,10 @@ describe("agent skills against the demo's synthetic catalogue", () => {
     for (const button of await skills.getByRole("button", { name: /^Copy the path/ }).all())
       assert.match(await button.getAttribute("title"), /^\/home\/demo\//);
     assert.equal(await skills.getByRole("button", { name: /^Open / }).count(), 0, "a website offers Open file");
-    await page.getByRole("group", { name: "Running agents" }).getByRole("button", { name: /\d+ agents/ }).click();
-    const section = page.getByRole("dialog", { name: "Rika history" }).getByRole("region", { name: "Agents" });
+    await page.keyboard.press("Control+j");
+    const drawer = page.getByRole("dialog", { name: "Rika" });
+    await drawer.getByRole("group", { name: "Rika sections" }).getByRole("button", { name: /^Agents/ }).click();
+    const section = drawer.getByRole("region", { name: "Agents" });
     const card = section.getByRole("article").filter({ hasText: "Refactor the PDF parser" });
     assert.equal(await card.locator("[data-now]").innerText(), "now: no-mistakes · bash");
     assert.match(await card.getByRole("button", { name: /agent skills, \d+$/ }).innerText(), /Skills\s*5/);

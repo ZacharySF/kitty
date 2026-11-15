@@ -4,6 +4,7 @@
   import AIReview from "./AIReview.svelte";
   import { activeModules } from "./modules.svelte";
   import RikaVoiceSettings from "./rika/RikaVoiceSettings.svelte";
+  import UsageSection from "./usage/UsageSection.svelte";
   let { revision = 0, demo = false }: { revision?: number; demo?: boolean } =
     $props();
   type Model = {
@@ -114,69 +115,45 @@
 </script>
 
 <div class="ai-layout">
-  <section class="panel ai-panel">
-    <h2>Connect OpenRouter</h2>
-    <p>
-      Choose your model, speed/cost preference, and budget.{#if workspaceTools}
-        Use AI for a selected note, study plan, flashcard draft, or
-        opportunity summary—not automatic account actions.{:else}
-        Every inference request is reviewed first; nothing runs automatically.{/if}
-    </p>
+  <section class="ai-panel" aria-labelledby="ai-title">
+    <h2 id="ai-title">AI</h2>
     {#if error}<p class="error-banner" role="alert">{error}</p>{/if}
     {#if message}<p role="status">{message}</p>{/if}
     {#if status}
-      <p>
-        <span class="badge"
-          >{status.configured ? "KEY SAVED" : "NOT CONNECTED"}</span
+      <div class="fields">
+        <label
+          >API key<input
+            type="password"
+            autocomplete="new-password"
+            bind:value={key}
+            placeholder={status.configured
+              ? "Saved. Paste a new key to replace it"
+              : "Paste your OpenRouter key"}
+          /></label
         >
-        Reserved/reported today (UTC): ${status.spent_today.toFixed(4)} / ${status.daily_budget_usd.toFixed(
-          2,
-        )}
-      </p>
-      <label
-        >Private API key<input
-          type="password"
-          autocomplete="new-password"
-          bind:value={key}
-          placeholder={status.configured
-            ? "Leave blank to keep saved key"
-            : "Paste your OpenRouter API key"}
-        /></label
-      >
-      <small
-        >Stored as the OPENROUTER key in Settings → Keys (the OS keyring, or an
-        owner-only file). Never included in exports or GitHub.</small
-      >
-      <button class="button" disabled={busy || demo} onclick={refreshModels}
-        >Fetch current models and prices</button
-      >
-      <label
-        >Find a model<input
-          type="search"
-          bind:value={search}
-          placeholder="Search provider or model name"
-        /></label
-      >
-      <label
-        >Model<select bind:value={model}
-          ><option value="">Choose a model</option
-          >{#each choices as item}<option value={item.id}
-              >{item.name} · ${(Number(item.prompt_price) * 1000000).toFixed(3)} /
-              ${(Number(item.completion_price) * 1000000).toFixed(3)} per million
-              input/output tokens</option
-            >{/each}</select
-        ></label
-      >
-      <div class="settings-grid">
+        <div class="field">
+          <label for="ai-model">Model</label>
+          <span class="pair">
+            <select id="ai-model" bind:value={model}
+              ><option value="">Choose a model</option
+              >{#each choices as item}<option value={item.id}
+                  >{item.name} · ${(Number(item.prompt_price) * 1000000).toFixed(2)} in /
+                  ${(Number(item.completion_price) * 1000000).toFixed(2)} out per 1M tokens</option
+                >{/each}</select
+            >
+            <input type="search" aria-label="Filter models" bind:value={search} placeholder="Filter" />
+            <button class="button" disabled={busy || demo} onclick={refreshModels}>Update list</button>
+          </span>
+        </div>
         <label
           >Prefer<select bind:value={routing}
             ><option value="latency">Fast response</option><option
               value="throughput">Fast generation</option
-            ><option value="price">Lowest token price</option></select
+            ><option value="price">Lowest price</option></select
           ></label
         >
         <label
-          >Output token limit<input
+          >Longest answer (tokens)<input
             type="number"
             min={128}
             max={8192}
@@ -185,7 +162,7 @@
           /></label
         >
         <label
-          >Daily spending cap (USD, UTC)<input
+          >Daily limit (USD)<input
             type="number"
             min={0}
             max={100}
@@ -194,78 +171,114 @@
           /></label
         >
       </div>
-      <fieldset class="tiers">
-        <legend>Rika's models</legend>
-        <datalist id="ai-model-ids">{#each status.models as item}<option value={item.id}>{item.name}</option>{/each}</datalist>
-        <div class="settings-grid">
-          {#each TIERS as [tier, label] (tier)}
-            <label>{label}<input list="ai-model-ids" spellcheck="false" bind:value={tiers[tier]} placeholder={status.rika_tier_defaults[tier]} /></label>
-          {/each}
-        </div>
-      </fieldset>
-      <label class="approval"
-        ><input type="checkbox" bind:checked={confirmed} /> Confirm these settings.
-        Every inference request still needs its own review.</label
-      >
+      <h3>Rika's models</h3>
+      <datalist id="ai-model-ids">{#each status.models as item}<option value={item.id}>{item.name}</option>{/each}</datalist>
+      <div class="fields">
+        {#each TIERS as [tier, label] (tier)}
+          <label>{label}<input list="ai-model-ids" spellcheck="false" bind:value={tiers[tier]} placeholder={status.rika_tier_defaults[tier]} /></label>
+        {/each}
+      </div>
       <div class="actions">
+        <label class="approval"><input type="checkbox" bind:checked={confirmed} /> These are right</label>
         <button
           class="button primary"
           disabled={busy || !confirmed}
-          onclick={() => save()}>Save AI settings</button
+          onclick={() => save()}>Save</button
         ><button
           class="button"
           disabled={busy || !confirmed || !!key || !status.configured}
-          onclick={() => save(true)}>Remove stored key</button
+          onclick={() => save(true)}>Remove key</button
         >
       </div>
-      <p class="muted">
-        Providers that decline data collection only. Some models may be
-        unavailable with this privacy requirement. No automatic retries.
-        Failed/time-out requests may be billed and stay reserved against the
-        cap.
+      <p class="muted fine">
+        The key stays in your system keyring. Only providers that don't collect
+        data are used, so some models may be missing. A failed request can still
+        be billed.
       </p>
       <RikaVoiceSettings />
-    {:else}<p>Loading AI settings…</p>{/if}
+    {:else}<p>Loading…</p>{/if}
   </section>
-  {#if workspaceTools}<section class="panel ai-panel">
-    <h2>Work with selected text</h2>
-    <label
-      >Help with<select bind:value={purpose}
-        ><option value="summarize">Summarize my notes</option><option
-          value="organize">Organize notes and tasks</option
-        ><option value="study-plan">Suggest a study plan</option><option
-          value="flashcards">Draft source-grounded flashcards</option
-        ><option value="opportunity-summary">Explain an opportunity</option
-        ></select
-      ></label
-    >
-    <label
-      >Text to send<textarea
-        rows={12}
-        bind:value={text}
-        placeholder="Paste only the text you want this request to use. No other notes, application data, or profile fields are sent."
-      ></textarea></label
-    >
+  {#if workspaceTools}<section class="ai-panel" aria-labelledby="ai-try-title">
+    <h2 id="ai-try-title">Try it</h2>
+    <div class="fields">
+      <label
+        >Help with<select bind:value={purpose}
+          ><option value="summarize">Summarize my notes</option><option
+            value="organize">Organize notes and tasks</option
+          ><option value="study-plan">Suggest a study plan</option><option
+            value="flashcards">Draft flashcards</option
+          ><option value="opportunity-summary">Explain an opportunity</option
+          ></select
+        ></label
+      >
+    </div>
+    <textarea
+      rows={8}
+      aria-label="Text to send"
+      bind:value={text}
+      placeholder="Paste the text to send. Nothing else leaves this computer."
+    ></textarea>
     <AIReview {purpose} {text} {demo} />
   </section>{/if}
+  {#if status}<div class="usage-slot"><UsageSection today={status.spent_today} cap={status.daily_budget_usd} /></div>{/if}
 </div>
 
 <style>
+  /* One calm column like Settings: no boxes, label left and field right, a hairline between rows. */
   .ai-layout {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 30rem), 1fr));
-    gap: 1.2rem;
+    gap: 2.2rem;
+    max-width: 820px;
+    margin-inline: auto;
+    padding: 0.4rem 1rem 2rem;
+  }
+  .usage-slot {
+    min-width: 0;
+    container-type: inline-size;
   }
   .ai-panel {
-    padding: 1.3rem;
     display: grid;
     align-content: start;
     gap: 0.9rem;
     min-width: 0;
   }
-  label {
+  h2 {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 500;
+  }
+  h3 {
+    margin: 0.8rem 0 0;
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--muted);
+  }
+  .fields {
     display: grid;
-    gap: 0.4rem;
+  }
+  .fields > label,
+  .field {
+    display: grid;
+    grid-template-columns: 11rem minmax(0, 1fr);
+    align-items: center;
+    gap: 1rem;
+    padding: 9px 0;
+    border-top: 1px solid var(--border);
+    font-size: 15px;
+  }
+  .fields > :first-child {
+    border-top: 0;
+  }
+  .pair {
+    display: flex;
+    gap: 8px;
+    min-width: 0;
+  }
+  .pair select {
+    flex: 1 1 12rem;
+  }
+  .pair input {
+    flex: 0 1 8rem;
   }
   input,
   select,
@@ -275,35 +288,28 @@
   }
   .approval {
     display: flex;
-    gap: 0.6rem;
-    align-items: start;
+    gap: 0.5rem;
+    align-items: center;
+    margin-right: auto;
   }
   .approval input {
     width: auto;
-  }
-  .settings-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
-    gap: 0.7rem;
-  }
-  .tiers {
-    display: grid;
-    gap: 0.5rem;
-    margin: 0;
-    padding: 0;
-    border: 0;
-  }
-  .tiers legend {
-    padding: 0;
-    margin-bottom: 0.4rem;
-    font-weight: 600;
   }
   .actions {
     display: flex;
     gap: 0.7rem;
     flex-wrap: wrap;
+    align-items: center;
   }
-  small {
-    color: var(--muted);
+  .fine {
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  @media (max-width: 640px) {
+    .fields > label,
+    .field {
+      grid-template-columns: 1fr;
+      gap: 0.35rem;
+    }
   }
 </style>

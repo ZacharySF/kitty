@@ -22,7 +22,7 @@ def website(workspace, tmp_path):
     static.mkdir()
     (static / "index.html").write_text("<!doctype html><title>Synthetic website</title>")
     (static / "app.js").write_text("console.log('synthetic');")
-    app = WebApplication(workspace.settings, workspace.config, static)
+    app = WebApplication(workspace.settings, workspace.config, static, ui_session="ui-test")
     server = LocalHTTPServer(app, 0)
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()
@@ -85,9 +85,6 @@ def test_list_filters_pagination_detail_and_counts(website, workspace, posting):
     status, detail, _ = website.request(f"/api/jobs/{posting.id}")
     assert status == 200 and detail["description"] == "Synthetic posting evidence"
     assert detail["application"] is None
-    status, bootstrap, _ = website.request("/api/bootstrap")
-    assert status == 200 and bootstrap["counts"]["jobs"] == 2
-    assert bootstrap["counts"]["applications"] == 0
     assert second.id != posting.id
 
 
@@ -173,7 +170,7 @@ def test_rejects_cross_origin_or_unmarked_mutations(website, workspace, posting,
     {"Sec-Fetch-Site": "cross-site"},
 ])
 def test_private_reads_also_validate_origin_and_host(website, headers):
-    assert website.request("/api/bootstrap", headers=headers)[0] == 403
+    assert website.request("/api/ai/status", headers=headers)[0] == 403
     assert website.request("/api/reports/export?format=csv&dataset=jobs", headers=headers)[0] == 403
 
 
@@ -297,11 +294,16 @@ def test_discovery_rejects_demo_empty_sources_and_custom_inputs(website):
     assert website.request("/api/sources/run", {"confirm": True})[0] == 400
     website.app.settings = replace(website.app.settings, demo=True)
     assert website.request("/api/sources/run", {"confirm": True})[0] == 403
-    assert website.request("/api/bootstrap")[1]["demo"] is True
+
+
+@pytest.fixture
+def learnharness_pack(monkeypatch):
+    """This process has the LearnHarness pack, whether or not the checkout's desktop build does."""
+    monkeypatch.setattr("kitty.packs.loaded", lambda pack: True)
 
 
 @pytest.mark.parametrize("upstream_status,available", [(200, True), (302, False), (500, False)])
-def test_learnharness_boundary_is_fixed_loopback_not_a_proxy(website, monkeypatch, upstream_status, available):
+def test_learnharness_boundary_is_fixed_loopback_not_a_proxy(website, learnharness_pack, monkeypatch, upstream_status, available):
     calls = []
 
     class Probe:
@@ -331,7 +333,7 @@ def test_learnharness_boundary_is_fixed_loopback_not_a_proxy(website, monkeypatc
     assert website.request("/api/extensions/learnharness/api/keys")[0] == 404
 
 
-def test_learnharness_unavailable_is_not_a_kitty_failure(website, monkeypatch):
+def test_learnharness_unavailable_is_not_a_kitty_failure(website, learnharness_pack, monkeypatch):
     class Offline:
         def __init__(self, *args, **kwargs):
             pass
@@ -346,29 +348,13 @@ def test_learnharness_unavailable_is_not_a_kitty_failure(website, monkeypatch):
     assert website.request("/api/extensions/learnharness")[:2] == (
         200, {"url": "http://127.0.0.1:3210", "available": False},
     )
-    assert website.request("/api/bootstrap")[0] == 200
+    assert website.request("/api/ai/status")[0] == 200
 
 
-def test_study_start_reports_missing_packaged_runtime_not_unknown_route(website):
+def test_study_start_reports_missing_packaged_runtime_not_unknown_route(website, learnharness_pack):
     website.app.learnharness.bundle = website.static / "missing-runtime"
     website.app.learnharness.port = 1
     status, data, _ = website.request("/api/extensions/learnharness/start", {})
     assert status == 503
     assert "reinstall" in data["error"]
     assert website.request("/api/extensions/learnharness/start", {"url": "https://example.invalid"})[0] == 400
-
-
-def test_quick_notes_http_create_autosave_list_and_delete(website):
-    status, created, _ = website.request("/api/quick-notes/create", {"body": "", "tint": "mint"})
-    assert status == 200 and created["body"] == "" and created["tint"] == "mint"
-    status, saved, _ = website.request("/api/quick-notes/save", {"id": created["id"], "revision": created["revision"], "body": "idea: glass notes"})
-    assert status == 200 and saved["revision"] == created["revision"] + 1
-    status, stale, _ = website.request("/api/quick-notes/save", {"id": created["id"], "revision": created["revision"], "body": "old"})
-    assert status == 409 and "another window" in stale["error"]
-    assert website.request(f"/api/quick-notes/{created['id']}")[1]["body"] == "idea: glass notes"
-    assert [note["body"] for note in website.request("/api/quick-notes")[1]["notes"]] == ["idea: glass notes"]
-    status, _, _ = website.request("/api/quick-notes/save", {"id": created["id"], "revision": saved["revision"], "colour": "rose"})
-    assert status == 400
-    status, _, _ = website.request("/api/quick-notes/delete", {"id": created["id"], "revision": saved["revision"]})
-    assert status == 200 and website.request("/api/quick-notes")[1]["notes"] == []
-    assert website.request(f"/api/quick-notes/{created['id']}")[0] == 404

@@ -67,7 +67,7 @@
     display: grid;
     grid-template-columns: repeat(var(--weeks), 1fr);
     color: var(--subtle);
-    font: 8.5px var(--font-mono);
+    font: 8.5px var(--font-ui);
     letter-spacing: 0.06em;
   }
   .months span {
@@ -79,7 +79,7 @@
     gap: 3px;
     align-items: center;
     color: var(--subtle);
-    font: 8px var(--font-mono);
+    font: 8px var(--font-ui);
     line-height: 1;
   }
   .grid {
@@ -122,7 +122,7 @@
     gap: 3px;
     margin: 8px 0 0;
     color: var(--subtle);
-    font: 10px var(--font-mono);
+    font: 10px var(--font-ui);
   }
   .legend .cell {
     width: 10px;

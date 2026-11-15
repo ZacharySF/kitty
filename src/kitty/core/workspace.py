@@ -71,6 +71,9 @@ def open_workspace(
 
     `modules` pins the active module snapshot (a running process passes its own so
     a pending module selection cannot activate); None reads it from config/build.json.
+    ``auto_migrate=False`` is the web worker's: rika-server migrated the database before
+    starting it (server/src/migrations.rs), so a database still behind the migration files
+    is refused rather than opened.
     Raises ConfigError when a config file of an active module is missing or
     invalid, which the CLI turns into line-pointing messages.
     """
@@ -80,9 +83,11 @@ def open_workspace(
 
     if auto_migrate:
         migrate(conn)
-        if not pending_migrations(conn):
-            concept_maps.migrate(conn, resolved.data_dir / "exports")
-    if sync and not pending_migrations(conn):
+    elif pending_migrations(conn):
+        conn.close()
+        raise ValueError(f"{resolved.db_path} has migrations rika-server has not applied")
+    concept_maps.migrate(conn, resolved.data_dir / "exports")
+    if sync:
         sync_config_to_db(conn, config)
         sync_build_to_db(conn, resolved)
     return Workspace(settings=resolved, config=config, conn=conn)

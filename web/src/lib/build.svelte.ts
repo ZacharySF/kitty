@@ -4,6 +4,7 @@
  * interface preferences are read from or written to: `setPreferences` updates this
  * window at once and saves to the build file through the server.
  */
+import { setAnimations } from "./motion";
 import { api, ApiError, type Problem } from "./api";
 import {
   DEFAULT_BUILD, collectLegacy, deepMerge, hasCustomStyle, hasSafeParam, resolveSafe, withSafeParam,
@@ -58,6 +59,9 @@ let appliedLook = "";
 let lookReady: Promise<void> = Promise.resolve();
 function applyLook() {
   applyAppearance(appearanceOf(buildStore.build.ui.appearance));
+  document.documentElement.dataset.icons = buildStore.build.ui.icons.on ? "on" : "off";
+  document.documentElement.dataset.rikaText = buildStore.build.ui.rika.text;
+  void setAnimations(buildStore.build.ui.animations.on);
   const look = buildStore.preview ?? buildStore.build.theme;
   const key = JSON.stringify([look, buildStore.safe]);
   if (key === appliedLook) return;

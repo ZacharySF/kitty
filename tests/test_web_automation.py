@@ -13,8 +13,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from kitty import web_auth
 from kitty import web_automation as web
-from kitty import web_effects
 from kitty.core import applications, effect_kinds, effects, favorites, form_questions, jobs, resumes
 from kitty.core.apply.filler import FillReport
 from kitty.core.apply.watch import PageView, WatchedTab, watch_tabs
@@ -300,7 +300,7 @@ def test_refusal_is_final_even_if_the_change_is_reverted(app, workspace, posting
 def test_start_refuses_another_kinds_effect(app, workspace, posting, monkeypatch):
     monkeypatch.setattr(app.automation, "start", lambda *a, **k: pytest.fail("Another kind started browser"))
     other = effects.propose(workspace.conn, "submit_application", {"job_id": posting.id},
-                            actor=web_effects.user(app), ctx=effect_kinds.Context(workspace.conn, app.config))
+                            actor=web_auth.window_user(app), ctx=effect_kinds.Context(workspace.conn, app.config))
     with pytest.raises(APIError, match="Preparation approval is required") as caught:
         web.post(app, workspace.conn, "/api/automation/start", {
             "effect_id": other.id, "digest": other.digest, "confirmed": True,

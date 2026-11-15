@@ -4,11 +4,11 @@
   import { rika, RIKA_TOAST_MS } from "./session.svelte";
 
   /**
-   * Q2 D: each Rika reply lands as a toast above the bar in the notification stack's look:
-   * the reply text, its tier chip, what it did, and Undo for anything reversible. A reply
-   * that did many things (a brain dump's plan) lists the first few and offers one Undo
-   * all. A reply still being written holds its toast; the drawer keeps everything after
-   * it leaves.
+   * Q2 D: away from home (where the panel shows replies itself) each Rika reply lands as a
+   * toast in the notification stack's look: the reply text, its tier chip, what it did, and
+   * Undo for anything reversible. A reply that did many things (a brain dump's plan) lists
+   * the first few and offers one Undo all. A reply still being written holds its toast; the
+   * drawer keeps everything after it leaves.
    */
   const SHOWN = 3;
   const time = (value: string) => {
@@ -40,7 +40,7 @@
         {action.summary}{#if action.status === "undone"}<em>Undone</em>{:else if action.status === "failed"}<em>Failed</em>{/if}
       </span>
     {/each}
-    {#if actions.length > SHOWN}<span class="body did">{actions.length - SHOWN} more in Rika history</span>{/if}
+    {#if actions.length > SHOWN}<span class="body did">{actions.length - SHOWN} more in Rika</span>{/if}
     {#if asks.length || undoable.length}
       <div class="acts">
         {#if asks.length}<button class="pill primary" onclick={() => rika.showDrawer("conversation")}>Review</button>{/if}
@@ -71,9 +71,7 @@
   .did em {
     margin-left: 6px;
     color: var(--subtle);
-    font: 500 9.5px var(--font-mono);
+    font: 500 11px var(--font-ui);
     font-style: normal;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
   }
 </style>

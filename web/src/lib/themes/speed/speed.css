@@ -50,10 +50,6 @@
   border-bottom: 1.5px solid var(--spd-ink);
   box-shadow: 0 3px 0 -1.5px var(--spd-crimson);
 }
-:root[data-theme="speed"] body .rika-bar {
-  border-top: 1.5px solid var(--spd-ink);
-  box-shadow: 0 -3px 0 -1.5px var(--spd-crimson);
-}
 :root[data-theme="speed"] body .workspace-groups {
   border-color: color-mix(in srgb, var(--spd-ink) 55%, transparent);
   border-radius: 2px;
@@ -173,13 +169,4 @@
 /* Page titles: a crimson marker swipe under the first word or so (not authored content). */
 :root[data-theme="speed"]:not([data-motif="off"]) body main h1:not(.sr-only, :is(.sheet, .authored-preview, [contenteditable]) h1) {
   background: linear-gradient(176deg, transparent 58%, color-mix(in srgb, var(--spd-crimson) 30%, transparent) 58% 86%, transparent 86%) left bottom / min(100%, 4.2em) 100% no-repeat;
-}
-
-/* The current workspace tab: a skewed crimson mark with a teal offset. */
-:root[data-theme="speed"]:not([data-motif="off"]) .workspace-tabbar .tab.active::after {
-  height: 3px;
-  border-radius: 0;
-  background: var(--spd-crimson);
-  box-shadow: 3px 2px 0 -1px var(--spd-teal);
-  transform: skewX(-20deg);
 }

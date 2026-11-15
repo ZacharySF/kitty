@@ -1,9 +1,12 @@
-"""Isolated consumer fixtures: no real provider calls, credentials, jobs or user DBs."""
+"""Isolated consumer fixtures: no real provider calls, credentials, jobs or user DBs.
+
+The routes rika-server answers are compared with this core in tests/test_opportunities_parity.py."""
 from types import SimpleNamespace
 import json
 
 import httpx
 import pytest
+from terminal_support import front_site
 
 from kitty.core import opportunities as core, opportunity_sources as providers
 from kitty.core.discovery.http import PoliteHttp
@@ -223,8 +226,19 @@ def test_schedule_opt_in_status_source_configuration_and_demo_boundaries(workspa
     app = SimpleNamespace(settings=SimpleNamespace(demo=True))
     with pytest.raises(APIError): web.post(app, conn, '/api/opportunities/discover', {'confirmed': True})
     with pytest.raises(APIError): web.post(app, conn, '/api/opportunities/settings', {'revision': config['revision'], 'enabled': True})
-    assert web.post(app, conn, '/api/opportunities', {'title': 'Demo local'})['title'] == 'Demo local'
-    assert web.get(app, conn, '/api/opportunities', {})['total'] == 1
+
+
+def test_the_demo_refuses_monitoring_and_discovery_and_keeps_local_entries(workspace):
+    """The worker refuses what would reach a provider; a local entry, which rika-server answers, still works."""
+    with front_site(workspace.settings, args=('--demo',)) as site:
+        status, listed = site.request('/api/opportunities')
+        assert status == 200
+        assert site.request('/api/opportunities/discover', {'confirmed': True}) == (403, {'error': 'External provider requests are disabled in demo'})
+        assert site.request('/api/opportunities/settings', {'revision': listed['schedule']['revision'], 'enabled': True}) == (
+            403, {'error': 'External monitoring is disabled in demo'})
+        status, made = site.request('/api/opportunities', {'title': 'Demo local'})
+        assert status == 200 and made['title'] == 'Demo local'
+        assert site.request('/api/opportunities')[1]['total'] == listed['total'] + 1
 
 
 def test_background_monitor_trigger_updates_persisted_run_status(workspace, monkeypatch):

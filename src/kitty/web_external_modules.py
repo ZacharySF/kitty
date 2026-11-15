@@ -2,10 +2,15 @@
 
 Settings routes (core, always on)::
 
+    GET  /api/external-modules                                  -> {external, pending}
     POST /api/external-modules/install {"repo": "owner/repo"}  -> {task}; result = modules state
     POST /api/external-modules/update  {"id"}                   -> {task}; result = modules state
     POST /api/external-modules/remove  {"id"}                   -> modules state
     POST /api/external-modules/check   {}                       -> {task}; result = {updates, errors}
+
+rika-server answers ``/api/modules`` and ``/api/bootstrap`` itself and adds the GET's
+``external`` to their module state, with ``restart_required`` also true while ``pending``
+(server/src/modules.rs).
 
 The installed set is read once at start-up, like the built-in module selection: an
 install, update or removal is pinned at once but applies on the next start. Each active
@@ -350,6 +355,10 @@ def mutated(app):
 
 
 def get(app, conn, path, query):
+    if path == PREFIX:
+        app._no_query(query)
+        external, pending = app.external_modules.state(conn)
+        return {"external": external, "pending": pending}
     active = app.external_modules.owner(conn, path)
     if active is None:
         return None

@@ -14,6 +14,14 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
+#: The external-module state of a workspace with none installed (kitty.web_external_modules).
+NONE_INSTALLED = {"installed": [], "views": [], "token": {"configured": False}}
+
+
+def with_external(state: dict[str, Any], external: dict[str, Any] = NONE_INSTALLED) -> dict[str, Any]:
+    """``WebApplication.modules_state``: a ``kitty.modules.modules_state`` plus the external modules."""
+    return {**state, "external": external}
+
 
 def manifest(module_id: str = "rika-synth", version: str = "0.1.0", *, kind: str = "python",
              package: str = "rika_synth", **overrides: Any) -> dict[str, Any]:

@@ -7,7 +7,7 @@ import uuid
 
 import pytest
 
-from terminal_support import FrameReader, make_root, send_frame, site, websocket
+from terminal_support import FrameReader, front_site, make_root, send_frame, websocket
 
 SOCKET = "/api/live/socket"
 
@@ -58,7 +58,7 @@ def page_ops(page, block, text="first"):
 
 @pytest.fixture
 def running(tmp_path):
-    with site(make_root(tmp_path, ("workspace",))) as server:
+    with front_site(make_root(tmp_path, ("workspace",))) as server:
         yield server
 
 
@@ -157,7 +157,7 @@ def test_the_socket_needs_a_single_use_token_and_is_core(running, tmp_path):
     connection.close()
     assert status == 403
     assert running.request("/api/live/session", {}, headers={"X-Kitty-Request": None})[0] == 403
-    with site(make_root(tmp_path / "terminal-only", ("terminal",))) as other:
+    with front_site(make_root(tmp_path / "terminal-only", ("terminal",))) as other:
         # The live channel is core (builds reach every window); only block messages need workspace.
         assert other.request("/api/live/session", {})[0] == 200
 

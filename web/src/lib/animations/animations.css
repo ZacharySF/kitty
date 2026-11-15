@@ -1,0 +1,179 @@
+/* The Animations module (ui.animations.on → <html data-anim="on">; ../motion.ts loads this
+   file and index.ts only then). Everything is scoped to data-anim and to people who have not
+   asked for less motion; only transform and opacity move. */
+
+:root {
+  --anim-spring: cubic-bezier(0.22, 1.25, 0.36, 1);
+  --anim-glide: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Script-made pieces (index.ts). */
+.anim-ghost {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+.anim-host {
+  position: relative;
+}
+.anim-ring {
+  position: fixed;
+  z-index: 2147483000;
+  width: 120px;
+  height: 120px;
+  border: 1.5px solid var(--ink, #fff);
+  border-radius: 999px;
+  pointer-events: none;
+}
+.anim-rail {
+  isolation: isolate;
+}
+.anim-rail-static {
+  position: relative;
+}
+.anim-pill {
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
+  transform-origin: 0 0;
+}
+:root body .anim-bare {
+  background-color: transparent !important;
+  box-shadow: none !important;
+  border-color: transparent !important;
+}
+
+/* A strip two pages share does not arrive with the page (index.ts). */
+:root body [data-kitty-panel="view"] > .anim-keep {
+  animation: none !important;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* ── Pages arrive. The view's root is re-made on every switch, so these play by themselves;
+     index.ts sets data-nav just before the first frame to say from where. The layer of page
+     widgets (pageEdit/PageWidgets.svelte) is not the page: it stays where it is. */
+  :root[data-anim="on"]:not([data-motion="reduced"]) [data-kitty-panel="view"]:not([hidden]) > :not(.anim-ghost, .page-widgets) {
+    animation: anim-rise 520ms var(--anim-glide) backwards;
+  }
+  :root[data-anim="on"][data-nav="forward"]:not([data-motion="reduced"]) [data-kitty-panel="view"]:not([hidden]) > :not(.anim-ghost, .page-widgets) {
+    animation: anim-from-right 560ms var(--anim-glide) backwards;
+  }
+  :root[data-anim="on"][data-nav="back"]:not([data-motion="reduced"]) [data-kitty-panel="view"]:not([hidden]) > :not(.anim-ghost, .page-widgets) {
+    animation: anim-from-left 560ms var(--anim-glide) backwards;
+  }
+  :root[data-anim="on"][data-nav="next"]:not([data-motion="reduced"]) [data-kitty-panel="view"]:not([hidden]) > :not(.anim-ghost, .page-widgets) {
+    animation: anim-step-right 460ms var(--anim-glide) backwards;
+  }
+  :root[data-anim="on"][data-nav="prev"]:not([data-motion="reduced"]) [data-kitty-panel="view"]:not([hidden]) > :not(.anim-ghost, .page-widgets) {
+    animation: anim-step-left 460ms var(--anim-glide) backwards;
+  }
+  :root[data-anim="on"][data-nav="zoom"]:not([data-motion="reduced"]) [data-kitty-panel="view"]:not([hidden]) > :not(.anim-ghost, .page-widgets) {
+    transform-origin: var(--nav-origin, 50% 30%);
+    animation: anim-grow 600ms var(--anim-glide) backwards;
+  }
+  :root[data-anim="on"][data-nav="home"]:not([data-motion="reduced"]) [data-kitty-panel="view"]:not([hidden]) > :not(.anim-ghost, .page-widgets) {
+    animation: anim-settle 560ms var(--anim-glide) backwards;
+  }
+
+  /* ── Rows and widgets follow one another in, while a page is arriving (data-nav) and not
+     afterwards: a row added later, or a line typed into a list, is simply there. */
+  :root[data-anim="on"][data-nav]:not([data-motion="reduced"]) :is(.board:not(.editing) .slot, .job-list > *, .rika-agent, [data-kitty-panel="view"] :is(ul, ol, tbody):not([contenteditable] *) > :is(li, tr)) {
+    animation: anim-row 560ms var(--anim-spring) backwards;
+    animation-delay: calc(120ms + var(--anim-i, 11) * 42ms);
+  }
+  :root[data-anim="on"][data-nav] :is(.board .slot, .job-list > *, .rika-agent, [data-kitty-panel="view"] :is(ul, ol, tbody) > :is(li, tr)):nth-child(1) { --anim-i: 0; }
+  :root[data-anim="on"][data-nav] :is(.board .slot, .job-list > *, .rika-agent, [data-kitty-panel="view"] :is(ul, ol, tbody) > :is(li, tr)):nth-child(2) { --anim-i: 1; }
+  :root[data-anim="on"][data-nav] :is(.board .slot, .job-list > *, .rika-agent, [data-kitty-panel="view"] :is(ul, ol, tbody) > :is(li, tr)):nth-child(3) { --anim-i: 2; }
+  :root[data-anim="on"][data-nav] :is(.board .slot, .job-list > *, .rika-agent, [data-kitty-panel="view"] :is(ul, ol, tbody) > :is(li, tr)):nth-child(4) { --anim-i: 3; }
+  :root[data-anim="on"][data-nav] :is(.board .slot, .job-list > *, .rika-agent, [data-kitty-panel="view"] :is(ul, ol, tbody) > :is(li, tr)):nth-child(5) { --anim-i: 4; }
+  :root[data-anim="on"][data-nav] :is(.board .slot, .job-list > *, .rika-agent, [data-kitty-panel="view"] :is(ul, ol, tbody) > :is(li, tr)):nth-child(6) { --anim-i: 5; }
+  :root[data-anim="on"][data-nav] :is(.board .slot, .job-list > *, .rika-agent, [data-kitty-panel="view"] :is(ul, ol, tbody) > :is(li, tr)):nth-child(7) { --anim-i: 6; }
+  :root[data-anim="on"][data-nav] :is(.board .slot, .job-list > *, .rika-agent, [data-kitty-panel="view"] :is(ul, ol, tbody) > :is(li, tr)):nth-child(8) { --anim-i: 7; }
+  :root[data-anim="on"][data-nav] :is(.board .slot, .job-list > *, .rika-agent, [data-kitty-panel="view"] :is(ul, ol, tbody) > :is(li, tr)):nth-child(9) { --anim-i: 8; }
+  :root[data-anim="on"][data-nav] :is(.board .slot, .job-list > *, .rika-agent, [data-kitty-panel="view"] :is(ul, ol, tbody) > :is(li, tr)):nth-child(10) { --anim-i: 9; }
+  :root[data-anim="on"][data-nav] :is(.board .slot, .job-list > *, .rika-agent, [data-kitty-panel="view"] :is(ul, ol, tbody) > :is(li, tr)):nth-child(11) { --anim-i: 10; }
+  :root[data-anim="on"][data-nav] .board .column:nth-child(2) .slot { animation-delay: calc(200ms + var(--anim-i, 11) * 42ms); }
+
+  /* ── Pressing: what you press gives and springs back. */
+  :root[data-anim="on"]:not([data-motion="reduced"]) :is(button, .button, .pill, [role="button"], [role="tab"], [role="switch"], [data-job-id]) {
+    /* The colour changes these already ease keep doing so. */
+    transition: transform 420ms var(--anim-spring), background-color 160ms, color 160ms, border-color 160ms, opacity 160ms;
+  }
+  :root[data-anim="on"]:not([data-motion="reduced"]) :is(button, .button, .pill, [role="button"], [role="tab"], [role="switch"]):active:not(:disabled) {
+    transform: scale(0.92);
+    transition-duration: 80ms;
+  }
+  :root[data-anim="on"]:not([data-motion="reduced"]) [data-job-id]:active {
+    transform: scale(0.985);
+    transition-duration: 80ms;
+  }
+  /* A row leans toward its arrow when the pointer is on it. */
+  :root[data-anim="on"]:not([data-motion="reduced"]) .job-list > * {
+    transition: transform 420ms var(--anim-spring);
+  }
+  :root[data-anim="on"]:not([data-motion="reduced"]) .job-list > :hover {
+    transform: translateX(6px);
+  }
+
+  /* ── Home's widgets lean toward the pointer and carry its light (index.ts sets the variables). */
+  :root[data-anim="on"]:not([data-motion="reduced"]) .board:not(.editing) .slot {
+    position: relative;
+    transform: perspective(1200px) rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg));
+    transition: transform 600ms var(--anim-spring);
+  }
+  :root[data-anim="on"]:not([data-motion="reduced"]) .board:not(.editing) .slot:active {
+    transform: perspective(1200px) rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg)) scale(0.985);
+    transition-duration: 90ms;
+  }
+  :root[data-anim="on"]:not([data-motion="reduced"]) .board:not(.editing) .slot::after {
+    content: "";
+    position: absolute;
+    inset: -6px -10px;
+    border-radius: 22px;
+    background: radial-gradient(380px circle at var(--mx, 50%) var(--my, 50%), color-mix(in srgb, var(--ink) 10%, transparent), transparent 65%);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 400ms;
+  }
+  :root[data-anim="on"]:not([data-motion="reduced"]) .board:not(.editing) .slot:hover::after {
+    opacity: 1;
+  }
+
+  /* ── Things that open spring in: dialogs and drawers from a little below, menus from their edge. */
+  :root[data-anim="on"]:not([data-motion="reduced"]) :is(dialog[open], [role="dialog"]) {
+    animation: anim-open 480ms var(--anim-spring) backwards;
+  }
+  :root[data-anim="on"]:not([data-motion="reduced"]) :is([popover]:popover-open, [role="menu"], [role="listbox"], .tab-menu) {
+    transform-origin: 50% 0;
+    animation: anim-drop 320ms var(--anim-spring) backwards;
+  }
+  :root[data-anim="on"]:not([data-motion="reduced"]) :is(.br-toast, .action-feedback, .error-banner, .selection-bar) {
+    animation: anim-toast 520ms var(--anim-spring) backwards;
+  }
+  :root[data-anim="on"]:not([data-motion="reduced"]) dialog[open]::backdrop {
+    animation: anim-fade 320ms ease-out backwards;
+  }
+  /* A tick lands with a small bounce. */
+  :root[data-anim="on"]:not([data-motion="reduced"]) input[type="checkbox"]:checked {
+    animation: anim-tick 380ms var(--anim-spring);
+  }
+  /* A loader fades in after a beat, so a fast answer never flashes one. */
+  :root[data-anim="on"]:not([data-motion="reduced"]) .kitty-loader {
+    animation: anim-fade 300ms 140ms ease-out backwards;
+  }
+}
+
+@keyframes anim-rise { from { opacity: 0; transform: translateY(26px) scale(0.985); } }
+@keyframes anim-from-right { from { opacity: 0; transform: translateX(11%); } }
+@keyframes anim-from-left { from { opacity: 0; transform: translateX(-11%); } }
+@keyframes anim-step-right { from { opacity: 0; transform: translateX(72px); } }
+@keyframes anim-step-left { from { opacity: 0; transform: translateX(-72px); } }
+@keyframes anim-grow { from { opacity: 0; transform: scale(0.72); } }
+@keyframes anim-settle { from { opacity: 0; transform: scale(1.1); } }
+@keyframes anim-row { from { opacity: 0; transform: translateY(28px) scale(0.97); } }
+@keyframes anim-open { from { opacity: 0; transform: translateY(28px) scale(0.94); } }
+@keyframes anim-drop { from { opacity: 0; transform: scale(0.9, 0.8) translateY(-8px); } }
+@keyframes anim-toast { from { opacity: 0; transform: translateY(24px) scale(0.9); } }
+@keyframes anim-fade { from { opacity: 0; } }
+@keyframes anim-tick { from { transform: scale(0.6); } }

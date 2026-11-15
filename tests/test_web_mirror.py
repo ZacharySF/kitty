@@ -5,10 +5,11 @@ import base64
 import io
 import json
 import sqlite3
+import time
 
 import pytest
 from PIL import Image
-from terminal_support import make_root, site
+from terminal_support import front_site, make_root, site
 from test_web_blocks import Client
 from test_web_clients import EXTENSION, OTHER_EXTENSION, call, pair, preflight
 
@@ -43,9 +44,25 @@ def running(tmp_path, monkeypatch):
 
 
 @pytest.fixture
+def live(tmp_path):
+    """rika-server in front: it owns every window's live socket (server/src/live/), and the
+    worker's pushes reach the windows through it. The worker paces frames per tab as shipped."""
+    with front_site(make_root(tmp_path, ("workspace",))) as server:
+        yield server
+
+
+def paired(running):
+    return pair(running, kind="browser-extension", origin=EXTENSION, scopes=("capture",), name="kitty for Chromium")
+
+
+@pytest.fixture
 def extension(running):
-    client, token = pair(running, kind="browser-extension", origin=EXTENSION, scopes=("capture",), name="kitty for Chromium")
-    return client, token
+    return paired(running)
+
+
+@pytest.fixture
+def live_extension(live):
+    return paired(live)
 
 
 def send(running, body, token, origin=EXTENSION, path=FRAME):
@@ -62,7 +79,8 @@ def ops_count(running) -> int:
         return conn.execute("SELECT COUNT(*) FROM op_log").fetchone()[0]
 
 
-def test_a_frame_is_pushed_to_every_window_and_listed_with_its_screenshot(running, extension):
+def test_a_frame_is_pushed_to_every_window_and_listed_with_its_screenshot(live, live_extension):
+    running, extension = live, live_extension
     client, token = extension
     first, second = Client(running), Client(running)
     try:
@@ -90,6 +108,7 @@ def test_a_frame_is_pushed_to_every_window_and_listed_with_its_screenshot(runnin
 
         # The same text again is not pushed again; a new screenshot replaces the old one.
         png = picture("PNG", colour=(10, 120, 200))
+        time.sleep(mirror.MIN_INTERVAL)  # the worker paces frames per tab
         status, again, _ = send(running, frame(image=data_url(png, "image/png")), token)
         assert status == 200 and again["mirror"] == reply["mirror"] and again["frame"] == 2
         pushed = first.expect("mirror")
@@ -99,6 +118,7 @@ def test_a_frame_is_pushed_to_every_window_and_listed_with_its_screenshot(runnin
         assert page_get(running, f"/api/mirror/{reply['mirror']}/image?frame=2")[1] == png
 
         # A frame without a screenshot (the tab was in the background) keeps the last one.
+        time.sleep(mirror.MIN_INTERVAL)
         status, third, _ = send(running, frame(text="Changed text."), token)
         assert status == 200
         pushed = first.expect("mirror")
@@ -121,7 +141,8 @@ def test_frames_never_reach_the_op_log_or_the_disk(running, extension, tmp_path)
             assert jpeg[:200] not in content and marker not in content and b"secret selection" not in content, path
 
 
-def test_stopping_drops_the_frame_at_once_and_tells_every_window(running, extension):
+def test_stopping_drops_the_frame_at_once_and_tells_every_window(live, live_extension):
+    running, extension = live, live_extension
     _, token = extension
     window = Client(running)
     try:
@@ -140,7 +161,8 @@ def test_stopping_drops_the_frame_at_once_and_tells_every_window(running, extens
         window.close()
 
 
-def test_revoking_the_extension_drops_its_mirrors(running, extension):
+def test_revoking_the_extension_drops_its_mirrors(live, live_extension):
+    running, extension = live, live_extension
     client, token = extension
     window = Client(running)
     try:
@@ -247,7 +269,8 @@ def test_frames_are_paced(running, extension, monkeypatch):
     assert send(running, frame(tab="8"), token)[0] == 200
 
 
-def test_mirrors_are_capped_per_client_and_the_oldest_goes(running, extension):
+def test_mirrors_are_capped_per_client_and_the_oldest_goes(live, live_extension):
+    running, extension = live, live_extension
     _, token = extension
     window = Client(running)
     try:

@@ -1,11 +1,6 @@
-<script lang="ts" module>
-  /** Map/List chosen from Saved jobs: the Find jobs view that opens next shows it. */
-  let presentationHandoff: "map" | "list" | null = null;
-</script>
-
 <script lang="ts">
-  import { onMount, tick, untrack } from "svelte";
-  import { api, dateLabel, safeUrl, type Bootstrap, type Job } from "./api";
+  import { onMount, tick } from "svelte";
+  import { api, dateLabel, safeUrl, type Bootstrap, type Job, type TaskRecord } from "./api";
   import Icon from "./Icon.svelte";
   import JobDetail from "./JobDetail.svelte";
   import Automation from "./Automation.svelte";
@@ -87,20 +82,8 @@
   const preparationIds = $derived(
     marked.length ? marked : selected !== null ? [selected] : jobs[cursor] ? [jobs[cursor].id] : [],
   );
-  let presentation = $state<"map" | "list">(untrack(() => {
-    const handoff = presentationHandoff;
-    presentationHandoff = null;
-    return initialJobId ? "list" : view === "jobs" ? (handoff ?? "map") : "list";
-  }));
-  /** Map and List switch presentation here; from Saved jobs they open Find jobs. */
-  function present(next: "map" | "list") {
-    if (view === "jobs") {
-      presentation = next;
-      return;
-    }
-    presentationHandoff = next;
-    onview("jobs");
-  }
+  /** The list is where a job is picked; Find jobs can also show them as a map. */
+  let presentation = $state<"map" | "list">("list");
   let graphFocus = $state<string | null>(null);
   let graphLabel = $state("");
   function rootSchema() {
@@ -179,6 +162,8 @@
   let searchInput: HTMLInputElement | undefined = $state();
   let bulkAction = $state("state");
   let bulkValue = $state("");
+  /** A rank in plain words (the filter and the detail keep the letter beside it). */
+  const FIT: Record<string, string> = { A: "Top match", B: "Good match", C: "Low match" };
   const RANK_HELP = "A is highest priority, B is worth considering, C is lower priority or filtered out. Read the reason in each job; rank does not guarantee eligibility.";
   const RANKS: Record<string, string> = { A: "Highest priority", B: "Worth considering", C: "Lower priority / filtered out" };
   const choices = (values: string[], none?: string): SelectOption[] => [
@@ -186,7 +171,7 @@
     ...values.map((value) => ({ value, label: label(value) })),
   ];
   const trackOptions = $derived<SelectOption[]>([
-    { value: "", label: "All job types / tracks" },
+    { value: "", label: "All types" },
     ...(workspace?.tracks || []).map((item) => ({ value: item.name, label: item.label })),
   ]);
   const orderOptions: SelectOption[] = [
@@ -230,11 +215,11 @@
       : view === "inbox"
         ? "New jobs"
         : view === "queue"
-          ? "Prepare applications"
+          ? "Apply"
           : view === "applications"
             ? "Application list"
             : view === "favorites"
-              ? "Saved jobs"
+              ? "Saved"
               : "Find jobs",
   );
 
@@ -312,6 +297,41 @@
     selected = null;
     searchTimer = setTimeout(() => void filter(), 180);
   }
+  /**
+   * Scrape: fetch the enabled job sources now. The brain shows in place of the list while
+   * the task runs; then the list reloads and one line says what came in. Only free public
+   * sources run and nothing is submitted, as on Job sources (the same route).
+   */
+  let scraping = $state(false);
+  let scrapeStopped = false;
+  async function scrape() {
+    if (scraping) return;
+    scraping = true;
+    error = "";
+    message = "";
+    try {
+      let task = (await api<{ task: TaskRecord }>("/sources/run", { confirm: true })).task;
+      while (task.status === "running" && !scrapeStopped) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        task = await api<TaskRecord>(`/tasks/${task.id}`);
+      }
+      if (scrapeStopped) return;
+      if (task.status === "failed") throw new Error(task.error || "The scrape did not finish.");
+      const sources = Object.values((task.result as { sources?: Record<string, { new?: number; status?: string }> } | null)?.sources ?? {});
+      const found = sources.reduce((sum, source) => sum + (source.new ?? 0), 0);
+      const incomplete = sources.filter((source) => source.status !== "ok").length;
+      message = `${found === 0 ? "No new jobs" : found === 1 ? "1 new job" : `${found} new jobs`} from ${sources.length} ${sources.length === 1 ? "source" : "sources"}`
+        + (incomplete ? `; ${incomplete} did not finish.` : ".");
+      offset = 0;
+      await load();
+      await onchange();
+    } catch (cause) {
+      if (!scrapeStopped) error = cause instanceof Error ? cause.message : "The scrape did not finish.";
+    } finally {
+      scraping = false;
+    }
+  }
+
   onMount(() => {
     selected = initialJobId;
     void load();
@@ -321,6 +341,7 @@
     return () => {
       clearTimeout(searchTimer);
       request += 1;
+      scrapeStopped = true;
     };
   });
 
@@ -573,15 +594,22 @@
         <span class="total" title={`${total.toLocaleString()} matching`}>{total.toLocaleString()}</span>
         <div class="tools">
           {#if view === "jobs" && graphFocus}<button type="button" class="text-button all-types" onclick={rootSchema}>All job types</button>{/if}
-          {#if view === "jobs" || view === "favorites"}
+          {#if view === "jobs"}
             <nav class="jobs-views" aria-label="Jobs view">
-              <button type="button" aria-pressed={view === "jobs" && presentation === "map"} onclick={() => present("map")}>Map</button>
-              <button type="button" aria-pressed={view === "jobs" && presentation === "list"} onclick={() => present("list")}>List</button>
-              <button type="button" aria-current={view === "favorites" ? "page" : undefined} onclick={() => onview("favorites")}>Saved</button>
-              <button type="button" onclick={() => onview("pipeline")}>Applications</button>
-              <button type="button" onclick={() => onview("resumes")}>Resumes</button>
-              <button type="button" onclick={() => onview("sources")}>Sources</button>
+              <button type="button" aria-pressed={presentation === "map"} onclick={() => (presentation = "map")}>Map</button>
+              <button type="button" aria-pressed={presentation === "list"} onclick={() => (presentation = "list")}>List</button>
             </nav>
+          {/if}
+          {#if view === "jobs" || view === "inbox"}
+            <button type="button" class="pill" disabled={scraping} title="Look for new jobs on your job sources now" onclick={scrape}>{scraping ? "Scraping…" : "Scrape"}</button>
+          {/if}
+          {#if view !== "jobs" && view !== "inbox" && !marked.length}
+            <PostingAvailability jobIds={jobs.map(job => job.id)} label="Check they are still open" demo={workspace?.demo ?? true} oncomplete={checkedAvailability} />
+          {/if}
+          <button type="button" class="text-button" title="Prepare another group or check Firefox progress" onclick={() => (preparationOpen = true)}>Progress</button>
+          {#if view === "queue" && !marked.length}
+            <button type="button" class="pill" disabled={busy || loading || (selected === null && !jobs[cursor])} onclick={prepareSelected}
+              title="Fills the form and stops before submitting: you send it">Fill in the form <kbd>Shift+F</kbd></button>
           {/if}
           <button type="button" class="pill primary page-action" onclick={onadd}><Icon name="plus" size={14} />Add a job link</button>
         </div>
@@ -590,7 +618,9 @@
     {#if view === "jobs"}
       <Dashboard {revision} onopenjob={(id) => onopenjob?.(id)} {onview} {onguide} />
     {/if}
-    {#if presentation === "map"}
+    {#if scraping}
+      <div class="scrape-stage"><Loader kind="view" label="Scraping your job sources…" /></div>
+    {:else if presentation === "map"}
       <div class="map-stage">
         <SectionGraph bare section="jobs" focus={graphFocus} revision={graphRevision} onselect={selectGraphNode}
           ondelete={(node) => { if (node.entity === "job" && typeof node.ref === "number") return bulk("delete", true, [node.ref]); }} listToggle={false} />
@@ -604,6 +634,22 @@
           void filter();
         }}
       >
+        <input
+          type="checkbox"
+          class="select-all"
+          aria-label="Select all shown"
+          title="Select all shown"
+          disabled={busy || loading}
+          checked={jobs.length > 0 && jobs.every((job) => markedSet.has(job.id))}
+          onchange={(event) => {
+            const next = new Set(marked);
+            for (const job of jobs) {
+              if (event.currentTarget.checked) next.add(job.id);
+              else next.delete(job.id);
+            }
+            marked = [...next];
+          }}
+        />
         <label class="search-field"
           ><Icon name="jobs" size={17} /><input
             bind:this={searchInput}
@@ -651,84 +697,52 @@
           </div>
         </Popover>
       </form>
-      <div class="selection-toolbar">
-        <label class="inline-check"
-          ><input
-            type="checkbox"
-            aria-label="Select this batch"
-            disabled={busy || loading}
-            checked={jobs.length > 0 &&
-              jobs.every((job) => markedSet.has(job.id))}
-            onchange={(event) => {
-              const next = new Set(marked);
-              for (const job of jobs) {
-                if (event.currentTarget.checked) next.add(job.id);
-                else next.delete(job.id);
-              }
-              marked = [...next];
+    {/if}
+    {#if marked.length && view !== "today"}
+      <!-- Shown only while rows are ticked, where the pointer already is: at the bottom, in one piece. -->
+      <div class="selection-bar" role="toolbar" aria-label="Selected jobs">
+        <span class="count">{marked.length} selected</span>
+        {#if total > marked.length}<button type="button" class="text-button" disabled={busy || loading} onclick={selectAll}>All {total.toLocaleString()}</button>{/if}
+        <i class="rule"></i>
+        {#if view !== "favorites"}<button type="button" class="pill" disabled={busy || loading} onclick={() => bulk("favorite", true)}>Save</button>{/if}
+        <Popover label="Change selected jobs" bind:open={bulkOptionsOpen} placement="top-end" class="job-bulk">
+          {#snippet trigger(props)}
+            <button type="button" class="pill" {...props}>Change</button>
+          {/snippet}
+          <form
+            class="bulk-form"
+            onsubmit={(event) => {
+              event.preventDefault();
+              void bulk(bulkAction, bulkValue);
             }}
-          />Select this batch</label
-        ><button
-          class="text-button"
-          disabled={busy || loading || !total}
-          onclick={selectAll}
-          >Select all {total.toLocaleString()} matching</button
-        ><span class="muted">{marked.length} selected</span
-        >{#if marked.length}<button
-            class="text-button"
-            onclick={() => (marked = [])}>Clear selection</button
-          >{/if}
-        <span class="toolbar-gap"></span>
-        {#if marked.length}
-          {#if view !== "favorites"}<button
-              class="button"
-              disabled={busy || loading}
-              onclick={() => bulk("favorite", true)}
-              >Save selected ({marked.length})</button
-            >{/if}
-          <Popover label="Change selected jobs" bind:open={bulkOptionsOpen} placement="bottom-end" class="job-bulk">
-            {#snippet trigger(props)}
-              <button type="button" class="pill" {...props}>Change selected</button>
-            {/snippet}
-            <form
-              class="bulk-form"
-              onsubmit={(event) => {
-                event.preventDefault();
-                void bulk(bulkAction, bulkValue);
-              }}
-            >
-              <div class="bulk-row">
-                <button class="button" type="button" disabled={busy} onclick={() => bulk("favorite", true)}>Save <kbd>*</kbd></button>
-                <button class="button" type="button" disabled={busy} onclick={() => bulk("favorite", false)}>Remove from saved jobs</button>
-              </div>
-              <div class="bulk-row">
-                <span class="field-label">Set</span>
-                <Select label="Bulk action" options={bulkActionOptions} bind:value={bulkAction} onchange={() => (bulkValue = "")} />
-              </div>
-              <div class="bulk-row">
-                <Select id={fieldId("bulk-value")} label="Bulk value" kind="list" options={bulkValueOptions} bind:value={bulkValue} />
-                <button class="button primary" disabled={busy || !bulkValue}>Apply to {marked.length}</button>
-              </div>
-            </form>
-          </Popover>
-        {/if}
-        <PostingAvailability
-          jobIds={marked.length ? marked : jobs.map(job => job.id)}
-          label={marked.length ? "Check selected" : "Check this batch"}
-          demo={workspace?.demo ?? true}
-          oncomplete={checkedAvailability}
-        />
-        <button type="button" class="text-button" title="Prepare another group or check Firefox progress" onclick={() => (preparationOpen = true)}>Preparation</button>
-        {#if marked.length}<span class="muted">Fill stops before submission; you submit each one.</span>{/if}
+          >
+            <div class="bulk-row">
+              <button class="button" type="button" disabled={busy} onclick={() => bulk("favorite", true)}>Save <kbd>*</kbd></button>
+              <button class="button" type="button" disabled={busy} onclick={() => bulk("favorite", false)}>Remove from saved jobs</button>
+            </div>
+            <div class="bulk-row">
+              <span class="field-label">Set</span>
+              <Select label="Bulk action" options={bulkActionOptions} bind:value={bulkAction} onchange={() => (bulkValue = "")} />
+            </div>
+            <div class="bulk-row">
+              <Select id={fieldId("bulk-value")} label="Bulk value" kind="list" options={bulkValueOptions} bind:value={bulkValue} />
+              <button class="button primary" disabled={busy || !bulkValue}>Apply to {marked.length}</button>
+            </div>
+          </form>
+        </Popover>
+        <PostingAvailability jobIds={marked} label="Check" demo={workspace?.demo ?? true} oncomplete={checkedAvailability} />
         <button
-          class="button primary"
-          disabled={busy || loading || (!marked.length && selected === null && !jobs[cursor])}
+          type="button"
+          class="pill primary"
+          disabled={busy || loading}
           onclick={prepareSelected}
-        >Fill {marked.length ? `${marked.length} selected` : selected !== null ? "opened job" : "focused job"} for review <kbd>Shift+F</kbd></button>
+          title="Fills the forms and stops before submitting: you send each one"
+        >Fill in {marked.length > 1 ? `${marked.length} forms` : "the form"} <kbd>Shift+F</kbd></button>
+        <button type="button" class="icon-button" aria-label="Clear selection" title="Clear selection" onclick={() => (marked = [])}>×</button>
       </div>
     {/if}
     <div bind:this={results} class="job-list" class:dense={view !== "today"} role="region" aria-label="Job results" aria-busy={loading}>
-      {#if loading}<Loader label="Loading opportunities…" rows={4} />{:else if jobs.length === 0}<EmptyState level={3} title="No matches in this view.">
+      {#if loading}<Loader label="Loading opportunities…" />{:else if jobs.length === 0}<EmptyState level={3} title="No matches in this view.">
           <p>Change your filters, add a posting, or discover new jobs from Job sources.</p>
           {#snippet actions()}<button class="button" onclick={() => onview("sources")}>Open Job sources</button>{/snippet}
         </EmptyState>{:else}
@@ -784,7 +798,7 @@
                   >{job.status
                     ? label(job.status)
                     : job.tier
-                      ? `Rank ${job.tier}`
+                      ? FIT[job.tier] ?? `Rank ${job.tier}`
                       : "Not ranked"}</span
                 ><Icon name="arrow" size={17} /></span
               >
@@ -860,7 +874,7 @@
   .total {
     margin-top: 4px;
     color: var(--muted);
-    font: 500 var(--fs-chrome, 10.5px) / 1 var(--font-mono);
+    font: 500 var(--fs-chrome, 10.5px) / 1 var(--font-ui);
     letter-spacing: 0.06em;
   }
   .tools {
@@ -914,11 +928,18 @@
     outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
+  /* While a scrape runs the brain takes the list's place. */
+  .scrape-stage {
+    display: grid;
+    place-items: center;
+    min-height: clamp(320px, calc(100dvh - var(--workbench-top, 0px) - 260px), 640px);
+    border-top: 1px solid var(--hairline);
+  }
   /* The map fills the page surface below the strip; no box of its own. */
   .map-stage {
     position: relative;
     /* Fits under the top bar, header and strip so the floating controls stay on screen. */
-    height: clamp(320px, calc(100dvh - var(--workbench-top, 0px) - var(--rika-space, 0px) - 230px), 720px);
+    height: clamp(320px, calc(100dvh - var(--workbench-top, 0px) - 230px), 720px);
     border-top: 1px solid var(--hairline);
     border-radius: 0 0 var(--r-panel) var(--r-panel);
     overflow: hidden;
@@ -951,8 +972,9 @@
   .selectable-job.focused {
     box-shadow: inset 3px 0 var(--accent);
   }
-  .selectable-job:focus-within {
-    outline: 1px solid var(--accent);
+  /* Keyboard focus only: a click on a row or its checkbox draws no box around it. */
+  .selectable-job:has(:focus-visible) {
+    outline: 1px solid color-mix(in srgb, var(--ink) 45%, transparent);
     outline-offset: -1px;
   }
   .action-feedback {
@@ -972,7 +994,7 @@
     border-radius: 999px;
     background: color-mix(in srgb, var(--ink) 12%, transparent);
     color: var(--ink);
-    font: 600 10px/1 var(--font-mono);
+    font: 600 10px/1 var(--font-ui);
   }
   /* The filters popover: label column + control column, then the checkboxes. */
   :global(.kitty-popover.job-filters) {
@@ -1010,17 +1032,38 @@
     gap: 8px;
     font-size: 11px;
   }
-  .selection-toolbar {
+  .filters .select-all {
+    flex: none;
+    align-self: center;
+    margin: 0 6px 0 3px;
+  }
+  /* What can be done with the ticked rows, in one piece at the bottom of the window. */
+  .selection-bar {
+    position: fixed;
+    left: 50%;
+    bottom: 26px;
+    z-index: 30;
     display: flex;
     align-items: center;
-    flex-wrap: wrap;
-    gap: 12px;
-    padding: 10px 20px;
-    border-bottom: 1px solid var(--border);
-    font-size: 11px;
+    gap: 8px;
+    max-width: calc(100vw - 32px);
+    padding: 8px 10px 8px 20px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface-raised);
+    box-shadow: 0 18px 50px rgb(0 0 0 / 0.55);
+    font-size: var(--text-small, 14px);
+    transform: translateX(-50%);
+    white-space: nowrap;
   }
-  .toolbar-gap {
-    flex: 1;
+  .selection-bar .count {
+    font-weight: 600;
+  }
+  .selection-bar .rule {
+    width: 1px;
+    height: 18px;
+    margin: 0 4px;
+    background: var(--border);
   }
   .bulk-form {
     display: grid;
@@ -1048,22 +1091,17 @@
     border: 0;
     min-width: 0;
   }
-  .selectable-job.marked {
-    background: var(--surface-raised);
-  }
+  /* A ticked row is marked by its checkbox alone: no band behind it. */
   .row-check {
-    flex-shrink: 0;
     margin: 0 0 0 16px;
-    accent-color: var(--accent);
-    width: 16px;
-    height: 16px;
   }
   @media (max-width: 600px) {
     .jobs-head {
       padding: 10px 12px;
     }
-    .selection-toolbar {
-      padding: 10px 12px;
+    .selection-bar {
+      bottom: 12px;
+      overflow-x: auto;
     }
     .row-check {
       margin-left: 10px;
