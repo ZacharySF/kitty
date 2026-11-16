@@ -614,11 +614,12 @@ selection: base only.
    now parses floats to the exact double (`float_roundtrip`), as `json.loads` does: a stored
    coordinate is read and written back on every change of its map and must not drift.
 
-   Stay on Python, forwarded: `GET /api/schema/backlinks` and `POST /api/schema/backlinks/apply`.
+   Stayed on Python at first, forwarded (since moved: *Built (backlinks)* below): `GET
+   /api/schema/backlinks` and `POST /api/schema/backlinks/apply`.
    They scan notes, study, flashcards, the calendar and jobs through `kitty.core.backlinks`
    (574 lines over `kitty.core.search`'s phrase matching and snippet redaction), which
    `/api/backlinks` and the notes' page connections also use; it moves as one piece.
-   `web_schema.py` keeps only those two. All of `kitty.core.schema_maps` stays: Rika's tools
+   `web_schema.py` kept only those two. All of `kitty.core.schema_maps` stays: Rika's tools
    call `load`, `create`, `save`, `add_node`, `delete`, `undo` and `workspace`, the backlinks
    and the pages' concept maps call `graph`, `_row`, `_write` and the validators, and
    `transfer`, `import_jobs`, `job_options`, `network` and `export` are the reference of
@@ -631,8 +632,8 @@ selection: base only.
    merged labels, deletes and a pair whose partner is gone), through the front and through
    the Python core on two copies of a workspace at the same clock readings, and compares
    every answer, the `schema_maps` rows as text and the events recorded; a second scenario
-   does the same with the workspace module alone, and a third checks that the backlink routes
-   still answer behind the front and that the front then reads what the worker wrote. The
+   does the same with the workspace module alone, and a third checked that the backlink routes
+   still answered behind the front (now `tests/test_backlinks_parity.py`). The
    web tests of `tests/test_schema_maps.py` and `tests/test_web_modules.py` go through the
    front. 12,000 generated links (460 accepted) were judged the same by the front and by
    `schema_maps._url`.
@@ -645,7 +646,88 @@ selection: base only.
    are case-folded as the calendar entry above says; IPv6 literals are parsed by Rust's
    `Ipv6Addr`, not `ipaddress`.
 
-   Measured: MEASUREMENTS
+   Measured on one synthetic workspace (20 maps of 40 nodes, 30 subjects, 200 note pages;
+   median of 300 fresh-connection GETs; the commit before this port, `71e9694`, with its
+   Python handlers against the port, `adc24b7`, release builds run alternately twice, at load
+   2.1 to 2.5): `GET /api/schema` went from 4.75 / 4.45 ms (forwarded to Python) to 0.27 /
+   0.50 ms and `GET /api/schema/map?id=` from 4.84 / 5.10 ms to 0.66 / 0.60 ms, while a
+   still-forwarded route (`/api/calendar/google/status`) took 3.5 to 5.2 ms in both. The
+   release binary grew from 12.82 to 13.10 MB. Start-up and memory were not measured.
+
+   *Built (backlinks):* the backlink routes are answered by rika-server (`server/src/backlinks/`):
+   `GET /api/schema/backlinks` (with `map_id`, each node's suggested references; with `term`
+   and an optional `exclude=<kind>:<id>`, the linked mentions of a free term),
+   `POST /api/schema/backlinks/apply` (link the suggestions of the chosen nodes into the map)
+   and `POST /api/backlinks/related` (the note pages and cards linked with, mentioning or
+   related to a text). Candidates come from the full-text index with Python's FTS5 phrase
+   queries and SQL, in its order, after the `search_pending` queue is folded (`crate::search`);
+   the token matcher, the light singular, label phrases, `[[wikilinks]]`, the ranking
+   (wikilinks first, then the kinds in turn, newest first in each), the `PER_NODE` and
+   `PER_TERM` bounds and `truncated` are `kitty.core.backlinks`' (`text.rs`, `scan.rs`). The
+   five redaction expressions are matched by hand as CPython's `re` matches them (leftmost,
+   greedy, with its backtracking), with `\w`, `\s` and `\d` as `str.isalnum`, `str.isspace` and
+   `str.isdecimal` (the last a new table in `search/tables.rs`) and `re.I` letting `ſ` match
+   `s` and `İ`/`ı` match `i`. Related records weigh the text's terms with `math.log` (libm's,
+   as CPython's) over the index's document frequencies, sum bm25 in SQLite's row order and
+   round as `round(x, 6)` (`related.rs`); `exclude=note_page:<id>` reads the id as `int()`
+   does, so a digit that is no decimal (`²`) is Python's `ValueError` (400) and one past
+   SQLite's integers its `OverflowError` (500). Linking reads and writes the map through
+   crate::schema (`Maps`, `graph`, `_write`): reference nodes take `target_id`'s ids (a sha1
+   for an id that is not a plain key), edges `uuid5(NAMESPACE_URL, ...)` ids, positions
+   `cos`/`sin` around the node as floats clamped to the canvas, so `graph_json` is stored byte
+   for byte as Python stored it; the content event is the front's (`ported/events.rs` had the
+   rule). The candidate statements are compiled once per request and run for every term, as
+   Python's `sqlite3` reused them from its statement cache. Without ApplyAI jobs and ApplyAI
+   calendar copies are not searched and job sources show no live data; without the workspace
+   module the three routes are its 403. `web_schema.py` and `web_backlinks.py` are deleted.
+
+   Stays on Python, forwarded: `GET /api/blocks/backlinks`. It does not use
+   `kitty.core.backlinks`: it is the block API's read snapshot (`block_api.backlinks`:
+   references from `block_refs`, `[[links]]` from `block_topics`, unlinked title mentions
+   through `search.phrase_blocks` and an `re.I` pattern of the title, tagged blocks, each with
+   its excerpt and `((id@seq))` citation at the op-log sequence of the same read), which Rika's
+   `get_backlinks` tool and the agent policy's filtering share; it moves with the block API's
+   reads. `kitty.core.backlinks` stays for its remaining Python callers: `page_connections`
+   (the atlas' notebook graph, `kitty.web_atlas`) and `phrase`, `TOKEN`, `STOPWORDS` and
+   `snippet` (the documents' topics, `kitty.core.documents`); the rest is the reference of the
+   parity test and of the core tests (`tests/test_schema_backlinks.py`,
+   `tests/test_related_references.py`, `tests/test_search_index.py`, `tests/test_note_blocks.py`,
+   `tests/test_web_modules.py`).
+
+   `tests/test_backlinks_parity.py` runs one scenario over the three routes (161 requests, 53
+   of them refused: every refusal of a query and a body, stale revisions, the node and edge
+   limits, the `int()` errors of an exclusion; suggestions before and after linking, linking
+   again without a change, a record written directly to the database and found after the
+   queue is folded, 47 snippets around fragments each redaction turns on) through the front
+   and through the Python core on two copies of a workspace at the same clock reading, and
+   compares every answer, the `schema_maps` rows as text and the events recorded; the same
+   scenario runs with the workspace module alone and without it; 6,100 generated texts give
+   the same tokens, phrases, wikilinks, redaction and snippets through `rika-server
+   backlinks-text` (test-only) as through the core; and the worker answers none of the three
+   routes while `/api/blocks/backlinks` still answers behind the front. Against the binary of
+   `main` before this change the scenarios fail (the routes are 404 once the handlers are
+   gone). The web tests of `tests/test_schema_backlinks.py` and
+   `tests/test_related_references.py` go through the front; the backlink case of
+   `tests/test_record_events.py` is gone (the parity test compares the event).
+
+   Known differences: `map_id` is read as the mind maps' query integers are (ASCII digits
+   only); where two records of the linked or unlinked group tie completely (score, folded
+   title and id text), Python's order followed its hash-seeded set iteration, which differed
+   from one start to the next, and the front's follows the records' keys; bm25 is summed in the
+   row order of the bundled SQLite (3.54.1; Python's is 3.53.1), which the parity test finds
+   the same.
+
+   Measured on one synthetic workspace (200 note pages, 30 subjects, a map of 40 nodes of
+   which 10 labels match; median of 300 fresh-connection requests; `main` at `5cb1cdc`
+   against this branch, release builds run alternately twice, at load 2.5 to 2.7):
+   `GET /api/schema/backlinks?term=topology` went from 5.34 / 6.26 ms (forwarded to Python)
+   to 1.43 / 2.23 ms, `POST /api/backlinks/related` from 8.21 / 6.74 ms to 4.71 / 4.34 ms, and
+   the map's suggestions (`?map_id=`) from 9.73 / 9.88 ms to 7.86 / 7.15 ms: the 40 labels run
+   360 FTS5 phrase queries (nine each: eight kinds, two for flashcards) in SQLite either way,
+   and before the statements were compiled once per request the front took as long as Python
+   (9.5 to 10.6 ms). A
+   still-forwarded route (`/api/calendar/google/status`) took 3.9 to 5.0 ms in both. The
+   release binary grew from 14.80 to 15.10 MB. Start-up and memory were not measured.
 
 ## Rules for every step
 

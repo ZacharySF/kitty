@@ -96,8 +96,8 @@ def applyai_sources(nodes):
 
 
 class Reference:
-    """The routes as `kitty.web_schema` answered them over the core, the module guard before
-    them and the events `WebApplication.mutate` recorded after."""
+    """The routes as `kitty.web_schema` answered them over the core (the handlers are deleted),
+    the module guard before them and the events `WebApplication.mutate` recorded after."""
 
     def __init__(self, db_path, applyai=True):
         self.conn, self.applyai, self.events = connect(db_path), applyai, []
@@ -521,30 +521,3 @@ def test_job_links_without_applyai_are_kept_hidden_and_not_made(workspace, tmp_p
     (workspace.settings.root / "config" / "build.json").write_text(json.dumps({"schema": 1, "modules": ["workspace"]}), encoding="utf-8")
     expected, _, _ = compare(workspace, tmp_path, monkeypatch, lambda call: without_applyai(call, seeded), applyai=False)
     assert "disabled" in next(answer for path, status, answer in expected if status == 403)["error"]
-
-
-def test_the_backlink_routes_stay_with_the_worker_behind_the_front(workspace):
-    """`/api/schema/backlinks*` scan the workspace in Python; the front forwards them."""
-    conn = workspace.conn
-    notebook = notes.create_notebook(conn, "Synthetic notebook")["id"]
-    notes.create_page(conn, notebook, "Optics")
-    created = schema_maps.create(conn, {"title": "Physics", "mode": "study"})
-    saved = schema_maps.save(conn, {"id": created["id"], "revision": created["revision"], "viewport": created["viewport"],
-                                    "graph": {"nodes": [node("optics", label="Optics")], "edges": []}})
-    conn.commit()
-    conn.close()
-    with front_site(workspace.settings) as site:
-        status, by_map = site.request(f"/api/schema/backlinks?map_id={saved['id']}")
-        assert status == 200 and by_map["map_id"] == saved["id"] and by_map["revision"] == saved["revision"]
-        status, by_term = site.request("/api/schema/backlinks?term=optics")
-        assert status == 200 and by_term["term"] == "optics"
-        for query in ("", "?map_id=x", "?map_id=1&term=a", "?term=optics&exclude=bogus"):
-            assert site.request("/api/schema/backlinks" + query)[0] == 400
-        status, linked = site.request("/api/schema/backlinks/apply", {"map_id": saved["id"], "revision": saved["revision"], "node_ids": ["optics"]})
-        assert status == 200 and linked["id"] == saved["id"]
-        assert site.request("/api/schema/backlinks/apply", {"map_id": saved["id"], "revision": saved["revision"] - 1, "node_ids": ["optics"]})[0] == 409
-        assert site.request("/api/schema/backlinks/apply", {"map_id": saved["id"], "revision": linked["revision"], "node_ids": ["missing"]})[0] == 400
-        # A map the worker changed is the one the front then reads, and a route neither knows is a 404.
-        status, loaded = site.request(f"/api/schema/map?id={saved['id']}")
-        assert status == 200 and loaded["revision"] == linked["revision"] and loaded["graph"] == linked["graph"]
-        assert site.request("/api/schema/nope")[0] == 404 and site.request("/api/schema/nope", {})[0] == 404

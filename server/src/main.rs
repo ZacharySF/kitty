@@ -12,6 +12,7 @@
 //! the worker arguments are passed through unchanged.
 
 mod auth;
+mod backlinks;
 mod bootstrap;
 mod builds;
 mod calendar;
@@ -235,6 +236,10 @@ async fn main() {
         Some("search") => std::process::exit(search::search_command(&std::env::args().skip(2).collect::<Vec<_>>())),
         Some("search-sync") => std::process::exit(search::sync_command(&std::env::args().skip(2).collect::<Vec<_>>())),
         _ => {}
+    }
+    // Hidden and test-only: the backlinks' text rules on stdin, for tests/test_backlinks_parity.py.
+    if std::env::args().nth(1).as_deref() == Some("backlinks-text") {
+        std::process::exit(backlinks::text_command());
     }
     let options = match options() {
         Ok(options) => options,

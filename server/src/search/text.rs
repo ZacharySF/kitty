@@ -2,7 +2,7 @@
 //! Unicode facts (crate::search::tables, crate::builds::unicode): word tokens, `casefold`,
 //! `strip`, `split`, slicing by code point, and `html.unescape`.
 
-use super::tables::{ALNUM, CASEFOLD, HTML5, SPACE};
+use super::tables::{ALNUM, CASEFOLD, DECIMAL, HTML5, SPACE};
 use crate::builds::value::in_ranges;
 
 pub fn is_alnum(c: char) -> bool {
@@ -11,6 +11,27 @@ pub fn is_alnum(c: char) -> bool {
 
 pub fn is_space(c: char) -> bool {
     in_ranges(SPACE, c as u32)
+}
+
+/// `str.isdecimal()` for one character (`re`'s `\d`).
+pub fn is_decimal(c: char) -> bool {
+    in_ranges(DECIMAL, c as u32)
+}
+
+/// `int(text)` for text of decimal digits only (any script, as `str.isdecimal` takes them), or
+/// None when one character is not such a digit. Each range of the table starts at a zero.
+pub fn decimal_value(text: &str) -> Option<u128> {
+    let mut value: u128 = 0;
+    for c in text.chars() {
+        let code = c as u32;
+        let index = DECIMAL.partition_point(|&(_, end)| end < code);
+        let &(start, end) = DECIMAL.get(index)?;
+        if code < start || code > end {
+            return None;
+        }
+        value = value.saturating_mul(10).saturating_add(u128::from((code - start) % 10));
+    }
+    Some(value)
 }
 
 /// `str.casefold()`.

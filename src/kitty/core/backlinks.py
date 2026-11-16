@@ -11,6 +11,12 @@ node or term shows is bounded (``PER_NODE``, ``PER_TERM``), and ``truncated`` sa
 when more exist. Snippets redact links, e-mail addresses, file paths and long
 token-like strings. Nothing leaves the machine and no AI is involved; source records
 are only read.
+
+The routes over this (``/api/schema/backlinks``, ``/api/schema/backlinks/apply`` and
+``/api/backlinks/related``) are answered by rika-server (server/src/backlinks). What stays
+here: ``page_connections`` for the atlas' notebook graph (kitty.web_atlas), ``phrase``,
+``TOKEN``, ``STOPWORDS`` and ``snippet`` for the documents' topics (kitty.core.documents),
+and the rest as the reference tests/test_backlinks_parity.py compares the front with.
 """
 from __future__ import annotations
 

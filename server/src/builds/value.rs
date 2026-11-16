@@ -44,6 +44,11 @@ pub fn is_space(c: u32) -> bool {
     in_ranges(unicode::SPACE, c)
 }
 
+/// `str.isdigit()` of one character.
+pub fn is_digit(c: u32) -> bool {
+    in_ranges(unicode::DIGIT, c)
+}
+
 /// `str.strip()`.
 pub fn strip(t: &[u32]) -> &[u32] {
     let start = t.iter().position(|&c| !is_space(c)).unwrap_or(t.len());
