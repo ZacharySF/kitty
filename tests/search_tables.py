@@ -1,8 +1,10 @@
 """The Python text facts the Rust search (server/src/search) needs, as this interpreter has them.
 
 `server/src/search/tables.rs` is generated from here: which characters `str.isalnum()` accepts
-(the word tokens of ``kitty.core.search.TOKEN``, ``[^\\W_]+``), ``str.casefold()`` where it
-changes a character, and ``html.entities.html5`` (what ``html.unescape`` reads). Regenerate
+(the word tokens of ``kitty.core.search.TOKEN``, ``[^\\W_]+``), ``str.isspace()`` and
+``str.isdecimal()`` (what ``re``'s ``\\s`` and ``\\d`` match, and what ``int()`` reads),
+``str.casefold()`` where it changes a character, and ``html.entities.html5`` (what
+``html.unescape`` reads). Regenerate
 it with ``uv run python tests/search_tables.py`` after a Python upgrade;
 tests/test_search_parity.py fails while it is stale.
 """
@@ -54,6 +56,12 @@ def tables() -> str:
         "/// `str.isspace()` of one character (also what `str.strip()` and `str.split()` take as whitespace).",
         "pub static SPACE: &[(u32, u32)] = &[",
         *_rows([f"(0x{start:x}, 0x{end:x})," for start, end in _ranges(str.isspace)], 6),
+        "];",
+        "",
+        "/// `str.isdecimal()` of one character (`re`'s `\\d`, the digits `int()` reads); each range",
+        "/// runs from a zero in steps of ten digits.",
+        "pub static DECIMAL: &[(u32, u32)] = &[",
+        *_rows([f"(0x{start:x}, 0x{end:x})," for start, end in _ranges(str.isdecimal)], 6),
         "];",
         "",
         "/// `str.casefold()` of one character, where it changes it; sorted by character.",

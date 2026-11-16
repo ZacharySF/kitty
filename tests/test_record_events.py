@@ -1,7 +1,9 @@
 """record_events: the append-only history of browser mutations through WebApplication.mutate.
 
-The calendar's, study's and the opportunities' mutations are answered and recorded by rika-server
-(tests/test_calendar.py, tests/test_study_parity.py, tests/test_opportunities_parity.py)."""
+The calendar's, study's, the opportunities' and the mind maps' mutations (linking backlinks
+included) are answered and recorded by rika-server (tests/test_calendar.py,
+tests/test_study_parity.py, tests/test_opportunities_parity.py, tests/test_schema_parity.py,
+tests/test_backlinks_parity.py)."""
 from __future__ import annotations
 
 import logging
@@ -46,21 +48,6 @@ def _notes(app, conn):
     return ("notes", "notebook", str(notebook["id"]), "create", "/api/notes/notebooks")
 
 
-
-
-def _schema(app, conn):
-    """The maps' own mutations are rika-server's (tests/test_schema_parity.py); linking backlinks is Python's."""
-    from kitty.core import schema_maps
-
-    created = schema_maps.create(conn, {"title": "Ideas"})
-    created = schema_maps.add_node(conn, {"map_id": created["id"], "revision": created["revision"], "label": "Waves"})
-    path = "/api/schema/backlinks/apply"
-    app.mutate(conn, path, {"map_id": created["id"], "revision": created["revision"], "node_ids": [created["graph"]["nodes"][0]["id"]]})
-    # A route the front answers and records: its rule is still the reference.
-    assert record_events.classify("/api/schema/create", {"title": "Ideas"}, created) == ("schema", "map", str(created["id"]), "create")
-    return ("schema", "map", str(created["id"]), "link", path)
-
-
 def _jobs(app, conn):
     job = app.mutate(conn, "/api/jobs/add", {"company": "Acme", "title": "Intern",
                                              "url": "https://example.invalid/acme"})
@@ -74,8 +61,7 @@ def _reminders(app, conn):
     return ("reminders", "reminder", str(reminder["id"]), "create", "/api/reminders")
 
 
-@pytest.mark.parametrize("case", [_notes,
-                                  _schema, _jobs, _reminders], ids=lambda case: case.__name__[1:])
+@pytest.mark.parametrize("case", [_notes, _jobs, _reminders], ids=lambda case: case.__name__[1:])
 def test_one_real_route_per_section_is_captured(app, workspace, case):
     conn = workspace.conn
     expected = case(app, conn)

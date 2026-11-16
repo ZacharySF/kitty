@@ -3,10 +3,9 @@
 //! tracked jobs to pick from, and create, import, save, add a node, delete, undo and redo,
 //! import tracked jobs, and the transfer of a branch between maps. Same values, stored rows
 //! (`json.dumps` text), order of checks and refusals as Python.
-//! The backlink routes (`/api/schema/backlinks`, `/api/schema/backlinks/apply`) stay with the
-//! Python worker: they scan the workspace through `kitty.core.backlinks` and the search index
-//! code that has not moved. `kitty.core.schema_maps` stays for them, Rika's tools, the page
-//! maps and the atlas.
+//! The backlink routes (`/api/schema/backlinks`, `/api/schema/backlinks/apply`) are
+//! crate::backlinks, which reads and writes the maps through `Maps` and the validators here.
+//! `kitty.core.schema_maps` stays for Rika's tools, the page maps, the atlas and the tests.
 
 mod network;
 mod url;
@@ -22,15 +21,15 @@ pub static GROUP: Group = Group { owns, module: Some("workspace"), answer };
 /// The two routes over tracked jobs belong to ApplyAI (`ROUTE_MODULES`: the longest prefix).
 pub static JOBS: Group = Group { owns: owns_jobs, module: Some("applyai"), answer: answer_jobs };
 
-type Obj = Map<String, Value>;
+pub(crate) type Obj = Map<String, Value>;
 
 const MODES: [&str; 3] = ["study", "general", "jobs"];
 const KINDS: [&str; 7] = ["class", "topic", "idea", "task", "job", "company", "skill"];
 /// Theme graph palette slots a node may be painted with.
 const COLORS: [&str; 6] = ["c1", "c2", "c3", "c4", "c5", "c6"];
 const MAX_MAPS: usize = 100;
-const MAX_NODES: usize = 300;
-const MAX_EDGES: usize = 600;
+pub(crate) const MAX_NODES: usize = 300;
+pub(crate) const MAX_EDGES: usize = 600;
 const MAX_STROKES: usize = 400;
 const MAX_STROKE_POINTS: usize = 1000;
 const MAX_BYTES: usize = 1_000_000;
@@ -62,20 +61,20 @@ fn bad(message: impl Into<String>) -> Fault {
 // Values -----------------------------------------------------------------------
 
 /// `mapping.get(key)`: None when absent.
-fn get<'a>(map: &'a Obj, key: &str) -> &'a Value {
+pub(crate) fn get<'a>(map: &'a Obj, key: &str) -> &'a Value {
     map.get(key).unwrap_or(&Value::Null)
 }
 
 /// `mapping[key]` of a stored document: a missing key was Python's `KeyError`.
-fn at<'a>(map: &'a Obj, key: &str) -> Done<&'a Value> {
+pub(crate) fn at<'a>(map: &'a Obj, key: &str) -> Done<&'a Value> {
     map.get(key).ok_or_else(internal)
 }
 
-fn string(value: &Value) -> Done<&str> {
+pub(crate) fn string(value: &Value) -> Done<&str> {
     value.as_str().ok_or_else(internal)
 }
 
-fn id_of(row: &Obj) -> Done<i64> {
+pub(crate) fn id_of(row: &Obj) -> Done<i64> {
     at(row, "id")?.as_i64().ok_or_else(internal)
 }
 
@@ -88,7 +87,7 @@ fn member<'a>(value: &'a Value) -> Done<Option<&'a str>> {
 }
 
 /// `_text`.
-fn text(value: &Value, name: &str, limit: usize, required: bool) -> Done<String> {
+pub(crate) fn text(value: &Value, name: &str, limit: usize, required: bool) -> Done<String> {
     let Some(value) = value.as_str().filter(|text| py::len(text) <= limit && !text.contains('\0')) else {
         return Err(bad(format!("{name} must be text of at most {limit} characters")));
     };
@@ -124,11 +123,11 @@ fn fields<'a>(value: &'a Value, allowed: &[&str]) -> Done<&'a Obj> {
     }
 }
 
-fn known(map: &Obj, allowed: &[&str]) -> bool {
+pub(crate) fn known(map: &Obj, allowed: &[&str]) -> bool {
     map.keys().all(|key| allowed.contains(&key.as_str()))
 }
 
-fn unknown_field() -> Fault {
+pub(crate) fn unknown_field() -> Fault {
     bad("Unknown schema field or invalid object")
 }
 
@@ -149,7 +148,7 @@ fn safe_link(value: &Value) -> String {
 }
 
 /// `_key`.
-fn key(value: &Value) -> Done<String> {
+pub(crate) fn key(value: &Value) -> Done<String> {
     let value = text(value, "Graph ID", 80, true)?;
     if value.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
         Ok(value)
@@ -176,7 +175,7 @@ fn uuid() -> Done<String> {
 
 /// `int(text)` for a query value: white space around, a sign, digits with single
 /// underscores between them (ASCII digits only). A value past 64 bits is still an integer.
-fn parse_int(text: &str) -> Option<i128> {
+pub(crate) fn parse_int(text: &str) -> Option<i128> {
     let text = py::strip(text);
     let (negative, digits) = match text.as_bytes().first()? {
         b'-' => (true, &text[1..]),
@@ -197,7 +196,7 @@ fn parse_int(text: &str) -> Option<i128> {
 }
 
 /// A parsed query integer as the JSON value the core then checks.
-fn query_int(value: i128) -> Value {
+pub(crate) fn query_int(value: i128) -> Value {
     i64::try_from(value).map_or_else(|_| json!(value as f64), Value::from)
 }
 
@@ -307,12 +306,12 @@ fn snapshot(row: &Obj) -> Done<Obj> {
     Ok(out)
 }
 
-fn parsed(row: &Obj, column: &str) -> Done<Value> {
+pub(crate) fn parsed(row: &Obj, column: &str) -> Done<Value> {
     Ok(serde_json::from_str(string(at(row, column)?)?)?)
 }
 
 /// `_revision`.
-fn revision(row: &Obj, value: &Value) -> Done<()> {
+pub(crate) fn revision(row: &Obj, value: &Value) -> Done<()> {
     if py::int(value).is_some_and(|given| at(row, "revision").is_ok_and(|stored| py::eq_int(stored, given))) {
         Ok(())
     } else {
@@ -326,14 +325,14 @@ fn count(conn: &Connection) -> Done<usize> {
 
 /// The maps as one request sees them: without ApplyAI, job and company sources keep their
 /// link but show no live data (`applyai_scope`).
-struct Maps<'a> {
-    conn: &'a Connection,
-    applyai: bool,
+pub(crate) struct Maps<'a> {
+    pub(crate) conn: &'a Connection,
+    pub(crate) applyai: bool,
 }
 
 impl Maps<'_> {
     /// `_row`.
-    fn row(&self, item_id: &Value) -> Done<Obj> {
+    pub(crate) fn row(&self, item_id: &Value) -> Done<Obj> {
         self.row_at(integer(item_id, "ID", 1)?)
     }
 
@@ -379,7 +378,7 @@ impl Maps<'_> {
     }
 
     /// `graph`: a document as it is stored, or the first refusal.
-    fn graph(&self, value: &Value, portable: bool) -> Done<Value> {
+    pub(crate) fn graph(&self, value: &Value, portable: bool) -> Done<Value> {
         let value = fields(value, &["nodes", "edges", "strokes"])?;
         let (Some(nodes), Some(edges)) = (get(value, "nodes").as_array().filter(|items| items.len() <= MAX_NODES),
                                           get(value, "edges").as_array().filter(|items| items.len() <= MAX_EDGES)) else {
@@ -561,7 +560,7 @@ impl Maps<'_> {
         self.loaded(self.row(item_id)?)
     }
 
-    fn load_at(&self, item_id: i64) -> Done<Value> {
+    pub(crate) fn load_at(&self, item_id: i64) -> Done<Value> {
         self.loaded(self.row_at(item_id)?)
     }
 
@@ -609,7 +608,7 @@ impl Maps<'_> {
     }
 
     /// `_write`.
-    fn write(&self, row: &Obj, title: &str, document: &Value, view: &Value) -> Done<Value> {
+    pub(crate) fn write(&self, row: &Obj, title: &str, document: &Value, view: &Value) -> Done<Value> {
         self.store(row, title, document, view)?;
         self.load_at(id_of(row)?)
     }

@@ -1,11 +1,14 @@
-"""Synthetic local reference and notes organization regressions."""
+"""Synthetic local reference and notes organization regressions.
+
+`POST /api/backlinks/related` is rika-server's (server/src/backlinks); its web test goes through
+the front and `kitty.core.backlinks.related` stays the reference."""
 import sqlite3
 
 import pytest
+from terminal_support import front_site
 
-from kitty import web_backlinks, web_notes
+from kitty import web_notes
 from kitty.core import backlinks, notes, search
-from kitty.web_server import APIError
 
 
 def make_page(conn, title, content):
@@ -53,9 +56,20 @@ def test_related_without_the_index_and_validation():
             backlinks.related(conn, text)
     with pytest.raises(ValueError):
         backlinks.related(conn, 'energy', 'bogus')
-    with pytest.raises(APIError):
-        web_backlinks.post(None, conn, '/api/backlinks/related', {'text': 'ok', 'unknown': True})
     conn.close()
+
+
+def test_the_related_route_through_the_front(workspace):
+    conn = workspace.conn
+    source = make_page(conn, 'Cell energy', 'ATP powers cells')
+    forward = make_page(conn, 'Mitochondria', 'Respiration produces ATP')
+    conn.commit()
+    conn.close()
+    with front_site(workspace.settings) as site:
+        status, result = site.request('/api/backlinks/related', {'text': '[[Mitochondria]] and ATP', 'exclude': f"note_page:{source['id']}"})
+        assert status == 200 and [ref['id'] for ref in result['linked']] == [forward['id']]
+        assert site.request('/api/backlinks/related', {'text': 'ok', 'unknown': True}) == (400, {'error': 'Expected text and optional exclude'})
+        assert site.request('/api/backlinks/related', {'text': 'ok', 'exclude': 'bogus'}) == (400, {'error': 'Exclude must look like <kind>:<id>'})
 
 
 def test_daily_resolve_templates_tags_favorites_and_order(workspace):
