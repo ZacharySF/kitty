@@ -3,6 +3,7 @@
      refreshing the calendar) while another section is open; the panels render only when `visible`. -->
 <script lang="ts">
   import { onMount, untrack } from "svelte";
+  import { Button } from "@nunera/bracket";
   import { api, type TaskRecord } from "../api";
   import GoogleConflict, { type ConflictEvent } from "../GoogleConflict.svelte";
   import { notifier } from "../notifications.svelte";
@@ -66,6 +67,11 @@
   };
   let importRows = $state<Preview[]>([]);
   let importNotice = $state("");
+  /** The previewed file's name, shown beside the import buttons until the preview is confirmed or cancelled. */
+  let importName = $state("");
+  let icsInput = $state<HTMLInputElement>();
+  let csvInput = $state<HTMLInputElement>();
+  let clientInput = $state<HTMLInputElement>();
   let googleStatus = $state<GoogleStatus | null>(null);
   let googleResult = $state<unknown>(null);
   let googleTask = $state<TaskRecord | null>(null);
@@ -179,21 +185,26 @@
       URL.revokeObjectURL(url);
     });
   }
-  async function importFile(event: EventTarget | null, format: string) {
-    const input = event as HTMLInputElement;
-    if (!input.files?.[0]) return;
+  async function importFile(input: HTMLInputElement, format: string) {
+    const file = input.files?.[0];
+    if (!file) return;
     await run(async () => {
       const result = await api<{ items: Preview[]; notice: string }>(
         "/calendar/import/preview",
-        { content: await input.files![0].text(), format, timezone: tz },
+        { content: await file.text(), format, timezone: tz },
       );
       importRows = result.items.map((v) => ({
         ...v,
         selected: !!v.event && !v.duplicate && !v.error,
       }));
       importNotice = result.notice;
+      importName = file.name;
     });
     input.value = "";
+  }
+  function clearImport() {
+    importRows = [];
+    importName = "";
   }
   async function applyImport() {
     await run(async () => {
@@ -207,7 +218,7 @@
       });
       onnotice(`Imported ${result.created.length}; skipped ${result.duplicates.length} duplicates.`);
       onundo(result.undo_ids.at(-1) || null);
-      importRows = [];
+      clearImport();
       await load();
     });
   }
@@ -288,8 +299,7 @@
         onerror(result.error || "Google operation failed");
     });
   }
-  async function uploadClient(target: EventTarget | null) {
-    const input = target as HTMLInputElement;
+  async function uploadClient(input: HTMLInputElement) {
     if (!input.files?.[0]) return;
     await run(async () => {
       await api("/calendar/google/client", {
@@ -537,25 +547,17 @@
 }} />
 
 {#if visible}
-    <section class="panel">
-      <h2>Import / export</h2>
+    <section class="panel" aria-labelledby={`${pane.id}-imports-title`}>
+      <h2 id={`${pane.id}-imports-title`}>Import / export</h2>
+      <!-- The native pickers stay hidden; plain buttons open them and the picked file's name follows. -->
+      <input type="file" hidden accept=".ics,text/calendar" bind:this={icsInput} onchange={(e) => importFile(e.currentTarget, "ics")} />
+      <input type="file" hidden accept=".csv,text/csv" bind:this={csvInput} onchange={(e) => importFile(e.currentTarget, "csv")} />
       <div class="controls">
-        <label class="file"
-          >Preview ICS<input
-            type="file"
-            accept=".ics,text/calendar"
-            onchange={(e) => importFile(e.target, "ics")}
-          /></label
-        ><label class="file" title="CSV headers: title,date; optional job_id,kind,timezone,url,description"
-          >Preview CSV<input
-            type="file"
-            accept=".csv,text/csv"
-            onchange={(e) => importFile(e.target, "csv")}
-          /></label
-        ><button onclick={exportFile}>Export ICS</button><button
-          onclick={refreshSources}
-          >Refresh linked application / opportunity dates</button
-        >
+        <Button size="sm" title="Preview events from an .ics file before importing" onclick={() => icsInput?.click()}>Import ICS…</Button>
+        <Button size="sm" title="CSV headers: title,date; optional job_id,kind,timezone,url,description" onclick={() => csvInput?.click()}>Import CSV…</Button>
+        <Button size="sm" onclick={exportFile}>Export ICS</Button>
+        <Button size="sm" title="Re-read dates from linked applications and opportunities" onclick={refreshSources}>Refresh linked dates</Button>
+        {#if importName}<span class="picked">{importName}</span>{/if}
       </div>
       {#if importRows.length}<p>{importNotice}</p>
         <div class="import-review">
@@ -578,11 +580,10 @@
               ></label
             >{/each}
         </div>
-        <button
-          onclick={applyImport}
-          disabled={!importRows.some((v) => v.selected)}
-          >Confirm selected import</button
-        ><button onclick={() => (importRows = [])}>Cancel</button>{/if}
+        <div class="controls">
+          <Button size="sm" onclick={applyImport} disabled={!importRows.some((v) => v.selected)}>Import selected</Button>
+          <Button size="sm" variant="ghost" onclick={clearImport}>Cancel</Button>
+        </div>{/if}
     </section>
     <section class="panel">
       <h2 title="Due reminders arrive as toasts and in the bell while rika! runs; quiet hours live in Settings">Reminder notifications</h2>
@@ -597,213 +598,104 @@
         />Also show system notifications</label
       >
     </section>
-    <section class="panel">
-      <h2>Google Calendar · optional</h2>
-      {#if demo}<p class="notice">Demo mode: Google calls are blocked.</p>{/if}{#if googleStatus}<p>{googleStatus.notice}</p>
-        <p>
-          Client: {googleStatus.client_present
-            ? "stored privately"
-            : "not configured"} · Account: {googleStatus.authorized
-            ? "authorized"
-            : "not authorized"} · Tasks: {googleStatus.tasks_authorized
-            ? "authorized"
-            : "not authorized"}
-        </p>
-        <ol>
-          {#each googleStatus.steps as step}<li>{step}</li>{/each}
-        </ol>
-        <div class="controls">
-          <label class="file"
-            >Upload Desktop client JSON<input
-              type="file"
-              accept=".json,application/json"
-              disabled={demo || googleStatus.authorized}
-              onchange={(e) => uploadClient(e.target)}
-            /></label
-          ><label
-            ><input type="checkbox" bind:checked={includeTasks} />Also request
-            Google Tasks scope</label
-          ><button
-            disabled={demo ||
-              !googleStatus.client_present ||
-              googleTask?.status === "running"}
-            onclick={() =>
-              googleWork("/calendar/google/authorize", {
-                confirmed: true,
-                include_tasks: includeTasks,
-              })}>Review browser consent & authorize</button
-          ><button
-            disabled={demo || !googleStatus.authorized}
-            onclick={() =>
-              run(async () => {
-                if (
-                  window.confirm(
-                    "Remove the separate Calendar token? Local data and Gmail token stay unchanged.",
-                  )
-                ) {
-                  await api("/calendar/google/disconnect", {
-                    confirmed: true,
-                    revoke: false,
-                  });
-                  await loadGoogle();
-                }
-              })}>Disconnect locally</button
-          ><button
-            disabled={demo || !googleStatus.authorized}
-            onclick={() =>
-              run(async () => {
-                if (
-                  window.confirm(
-                    "Revoke this separate Calendar authorization at Google and remove its token?",
-                  )
-                ) {
-                  await api("/calendar/google/disconnect", {
-                    confirmed: true,
-                    revoke: true,
-                  });
-                  await loadGoogle();
-                }
-              })}>Revoke access</button
-          >
-        </div>
+    <section class="panel" aria-labelledby={`${pane.id}-google-title`}>
+      <h2 id={`${pane.id}-google-title`}>Google Calendar</h2>
+      {#if demo}<p class="notice">Demo mode: Google calls are blocked.</p>{/if}{#if googleStatus}
+        <p class="status">{googleStatus.authorized
+          ? googleStatus.tasks_authorized ? "Connected · Tasks too" : "Connected"
+          : googleStatus.client_present ? "Client uploaded · not connected" : "Not connected"}</p>
         <details>
-          <summary>Capability inventory & account blockers</summary>
-          <p>
-            Available API resources: {googleStatus.capabilities.google.join(
-              ", ",
-            )}.
-          </p>
-          <p>
-            Account/permission dependent: {googleStatus.capabilities.account_dependent.join(
-              ", ",
-            )}. Google denial is reported, never simulated.
-          </p>
-          {#each Object.entries(googleStatus.capabilities.unsupported) as [name, reason]}<p
-            >
-              <strong>{name}:</strong>
-              {reason}
-            </p>{/each}
-          {#each googleStatus.limits as limit}<p>{limit}</p>{/each}
-        </details>{/if}
-      <h3>Select calendars & synchronize</h3>
-      <button
-        disabled={demo ||
-          !googleStatus?.authorized ||
-          googleTask?.status === "running"}
-        onclick={() =>
-          googleWork("/calendar/google/operation", {
-            resource: "calendarList",
-            action: "list",
-          })}>List Google calendars</button
-      >{#each remoteCalendars as c}<div class="free-row">
-          <span>{String(c.summary)} · {String(c.accessRole || "")}</span><button
-            disabled={demo ||
-              !googleStatus?.authorized ||
-              googleTask?.status === "running" ||
-              googleStatus?.selected.some(
-                (selected) => selected.google_id === c.id,
-              )}
+          <summary>How to set up</summary>
+          <ol>
+            {#each googleStatus.steps as step}<li>{step}</li>{/each}
+          </ol>
+          {#if googleStatus.notice}<p class="hint">{googleStatus.notice}</p>{/if}
+          <h4>Limits</h4>
+          <p class="hint">Available: {googleStatus.capabilities.google.join(", ")}.</p>
+          <p class="hint">Depends on your account: {googleStatus.capabilities.account_dependent.join(", ")}. Google denials are reported, never simulated.</p>
+          {#each Object.entries(googleStatus.capabilities.unsupported) as [name, reason]}<p class="hint"><strong>{name}:</strong> {reason}</p>{/each}
+          {#each googleStatus.limits as limit}<p class="hint">{limit}</p>{/each}
+        </details>
+        <input type="file" hidden accept=".json,application/json" bind:this={clientInput} onchange={(e) => uploadClient(e.currentTarget)} />
+        <div class="controls">
+          <Button size="sm" title="The Desktop app OAuth client JSON from Google Cloud" disabled={demo || googleStatus.authorized}
+            onclick={() => clientInput?.click()}>Upload client JSON…</Button>
+          <label title="Also request the Google Tasks scope"><input type="checkbox" bind:checked={includeTasks} />Include Tasks</label>
+          <Button size="sm" title="Review the separate Calendar consent in your browser"
+            disabled={demo || !googleStatus.client_present || googleTask?.status === "running"}
+            onclick={() => googleWork("/calendar/google/authorize", { confirmed: true, include_tasks: includeTasks })}>Authorize…</Button>
+          <Button size="sm" variant="ghost" title="Remove the Calendar token here; Google access stays granted" disabled={demo || !googleStatus.authorized}
             onclick={() =>
-              googleWork("/calendar/google/select", {
-                google_id: c.id,
-                confirmed: true,
-              })}>Link locally</button
-          >
+              run(async () => {
+                if (window.confirm("Remove the separate Calendar token? Local data and Gmail token stay unchanged.")) {
+                  await api("/calendar/google/disconnect", { confirmed: true, revoke: false });
+                  await loadGoogle();
+                }
+              })}>Disconnect</Button>
+          <Button size="sm" variant="ghost" disabled={demo || !googleStatus.authorized}
+            onclick={() =>
+              run(async () => {
+                if (window.confirm("Revoke this separate Calendar authorization at Google and remove its token?")) {
+                  await api("/calendar/google/disconnect", { confirmed: true, revoke: true });
+                  await loadGoogle();
+                }
+              })}>Revoke access</Button>
+        </div>{/if}
+      <h3>Sync</h3>
+      <div class="controls">
+        <Button size="sm" disabled={demo || !googleStatus?.authorized || googleTask?.status === "running"}
+          onclick={() => googleWork("/calendar/google/operation", { resource: "calendarList", action: "list" })}>Find calendars</Button>
+      </div>
+      {#each remoteCalendars as c}<div class="free-row">
+          <span>{String(c.summary)} · {String(c.accessRole || "")}</span>
+          <Button size="sm" title="Link it to a local calendar; nothing is sent to Google"
+            disabled={demo || !googleStatus?.authorized || googleTask?.status === "running" ||
+              googleStatus?.selected.some((selected) => selected.google_id === c.id)}
+            onclick={() => googleWork("/calendar/google/select", { google_id: c.id, confirmed: true })}>Link</Button>
         </div>{/each}
       <div class="controls">
         {#each googleStatus?.selected || [] as c}<label
-            ><input
-              type="checkbox"
-              checked={linked.includes(c.id)}
-              onchange={() =>
-                (linked = linked.includes(c.id)
-                  ? linked.filter((id) => id !== c.id)
-                  : [...linked, c.id])}
-            />{c.name}</label
-          ><button
-            disabled={demo || googleTask?.status === "running"}
+            ><input type="checkbox" checked={linked.includes(c.id)}
+              onchange={() => (linked = linked.includes(c.id) ? linked.filter((id) => id !== c.id) : [...linked, c.id])}
+            />{c.name}</label>
+          <Button size="sm" variant="ghost" disabled={demo || googleTask?.status === "running"}
             onclick={() =>
               run(async () => {
-                if (
-                  !window.confirm(
-                    `Unlink ${c.name}? Local events remain; no Google deletion is made.`,
-                  )
-                )
-                  return;
-                await api("/calendar/google/unselect", {
-                  calendar_id: c.id,
-                  revision: c.revision,
-                  confirmed: true,
-                });
+                if (!window.confirm(`Unlink ${c.name}? Local events remain; no Google deletion is made.`)) return;
+                await api("/calendar/google/unselect", { calendar_id: c.id, revision: c.revision, confirmed: true });
                 await loadGoogle();
                 await load();
-              })}>Unlink {c.name}</button
-          >{/each}
+              })}>Unlink {c.name}</Button>{/each}
       </div>
       <div class="controls">
         <label title="Pull reviews local conflicts; Pull + push also sends local changes"
           >Direction<Select label="Direction" bind:value={syncDirection}
             options={[{ value: "pull", label: "Pull from Google" }, { value: "both", label: "Pull + push" }]} /></label
         ><label title="Google may still notify on its own"
-          >Attendee email updates<Select label="Attendee email updates" bind:value={sendUpdates}
+          >Attendee emails<Select label="Attendee emails" bind:value={sendUpdates}
             options={[{ value: "none", label: "None" }, { value: "all", label: "All attendees" }, { value: "externalOnly", label: "External only" }]} /></label
         >
+        <Button size="sm" title="Every pending write, including deleted events, and who Google may email"
+          disabled={demo || !googleStatus?.authorized || !linked.length || googleTask?.status === "running"}
+          onclick={() =>
+            run(async () => {
+              syncPreview = await api<SyncPreview>("/calendar/google/preview", { calendar_ids: linked, send_updates: sendUpdates });
+              syncApproved = false;
+            })}>Preview changes</Button>
       </div>
-      <button
-        disabled={demo ||
-          !googleStatus?.authorized ||
-          !linked.length ||
-          googleTask?.status === "running"}
-        onclick={() =>
-          run(async () => {
-            syncPreview = await api<SyncPreview>("/calendar/google/preview", {
-              calendar_ids: linked,
-              send_updates: sendUpdates,
-            });
-            syncApproved = false;
-          })}>Prepare all pending writes & recipients for review</button
-      >
       {#if syncPreview}<details open>
-          <summary
-            >Frozen sync preview · all dates, including deleted events</summary
-          >
-          <pre class="results">{JSON.stringify(
-              { calendars: syncPreview.calendars, events: syncPreview.events },
-              null,
-              2,
-            )}</pre>
+          <summary>Preview</summary>
+          <pre class="results">{JSON.stringify({ calendars: syncPreview.calendars, events: syncPreview.events }, null, 2)}</pre>
         </details>{/if}
-      <label
-        ><input
-          type="checkbox"
-          bind:checked={syncApproved}
-          disabled={syncDirection === "both" && !syncPreview}
-        />{syncDirection === "both"
-          ? "I reviewed every pending write/recipient above and approve this notification policy."
-          : "I approve fetching Google data. Local conflicts require review; no external changes are made."}</label
-      >
       <div class="controls">
-        <button
-          disabled={demo ||
-            !googleStatus?.authorized ||
-            (syncDirection === "both" && !syncPreview) ||
-            !linked.length ||
-            !syncApproved ||
-            googleTask?.status === "running"}
-          onclick={() =>
-            googleWork("/calendar/google/sync", syncRequest())}
-          >Run reviewed sync</button
-        ><button
-          disabled={demo ||
-            !googleStatus?.authorized ||
-            (syncDirection === "both" && !syncPreview) ||
-            !linked.length ||
-            !syncApproved ||
-            googleTask?.status === "running"}
-          onclick={() =>
-            googleWork("/calendar/google/sync", syncRequest(true))}
-          >Full refresh</button
-        >
+        <label><input type="checkbox" bind:checked={syncApproved} disabled={syncDirection === "both" && !syncPreview}
+          />{syncDirection === "both" ? "Approve these changes and emails" : "Approve fetching from Google (nothing is sent)"}</label>
+        <Button size="sm"
+          disabled={demo || !googleStatus?.authorized || (syncDirection === "both" && !syncPreview) || !linked.length || !syncApproved || googleTask?.status === "running"}
+          onclick={() => googleWork("/calendar/google/sync", syncRequest())}>Sync</Button>
+        <Button size="sm" variant="ghost"
+          disabled={demo || !googleStatus?.authorized || (syncDirection === "both" && !syncPreview) || !linked.length || !syncApproved || googleTask?.status === "running"}
+          onclick={() => googleWork("/calendar/google/sync", syncRequest(true))}>Full refresh</Button>
       </div>
       {#each googleStatus?.calendar_conflicts || [] as conflict}<article
           class="conflict"
@@ -830,9 +722,7 @@
               }}>{title}</button
             >{/each}
         </article>{/each}
-      {#if googleConflicts.length}<h3>
-          Conflicts · never silently overwritten
-        </h3>
+      {#if googleConflicts.length}<h3 title="Never silently overwritten">Conflicts</h3>
         {#each googleConflicts as c (c.id)}{@const fill = paint(c.local)}<GoogleConflict
             conflict={c}
             {fill}
@@ -890,11 +780,7 @@
           >{/if}
         <p class="hint">Changes are previewed against live Google and sent only after approval.</p>
         {#if action === "watch"}<p class="hint">Needs your own public HTTPS webhook; channels expire unrenewed.</p>
-          <label
-            ><input type="checkbox" bind:checked={webhookConfirmed} />
-            I control and configured the public HTTPS receiver in data.address and
-            reviewed what Google may deliver.</label
-          >{/if}
+          <label><input type="checkbox" bind:checked={webhookConfirmed} />I run the HTTPS receiver in data.address</label>{/if}
         {#if resource === "events" && action === "quickAdd"}<p class="hint">Google has no dry run; sent without attendees or notifications.</p>{/if}
         <label title="Move: params.destination (Calendar) or destinationTasklist/parent/previous (Tasks). Import needs iCalUID, start and end. Clear is not undoable locally."
           >Exact resource data (JSON)<textarea
@@ -977,16 +863,10 @@
                       <code>{String(item.id)}</code>
                     </li>{/each}
                 </ol>
-                <label
-                  ><input type="checkbox" bind:checked={clearConfirmed} />I
-                  reviewed the full list above and confirm clearing all {operationReview
-                    .items.length} items.</label
+                <label><input type="checkbox" bind:checked={clearConfirmed} />Clear all {operationReview.items.length} items listed above</label
                 >{/if}{/if}
-            <label
-              ><input type="checkbox" bind:checked={operationApproved} />I
-              approve this exact external request, recipients, sharing
-              role/scope and possible Google emails. Paid services/attachment
-              permissions remain provider-controlled.</label
+            <label title="Paid services and attachment permissions stay provider-controlled"
+              ><input type="checkbox" bind:checked={operationApproved} />I approve this exact request, its recipients, sharing and any Google emails</label
             ><button
               disabled={!operationApproved ||
                 googleTask?.status === "running" ||
@@ -997,22 +877,13 @@
           </div>{/if}
       </details>
       {#if googleTask}<p role="status">
-          Google operation: {googleTask.kind} · {googleTask.status}{googleTask.status ===
-          "running"
-            ? " · waiting for Google / browser consent"
-            : ""}
+          Google: {googleTask.kind} · {googleTask.status}{googleTask.status === "running" ? " · waiting for Google or browser consent" : ""}
         </p>{/if}{#if googleResult}<details open>
-          <summary>Google / import operation result</summary>
+          <summary>Last result</summary>
           <pre class="results">{JSON.stringify(googleResult, null, 2)}</pre>
         </details>{/if}
-      <a
-        href="https://calendar.google.com/calendar/u/0/r"
-        target="_blank"
-        rel="noreferrer"
-      >
-        Open Google Calendar for consumer-only features such as appointment
-        schedules</a
-      >
+      <a href="https://calendar.google.com/calendar/u/0/r" target="_blank" rel="noreferrer"
+        title="For Google-only features such as appointment schedules">Open Google Calendar</a>
     </section>
 {/if}
 
@@ -1109,16 +980,17 @@
     border-radius: 0.5rem;
     margin: 0.6rem 0;
   }
-  .file {
-    border: 1px solid var(--border);
-    padding: 0.5rem;
-    border-radius: 0.4rem;
-    cursor: pointer;
-    flex-wrap: wrap;
+  /* The picked file's name, beside the buttons that opened it. */
+  .picked {
+    color: var(--muted);
+    font-size: 0.85rem;
+    overflow-wrap: anywhere;
   }
-  .file input {
-    max-width: 15rem;
-    font-size: 0.8rem;
+  .status {
+    color: var(--muted);
+  }
+  .import-review + .controls {
+    margin-top: 0.65rem;
   }
   .import-review {
     max-height: 24rem;

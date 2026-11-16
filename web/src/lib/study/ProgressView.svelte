@@ -126,7 +126,7 @@
       </div>
     </div>
     <div class="share">
-      <svg viewBox="0 0 140 140" aria-hidden="true">
+      <svg viewBox="0 0 140 140" width="140" height="140" aria-hidden="true">
         <circle cx="70" cy="70" r={RADIUS} class="track" />
         {#each arcs as arc (arc.id)}
           <circle cx="70" cy="70" r={RADIUS} class="arc" class:dim={hot !== undefined && hot !== arc.id} class:hot={hot === arc.id}
@@ -349,6 +349,12 @@
     grid-template-columns: 140px minmax(0, 1fr);
     align-items: center;
     gap: 14px;
+  }
+  /* A fixed size: with only a viewBox, WebKit sizes the SVG past its 140px column and over the legend. */
+  .share svg {
+    display: block;
+    width: 140px;
+    height: 140px;
   }
   .share svg circle {
     fill: none;

@@ -112,7 +112,7 @@
     finder: "Company finder",
     reports: "Response reports",
     mail: "Gmail",
-    triage: "Job triage",
+    triage: "Rank jobs",
   };
 
   async function load() {
@@ -598,27 +598,20 @@
         </div>
       {/if}
     {:else}
-      <p>
-        Model <strong>{model || "Loading…"}</strong> · Spending limit
-        <strong>${configuredCap.toFixed(2)}</strong>
-      </p>
+      <!-- One row of same-height controls; the model and its limit are a quiet note after them. -->
       <form
-        class="controls"
+        class="triage-row"
+        aria-label="Sort jobs with AI"
         onsubmit={(event) => {
           event.preventDefault();
           estimate = null;
           void request("/triage/estimate", { track: track || null, limit });
         }}
       >
-        <label
-          >Track<select bind:value={track} onchange={() => (estimate = null)}
-            ><option value="">All tracks</option>{#each tracks as name}<option
-                value={name}>{name}</option
-              >{/each}</select
-          ></label
-        >
-        <label
-          >Jobs to send to AI<input
+        <Select label="Track" kind="list" options={[{ value: "", label: "All tracks" }, ...tracks.map((name) => ({ value: name, label: name }))]}
+          bind:value={track} onchange={() => (estimate = null)} />
+        <label class="inline-field"
+          >Jobs to send<input
             type="number"
             min="1"
             max="1000"
@@ -627,15 +620,9 @@
             oninput={() => (estimate = null)}
           /></label
         >
-        <button class="button primary" disabled={running}
-          >See the price</button
-        >
-        <button
-          class="button"
-          type="button"
-          disabled={running}
-          onclick={() => runTriage("rules")}>Sort with free rules</button
-        >
+        <button class="button primary" disabled={running}>See the price</button>
+        <button class="button" type="button" disabled={running} onclick={() => runTriage("rules")}>Sort with free rules</button>
+        <span class="triage-meta" title="AI model and its spending limit">{model || "Loading…"} · up to ${configuredCap.toFixed(2)}</span>
       </form>
       {#if estimate}<article class="estimate">
           <h3>Review estimate</h3>
@@ -693,21 +680,19 @@
             >
           </div>
         </article>{/if}
-      <h3>Pending batches</h3>
-      {#if pending.length === 0}<p class="empty-state">
-          No batches waiting.
-        </p>{:else}<ul>
+      <div class="batches">
+        <span class="triage-meta">{pending.length ? `${pending.length} ${pending.length === 1 ? "batch" : "batches"} waiting` : "No batches waiting"}</span>
+        {#if pending.length}<button
+            class="button"
+            disabled={demo || running}
+            onclick={() => runTriage("collect")}>Collect results</button
+          >{/if}
+      </div>
+      {#if pending.length}<ul class="batch-list">
           {#each pending as batch}<li>
-              {batch.batch_id} · {batch.sent} jobs · estimated ${batch.estimate_usd.toFixed(
-                4,
-              )}
+              {batch.batch_id} · {batch.sent} jobs · estimated ${batch.estimate_usd.toFixed(4)}
             </li>{/each}
         </ul>{/if}
-      <button
-        class="button"
-        disabled={demo || running || pending.length === 0}
-        onclick={() => runTriage("collect")}>Collect batch results</button
-      >
     {/if}
   </div>
 </section>
@@ -805,14 +790,54 @@
     gap: 0.35rem;
     font-size: 0.85rem;
   }
-  input,
-  select {
+  input {
     max-width: 100%;
     padding: 0.6rem;
     background: var(--surface);
     color: var(--ink);
     border: 1px solid var(--border);
     border-radius: 0.45rem;
+  }
+  /* Job ranking: one card-like row, every control the shared control height on one centre line. */
+  .triage-row,
+  .batches {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+  }
+  .triage-row {
+    padding: 12px 14px;
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-panel);
+  }
+  .inline-field {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted);
+    font-size: var(--fs-control);
+  }
+  .inline-field input {
+    box-sizing: border-box;
+    width: 76px;
+    height: var(--control-h);
+    padding: 0 10px;
+    border-radius: var(--r-control);
+    font-size: var(--fs-control);
+  }
+  .triage-meta {
+    color: var(--muted);
+    font-size: var(--fs-control);
+  }
+  .triage-row .triage-meta {
+    margin-left: auto;
+  }
+  .batch-list {
+    margin: 0;
+    padding-left: 1.2rem;
+    color: var(--muted);
+    font-size: var(--fs-control);
   }
   .cards {
     display: grid;

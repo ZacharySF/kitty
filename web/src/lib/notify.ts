@@ -23,7 +23,7 @@ export const LEDGER_KEY = "kitty.notify.ledger";
 export const SYSTEM_KEY = "kitty.notify.system";
 /** Fired on `window` when quiet hours change, so the running notifier re-checks at once. */
 export const QUIET_EVENT = "kitty:quiet-hours";
-export const SOURCE_LABEL: Record<Source, string> = { calendar: "Calendar", job: "Job search", rika: "Rika" };
+export const SOURCE_LABEL: Record<Source, string> = { calendar: "Calendar", job: "Career", rika: "Rika" };
 
 /**
  * What has happened to each notice key. `snoozed` maps a key to the ISO time it returns;
@@ -99,7 +99,7 @@ export function rikaNotice(alert: RikaAlert): Notice {
   };
 }
 
-/** "2 calendar · 1 job search · 1 rika" */
+/** "2 calendar · 1 career · 1 rika" */
 export function digestLine(notices: Notice[]): string {
   return (["calendar", "job", "rika"] as const)
     .map(source => [source, notices.filter(n => n.source === source).length] as const)

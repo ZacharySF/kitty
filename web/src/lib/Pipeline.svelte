@@ -5,6 +5,7 @@
   import JobDetail from "./JobDetail.svelte";
   import Loader from "./Loader.svelte";
   import { beginDrag } from "./pointerDrag";
+  import RikaPanel from "./rika/RikaPanel.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
   const pane = useWorkspaceContext();
   let {
@@ -288,6 +289,8 @@
   </button>
 {/snippet}
 
+<!-- Career's landing: the board, with home's Rika column at its right (below it when narrow). -->
+<div class="track">
 <section class="panel pipeline" aria-label="Application pipeline">
   <div class="panel-heading">
     <h2>Track</h2>
@@ -369,6 +372,8 @@
         </div>{/if}
     </div>{/if}
 </section>
+<aside class="track-rika"><RikaPanel id={`track-${pane.id}-rika`} active={pane.active} /></aside>
+</div>
 {#if selected !== null}{#key selected}<JobDetail
       bind:this={detail}
       id={selected}
@@ -379,8 +384,22 @@
     />{/key}{/if}
 
 <style>
-  .pipeline {
+  .track {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
+    gap: 18px;
+    align-items: start;
     margin-bottom: 18px;
+  }
+  .pipeline {
+    min-width: 0;
+  }
+  /* Rika keeps a steady column beside the board and stays in view while the board scrolls. */
+  .track-rika {
+    position: sticky;
+    top: 12px;
+    height: min(640px, calc(100vh - 160px));
+    min-height: 360px;
   }
   .controls {
     display: flex;
@@ -624,6 +643,14 @@
   @media (max-width: 1150px) {
     .panel-heading {
       flex-wrap: wrap;
+    }
+    /* Narrow, the board takes the width and Rika follows below it. */
+    .track {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .track-rika {
+      position: static;
+      height: 480px;
     }
   }
 </style>

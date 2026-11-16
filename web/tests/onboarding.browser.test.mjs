@@ -89,6 +89,53 @@ async function shot(page, name) {
   await page.screenshot({ path: join(SHOTS, `${name}.png`), timeout: 300_000 });
 }
 
+/** The shared download modal must cover even a native onboarding dialog and the top bar. */
+async function assertDownloadCover(page, { amount, value, reduced = false } = {}) {
+  const cover = page.getByRole("dialog", { name: /^Downloading/ });
+  await cover.waitFor();
+  assert.equal(await page.locator("dialog.module-download").count(), 1, "more than one download overlay was mounted");
+  assert.equal(await cover.getAttribute("aria-modal"), "true");
+  const geometry = await cover.evaluate((node) => {
+    const box = node.getBoundingClientRect(), style = getComputedStyle(node);
+    return {
+      box: [box.x, box.y, box.width, box.height],
+      viewport: [0, 0, innerWidth, innerHeight],
+      modal: node.matches(":modal"),
+      focus: node.contains(document.activeElement),
+      blur: style.backdropFilter,
+      backdropBlur: getComputedStyle(node, "::backdrop").backdropFilter,
+      corners: [[1, 1], [innerWidth - 1, 1], [1, innerHeight - 1], [innerWidth - 1, innerHeight - 1]]
+        .every(([x, y]) => node.contains(document.elementFromPoint(x, y))),
+    };
+  });
+  assert.deepEqual(geometry.box, geometry.viewport, "the overlay does not fill the viewport");
+  assert.ok(geometry.modal && geometry.focus && geometry.corners, JSON.stringify(geometry));
+  assert.equal(geometry.blur, "none");
+  assert.equal(geometry.backdropBlur, "none");
+  const bar = cover.getByRole("progressbar", { name: "Total download progress" });
+  if (amount) {
+    await cover.getByText(amount, { exact: true }).waitFor();
+    assert.equal(await bar.getAttribute("aria-valuetext"), amount);
+    assert.equal(await bar.getAttribute("aria-valuenow"), String(value));
+  }
+  const canvas = cover.locator("canvas.brain-cloud");
+  assert.equal(await canvas.getAttribute("aria-hidden"), "true");
+  const frame = await canvas.evaluate((node) => node.toDataURL());
+  if (reduced) {
+    await page.waitForTimeout(150);
+    assert.equal(await canvas.evaluate((node) => node.toDataURL()), frame, "reduced motion still spins the brain");
+  } else {
+    await page.waitForFunction((frame) => document.querySelector("dialog.module-download canvas")?.toDataURL() !== frame, frame);
+  }
+  for (const key of ["Tab", "Shift+Tab", "Escape"]) {
+    await page.keyboard.press(key);
+    assert.ok(await cover.evaluate((node) => node.open && node.contains(document.activeElement)), `${key} escaped the download modal`);
+  }
+  await page.locator("#main-content").evaluate((node) => node.focus());
+  assert.ok(await cover.evaluate((node) => node.contains(document.activeElement)), "background content stole focus");
+  return cover;
+}
+
 /** The welcome card is portrait: the still of the Brain on top, only words-light controls below. */
 async function assertPortrait(page, card) {
   const box = await card.boundingBox();
@@ -294,16 +341,17 @@ test("the question preselects modules, the list shows the chosen ones with sizes
 
   picker.hold = true;
   await card.getByRole("button", { name: "Continue", exact: true }).click();
-  const bar = math.getByRole("progressbar", { name: "Math engine download" });
-  await bar.waitFor();
+  const cover = await assertDownloadCover(page, { amount: "11.8 MB of 31.2 MB", value: 38 });
+  // The picker remains disabled underneath, but is intentionally absent from the accessibility tree.
+  const bar = math.getByRole("progressbar", { name: "Math engine download", includeHidden: true });
   assert.equal(await bar.getAttribute("aria-valuenow"), "40");
-  await page.waitForFunction(() => /^Downloading 11\.8 MB of 31\.2 MB$/.test(document.querySelector("dialog.onboarding .total")?.innerText.trim() ?? ""));
-  assert.ok(await card.getByRole("button", { name: "Continue", exact: true }).isDisabled());
-  assert.ok(await card.getByRole("button", { name: "Skip onboarding" }).isDisabled(), "Skip leaves a download behind");
+  assert.ok(await card.getByRole("button", { name: "Continue", exact: true, includeHidden: true }).isDisabled());
+  assert.ok(await card.getByRole("button", { name: "Skip onboarding", includeHidden: true }).isDisabled(), "Skip leaves a download behind");
   assert.deepEqual(picker.posts, [], "the selection was saved before its downloads arrived");
   await shot(page, "picker-downloading");
 
   picker.hold = false;
+  await cover.waitFor({ state: "hidden" });
   await card.getByRole("status").filter({ hasText: "Restarting rika!…" }).waitFor();
   assert.deepEqual(picker.installs, ["math", "brain"], "packs download one at a time, in order");
   assert.deepEqual(picker.posts, [["workspace", "math", "brain"]]);
@@ -363,13 +411,66 @@ test("offline the bundled list still shows; a module that needs a download canno
 });
 
 test("a failed download saves nothing and says why", async () => {
-  const { card, context, picker } = await open();
-  await context.route("**/api/packs/install", (route) => route.fulfill({ status: 503, json: { error: "rika! could not reach GitHub to check for downloads" } }));
+  const { page, card, context, picker, problems } = await open();
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  await context.route("**/api/packs/install", async (route) => {
+    await held;
+    await route.fulfill({ status: 503, json: { error: "rika! could not reach GitHub to check for downloads" } });
+  });
   await card.getByRole("button", { name: "Start locally" }).click();
   await card.getByRole("button", { name: "Studying", exact: true }).click();
-  await card.getByRole("button", { name: "Continue", exact: true }).click();
+  const trigger = card.getByRole("button", { name: "Continue", exact: true });
+  await trigger.click();
+  const cover = await assertDownloadCover(page);
+  release();
+  await cover.waitFor({ state: "hidden" });
   await card.getByRole("alert").filter({ hasText: "Could not save modules: rika! could not reach GitHub to check for downloads" }).waitFor();
   assert.deepEqual(picker.posts, []);
   assert.ok(await card.getByRole("button", { name: "Continue", exact: true }).isEnabled());
+  await page.waitForFunction(() => document.activeElement?.textContent.trim() === "Continue");
+  assert.ok(await trigger.evaluate((node) => node === document.activeElement), "failed download did not restore its caller");
+  assert.deepEqual(problems, []);
+  await context.close();
+});
+
+test("Settings module downloads share the full-window cover; reduced motion stays still and success restores focus", async () => {
+  const { page, card, context, picker, problems } = await open();
+  await card.getByRole("button", { name: "Skip onboarding" }).click();
+  await card.waitFor({ state: "hidden" });
+  await page.evaluate(() => { location.hash = "#settings/modules"; });
+  const modules = page.getByRole("region", { name: "Modules", exact: true });
+  await modules.getByRole("switch", { name: "Math", exact: true }).click();
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  picker.hold = true;
+  await modules.getByRole("button", { name: "Save", exact: true }).click();
+  const cover = await assertDownloadCover(page, { amount: "11.8 MB of 29.6 MB", value: 40, reduced: true });
+  picker.hold = false;
+  await cover.waitFor({ state: "hidden" });
+  await modules.getByRole("status").filter({ hasText: "Restart rika! to finish" }).waitFor();
+  assert.deepEqual(picker.installs, ["math"]);
+  assert.deepEqual(picker.posts, [["workspace", "math"]]);
+  await page.waitForFunction(() => !document.querySelector("dialog.module-download[open]") && document.activeElement !== document.body);
+  assert.deepEqual(problems, []);
+  await context.close();
+});
+
+test("onboarding theme downloads use the same modal, then restore the theme switch", async () => {
+  const { page, card, context, picker, problems } = await open();
+  await card.getByRole("button", { name: "Start locally" }).click();
+  await card.getByRole("button", { name: "Show all 7 modules" }).click();
+  const themes = card.getByRole("switch", { name: "Themes", exact: true });
+  if (await themes.getAttribute("aria-checked") === "true") await themes.click();
+  await page.waitForFunction(() => document.querySelector('[data-themes] [role="switch"]')?.getAttribute("aria-checked") === "false");
+  picker.hold = true;
+  await themes.click();
+  const cover = await assertDownloadCover(page);
+  picker.hold = false;
+  await cover.waitFor({ state: "hidden" });
+  await page.waitForFunction(() => document.querySelector('[data-themes] [role="switch"]')?.getAttribute("aria-checked") === "true");
+  assert.deepEqual(picker.installs, ["themes"]);
+  assert.deepEqual(picker.posts, [], "a theme choice unexpectedly saved worker modules");
+  assert.ok(await themes.evaluate((node) => node === document.activeElement), "theme download did not restore its switch");
+  assert.deepEqual(problems, []);
   await context.close();
 });

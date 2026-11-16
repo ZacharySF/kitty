@@ -50,3 +50,7 @@
 - **Animations** must be seen: page turns, sliding markers, springs. Fades alone read as "flashing".
 - **Any page can be rearranged** with Ctrl+Shift+Space (move and resize blocks).
 - **Calendar:** Notion Calendar / Apple Calendar as the bar: hairlines, one clear now-line, soft event blocks, no floating pill, no cards in cards.
+
+## Module downloads (15 Nov 2026)
+- One full-window, opaque download surface covers the title bar and any onboarding dialog, whether a download starts in Settings, onboarding, or a theme choice. Reuse the turning point-cloud brain, with a short pack label and aggregate byte progress; no blur.
+- Use the native modal top layer: keep background controls inert and keyboard focus inside until the download succeeds or fails, then return focus to its caller (or the next available control). Escape does not hide a running download. Reduced motion keeps the brain still.

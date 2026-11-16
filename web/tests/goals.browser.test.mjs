@@ -197,6 +197,42 @@ describe("Goals view", () => {
     await context.close();
   });
 
+  test("target date calendar selects leap days, clears dates and stays inside a narrow drawer", async () => {
+    const { page, context } = await open("#goals");
+    try {
+      await page.getByRole("button", { name: "New goal" }).first().click();
+      const drawer = page.getByRole("dialog", { name: "New goal", exact: true });
+      const input = drawer.getByLabel("Target date", { exact: true });
+      await input.fill("2028-01-31");
+      await drawer.getByRole("button", { name: "Choose target date" }).click({ timeout: 5000 });
+      const calendar = page.getByRole("dialog", { name: "Choose target date", exact: true });
+      await calendar.getByRole("button", { name: "Next month" }).click();
+      await calendar.getByRole("button", { name: "2028-02-29", exact: true }).click();
+      assert.equal(await input.inputValue(), "2028-02-29");
+      assert.equal(await calendar.count(), 0);
+      assert.ok(await drawer.getByRole("button", { name: "Choose target date" }).evaluate(node => node === document.activeElement));
+      await page.setViewportSize({ width: 390, height: 700 });
+      await drawer.getByRole("button", { name: "Choose target date" }).click();
+      const bounds = await calendar.boundingBox();
+      assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= 390 && bounds.y >= 0 && bounds.y + bounds.height <= 700, "calendar stays within the viewport");
+      const day = calendar.getByRole("button", { name: "2028-02-29", exact: true });
+      const size = await day.boundingBox();
+      assert.ok(size.width >= 36 && size.height >= 36, "dates have readable touch targets");
+      await day.press("ArrowLeft");
+      await page.keyboard.press("Enter");
+      assert.equal(await input.inputValue(), "2028-02-28");
+      await drawer.getByRole("button", { name: "Choose target date" }).click();
+      await calendar.getByRole("button", { name: "Clear date" }).click();
+      assert.equal(await input.inputValue(), "");
+      await drawer.getByRole("button", { name: "Choose target date" }).click();
+      await page.keyboard.press("Escape");
+      assert.equal(await calendar.count(), 0);
+      assert.ok(await drawer.isVisible(), "Escape closes only the calendar");
+    } finally {
+      await context.close();
+    }
+  });
+
   test("a goal is created, edited and deleted in the side drawer", async () => {
     const { page, problems, context } = await open("#goals");
     await page.getByRole("heading", { name: /./, level: 2 }).first().waitFor({ timeout: 60_000 });

@@ -20,7 +20,7 @@
   /**
    * The one mind-map editor (Q18 D, Q19 A): Notes' Map mode (embedded, the page's own map),
    * Study's Mind map tab and the Mind maps view (Ctrl K) all open it. Chrome: a slim top bar
-   * (map switcher, title, layout, view, ⋯), the Notes canvas pill for building, a small bar on
+   * (map switcher, title, layout, ⋯), the Notes canvas pill for building, a small bar on
    * the selected topic and a zoom corner; the canvas fills the rest. Edits autosave and the
    * save state is a dot on the tab.
    */
@@ -112,7 +112,6 @@
     queue_state: string;
   };
   type Snapshot = { title: string; graph: Graph; viewport: View };
-  type View3D = "edit" | "map3d" | "network";
   type NetworkNode = {
     id: string;
     kind: string;
@@ -285,8 +284,7 @@
   let erasing: {pointer: number; erased: boolean} | null = null, penHover = false, penSeen = -Infinity;
   /** The last tap (node id, `edge:` id or `stage`), so a second tap on the same spot is a double tap. */
   let lastTap = {key: "", time: 0, x: 0, y: 0};
-  let view = $state<View3D>("edit"),
-    mapLayout = $state<GraphLayout>("tree"),
+  let view = $state<"edit" | "network">("edit"),
     netLayout = $state<GraphLayout>("tree");
   let network = $state<Network | null>(null),
     netMode = $state(""),
@@ -1606,36 +1604,6 @@
     }
     frame();
   }
-  function degreeOf(id: string) {
-    return (
-      current?.graph.edges.filter((e) => e.from === id || e.to === id).length ??
-      0
-    );
-  }
-  const mapGraph = $derived.by(() => {
-    if (!current) return { nodes: [] as GraphNode[], links: [] as GraphLink[] };
-    const degree = new Map<string, number>();
-    for (const e of current.graph.edges) {
-      degree.set(e.from, (degree.get(e.from) ?? 0) + 1);
-      if (e.to !== e.from) degree.set(e.to, (degree.get(e.to) ?? 0) + 1);
-    }
-    return {
-      nodes: current.graph.nodes.map((n): GraphNode => ({
-        id: n.id,
-        label: name(n),
-        group: n.kind,
-        kind: n.kind,
-        size: Math.min(10, 1 + (degree.get(n.id) ?? 0)),
-        detail: `${n.kind}${n.source ? " / linked source" : ""} / ${degree.get(n.id) ?? 0} connections`,
-      })),
-      links: current.graph.edges.map((e): GraphLink => ({
-        source: e.from,
-        target: e.to,
-        label: e.label,
-        directed: true,
-      })),
-    };
-  });
   function mapTitle(id: number) {
     const m =
       network?.maps.find((m) => m.id === id) ?? maps.find((m) => m.id === id);
@@ -2126,10 +2094,6 @@
           {#each LAYOUTS as [id, text] (id)}<button type="button" role="menuitem" class="menu-item" onclick={() => { layoutOpen = false; arrange(id); }}>{text}</button>{/each}
         </Popover>
       {/if}
-      {#if current && view !== "network"}
-        <span class="vr" aria-hidden="true"></span>
-        <Select label="View" kind="segments" value={view} options={[{value: "edit", label: "Map"}, {value: "map3d", label: "Graph"}]} onchange={(value) => view = value as View3D} />
-      {/if}
       <OverflowMenu label="More map actions" items={mapActions} />
     </header>
   {/if}
@@ -2200,33 +2164,6 @@
             {#if !links.out.length && !links.in.length}<li class="hint">No connections.</li>{/if}
           </ul>
         {:else}<p class="hint">Select a topic to see where it appears.</p>{/if}
-      </aside>
-    </div>
-  {:else if current && view === "map3d"}
-    <div class="views graph-view">
-      <main class="graph-pane">
-        {#if pane.active}
-          <SchemaNetwork title={`Map / ${current.title}`} nodes={mapGraph.nodes} links={mapGraph.links} bind:layout={mapLayout}
-            selected={selected || null} onSelect={(id) => { const n = current?.graph.nodes.find((n) => n.id === id); if (n) choose(n); }} />
-        {/if}
-      </main>
-      <aside class="side">
-        {#if node}
-          <h2>{name(node)}</h2>
-          <Badge label={node.kind} />
-          <p class="hint">{degreeOf(node.id)} connections in this map</p>
-          {#if node.source && current.live[node.id]?.missing}<p class="hint warn">Source deleted; unlink it in the map.</p>{/if}
-          {#if node.notes}<p class="notes">{node.notes}</p>{/if}
-          {#if safeUrl((node.source ? current.live[node.id]?.url : undefined) ?? node.url)}<a href={safeUrl((node.source ? current.live[node.id]?.url : undefined) ?? node.url)} target="_blank" rel="noopener noreferrer">Open source ↗</a>{/if}
-          <span class="eyebrow">Connections</span>
-          <ul class="members">
-            {#each current.graph.edges.filter((e) => e.from === node.id || e.to === node.id) as e (e.id)}
-              {@const other = current.graph.nodes.find((n) => n.id === (e.from === node.id ? e.to : e.from))!}
-              <li>{e.from === node.id ? `→ ${e.label || "(unlabeled)"} → ${e.to === node.id ? "itself" : name(other)}` : `← ${e.label || "(unlabeled)"} ← ${name(other)}`}</li>
-            {:else}<li class="hint">No connections.</li>{/each}
-          </ul>
-          <Button size="sm" onclick={() => editInMap(current!.id, node.id)}>Edit in map</Button>
-        {:else}<p class="hint">Select a topic in the graph.</p>{/if}
       </aside>
     </div>
   {:else if current}

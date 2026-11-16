@@ -19,7 +19,7 @@ export function hideableSection(view: string): boolean {
 /**
  * The atlas Sections list: every enabled section, shown or hidden. Takes the
  * enabled groups (`visibleGroups`) and a view's label and icon (`navItem`).
- * Job search shows only its hub on the atlas, plus any add-on sections.
+ * Career shows only its hub on the atlas, plus any add-on sections.
  */
 export function atlasSections(
   groups: readonly { label: string; views: readonly AnyView[] }[],
@@ -28,12 +28,12 @@ export function atlasSections(
   return groups.map((group) => ({
     label: group.label,
     items: group.views
-      .filter((id) => id !== "today" && id !== "brain" && (group.label !== "Job search" || id === "jobs" || isExternalViewId(id)))
+      .filter((id) => id !== "today" && id !== "brain" && (group.label !== "Career" || id === "jobs" || isExternalViewId(id)))
       .flatMap((id) => lookup(id) ?? []),
   }));
 }
 
-const ROOT_VIEWS: Partial<Record<string, View>> = { Study: "study", "Job search": "jobs", Settings: "settings" };
+const ROOT_VIEWS: Partial<Record<string, View>> = { Study: "study", Career: "jobs", Settings: "settings" };
 
 /**
  * Graph for the shown sections. A hidden section drops its node and every link

@@ -43,8 +43,8 @@ export type BuildUi = {
   notes: { pen_only: boolean };
   terminal: { coding_agent: "omp" | "claude" | "codex" };
   appearance: AppearancePreference;
-  /** `columns`/`hidden`: home's widgets, `widths`/`rika`: the columns' shares (home/layout.ts); `template_offered`: Rika made its one offer. */
-  home: { look: "brain" | "2d"; columns: string[][]; hidden: string[]; widths: number[]; rika: number; template_offered: boolean; /** Colour-coded widgets (home/tones.ts). */ tones: string[] };
+  /** `columns`/`hidden`: home's widgets, `widths`/`rika`: the columns' shares and `heights` the widgets' (home/layout.ts); `template_offered`: Rika made its one offer. */
+  home: { look: "brain" | "2d"; columns: string[][]; hidden: string[]; widths: number[]; rika: number; template_offered: boolean; /** Colour-coded widgets (home/tones.ts). */ tones: string[]; heights: string[] };
   brain: BrainPreference;
   notifications: { quiet: QuietPreference };
   flashcards: { look: "tiles" | "graph" };
@@ -110,7 +110,7 @@ export const DEFAULT_BUILD: Build = {
     notes: { pen_only: false },
     terminal: { coding_agent: "omp" },
     appearance: { title_font: "plain", density: "compact", motion: "full", motif: true, background: "nebula" },
-    home: { look: "brain", columns: [["agenda", "note"], ["next", "agents"]], hidden: [], widths: [1, 1], rika: 0, template_offered: false, tones: [] },
+    home: { look: "brain", columns: [["agenda", "note"], ["next", "agents"]], hidden: [], widths: [1, 1], rika: 0, template_offered: false, tones: [], heights: [] },
     brain: {
       layout: "anatomy", group_by: "section", labels: "hover", turning: true, speed: 0.5, lines: false,
       scaffold: true, point_size: 1, background: "transparent", colors: { section: {}, group: {}, type: {} },

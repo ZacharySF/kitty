@@ -60,7 +60,7 @@ test('F takes the nearest focused panel; F or Esc restores the layout and scroll
   assert.deepEqual(scroll(), [0, 240]);
 });
 
-test('typing contexts retain F and Ctrl+Shift+F both before and during panel fullscreen', () => {
+test('typing keeps bare F and Escape; Ctrl+Shift+F toggles from inside an editor', () => {
   const { view, panels, press } = setup();
   const editor = element('div', { parent: view, editable: true });
   const targets = [
@@ -72,13 +72,34 @@ test('typing contexts retain F and Ctrl+Shift+F both before and during panel ful
     if (fullscreen) press('f');
     for (const target of targets) {
       assert.equal(focusContext(target), 'text');
-      for (const extra of [{}, chord]) {
-        const event = press('f', target, extra);
-        assert.equal(event.defaultPrevented, false, target.tagName);
-        assert.equal(panels.active(), fullscreen ? view : null, target.tagName);
-      }
+      assert.equal(press('f', target).defaultPrevented, false, target.tagName);
+      assert.equal(press('Escape', target).defaultPrevented, false, `${target.tagName}: Escape first leaves the field`);
+      assert.equal(panels.active(), fullscreen ? view : null, target.tagName);
     }
   }
+  press('Escape');
+  const span = targets.at(-1);
+  assert.equal(press('F', span, chord).defaultPrevented, true);
+  assert.equal(panels.active(), view, 'the chord fullscreens the editor’s panel');
+  assert.equal(press('F', span, chord).defaultPrevented, true);
+  assert.equal(panels.active(), null, 'the chord exits from inside the editor too');
+});
+
+test('the visible button toggles its own panel and reports each change', () => {
+  const root = element('html');
+  const view = element('section', { attributes: { [PANEL_ATTRIBUTE]: 'view' } });
+  const button = element('button', { parent: view });
+  const changes = [];
+  const panels = createPanelFullscreen({
+    root, fallbackPanel: () => null, blocked: () => false, scrollPosition: () => [0, 0],
+    scrollTo() {}, activeElement: () => button, changed: (panel) => changes.push(panel),
+  });
+  panels.toggle(button);
+  assert.equal(panels.active(), view);
+  assert.equal(button.focused, undefined, 'focus stays on the button');
+  panels.toggle(button);
+  assert.equal(panels.active(), null);
+  assert.deepEqual(changes, [view, null]);
 });
 
 test('terminal marker protects its inner textarea; Ctrl+Shift+F toggles and Esc exits', () => {

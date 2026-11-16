@@ -395,3 +395,188 @@ describe("Page edit mode", () => {
     await context.close();
   });
 });
+
+describe("Home layout editing", () => {
+  const homeBar = (page) => page.getByRole("toolbar", { name: "Home editing" });
+  const center = (box) => ({ x: box.x + box.width / 2, y: box.y + box.height / 2 });
+  /** A widget on the board by its id; edit mode makes widgets inert, so not by role. */
+  const widget = (board, id) => board.locator(`section[aria-labelledby$="-${id}"]`);
+  /** Until the widgets have glided to their places (an arrangement change animates them). */
+  const settle = (page) => page.waitForFunction(() => document.getAnimations().every((animation) => animation.playState !== "running" || !animation.effect?.target?.hasAttribute?.("data-widget")));
+  /** Home with its widgets loaded, in edit mode. */
+  async function editHome(page) {
+    const board = page.getByRole("region", { name: "Home widgets" });
+    await board.getByRole("region", { name: "Up next" }).waitFor();
+    await page.waitForLoadState("networkidle").catch(() => {});
+    await page.keyboard.press("Control+Shift+Space");
+    await homeBar(page).waitFor();
+    return board;
+  }
+  async function saveHome(page) {
+    const saved = page.waitForResponse((response) => response.url().endsWith("/api/build/preferences"));
+    await homeBar(page).getByRole("button", { name: "Done" }).click();
+    assert.equal((await saved).status(), 200);
+    await homeBar(page).waitFor({ state: "detached" });
+  }
+  /** `upper` sits right above `lower` in the same column. */
+  async function stacked(upper, lower) {
+    const [a, b] = await Promise.all([upper.boundingBox(), lower.boundingBox()]);
+    return Math.abs(a.x - b.x) <= 2 && b.y >= a.y + a.height;
+  }
+
+  test("a widget dragged by its handle into the other column lands where the pointer is, with a placeholder and a preview on the way, and stays after a reload", async () => {
+    const { page, problems, context } = await open("today");
+    const board = await editHome(page);
+    const note = widget(board, "note");
+    const upNext = widget(board, "next");
+    assert.equal(await stacked(upNext, note), false, "the demo's Quick note already sits under Up next");
+    const handle = await board.getByRole("button", { name: /^Move Quick note/ }).boundingBox();
+    const under = await upNext.boundingBox();
+    const aim = { x: under.x + under.width / 2, y: under.y + under.height * 0.75 };
+    await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(aim.x, aim.y, { steps: 12 });
+    // Still held: a preview rides under the pointer and the widget's place already opened under Up next.
+    const preview = page.locator("[data-drag-preview]");
+    await preview.waitFor();
+    const ride = await preview.boundingBox();
+    assert.ok(ride.x <= aim.x && aim.x <= ride.x + ride.width && ride.y <= aim.y && aim.y <= ride.y + ride.height, `the preview at ${JSON.stringify(rounded(ride))} is not under the pointer at ${JSON.stringify(aim)}`);
+    await settle(page);
+    assert.ok(await stacked(upNext, note), "no place opened under Up next while the widget was held");
+    await page.mouse.up();
+    await preview.waitFor({ state: "detached" });
+    await settle(page);
+    assert.ok(await stacked(upNext, note), "Quick note did not stay under Up next");
+    await saveHome(page);
+    await page.reload();
+    const after = page.getByRole("region", { name: "Home widgets" });
+    await after.getByRole("region", { name: "Up next" }).waitFor();
+    assert.ok(await stacked(after.getByRole("region", { name: "Up next" }), after.getByRole("region", { name: "Quick note" })), "Quick note left Up next's column after a reload");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("the dividers between the widget columns and before Rika's column set their widths, within limits, and keep them after a reload", async () => {
+    const { page, problems, context } = await open("today");
+    const board = await editHome(page);
+    const columns = board.locator(".column");
+    const rika = page.locator(".rika-panel");
+    const widths = () => Promise.all([columns.nth(0), columns.nth(1), rika].map(async (node) => Math.round((await node.boundingBox()).width)));
+    const [left, right, panel] = await widths();
+    const divider = page.getByRole("separator", { name: "Width of the two widget columns" });
+    // Pulled far right, the right-hand column stops at its narrowest.
+    await dragBy(page, center(await divider.boundingBox()), 2000, 0);
+    const [widest, narrowest] = await widths();
+    assert.ok(widest > left && narrowest < right && narrowest >= 0.29 * (widest + narrowest), `columns ${widest} | ${narrowest}, from ${left} | ${right}`);
+    // Back to about three fifths of the board.
+    const room = await board.boundingBox();
+    const grip = center(await divider.boundingBox());
+    await dragBy(page, grip, room.x + room.width * 0.6 - grip.x, 0);
+    const [wider, narrower] = await widths();
+    assert.ok(wider - left >= 60 && right - narrower >= 60 && wider < widest, `columns ${wider} | ${narrower}, from ${left} | ${right}`);
+    // Rika's column grows to the left.
+    await dragBy(page, center(await page.getByRole("separator", { name: "Width of Rika's column" }).boundingBox()), -100, 0);
+    const [, , broader] = await widths();
+    assert.ok(broader - panel >= 60, `Rika's column is ${broader}, from ${panel}`);
+    const set = await widths();
+    await saveHome(page);
+    await page.reload();
+    await page.getByRole("region", { name: "Home widgets" }).getByRole("region", { name: "Up next" }).waitFor();
+    const kept = await widths();
+    assert.ok(kept.every((width, index) => Math.abs(width - set[index]) <= 2), `widths ${kept} after a reload, ${set} before`);
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("a widget's bottom edge sets its height on the 8px grid, never below the smallest, a double-click gives its own back, and the height stays after a reload", async () => {
+    const { page, problems, context } = await open("today");
+    const board = await editHome(page);
+    const note = widget(board, "note");
+    const edge = board.locator('[data-widget="note"] [data-resize="height"]');
+    const natural = await note.boundingBox();
+    await dragBy(page, center(await edge.boundingBox()), 0, 101);
+    const grown = Math.round((await note.boundingBox()).height);
+    assert.ok(Math.abs(grown - (natural.height + 101)) <= 4 && grown % 8 === 0, `grown to ${grown}, from ${natural.height}`);
+    // Pushed far up it stops at the smallest height, its content scrolling inside.
+    await dragBy(page, center(await edge.boundingBox()), 0, -2000);
+    const floor = center(await edge.boundingBox()).y - (await note.boundingBox()).y;
+    assert.ok(Math.abs(floor - 120) <= 3, `shrunk to ${floor}`);
+    await edge.dblclick();
+    assert.ok(Math.abs((await note.boundingBox()).height - natural.height) <= 1, "a double-click did not give the widget its own height back");
+    await dragBy(page, center(await edge.boundingBox()), 0, 101);
+    const set = Math.round((await note.boundingBox()).height);
+    await saveHome(page);
+    await page.reload();
+    const kept = page.getByRole("region", { name: "Home widgets" }).getByRole("region", { name: "Quick note" });
+    await kept.waitFor();
+    assert.equal(Math.round((await kept.boundingBox()).height), set);
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("keyboard: a focused handle moves its widget with the arrow keys and resizes it with Shift, each step said aloud, without gliding under reduced motion", async () => {
+    const { page, problems, context } = await open("today");
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    const board = await editHome(page);
+    const said = homeBar(page).getByRole("status");
+    const handle = board.getByRole("button", { name: /^Move Quick note/ });
+    const note = widget(board, "note");
+    const upNext = widget(board, "next");
+    const focused = () => page.waitForFunction(() => /^Move Quick note/.test(document.activeElement?.getAttribute("aria-label") ?? ""));
+    // Quick note joins the end of the second column, then climbs to just under Up next (its first widget).
+    const second = await board.locator(".column").nth(1).locator("[data-widget]").count();
+    const total = second + 1;
+    await handle.focus();
+    await page.keyboard.press("ArrowRight");
+    await said.filter({ hasText: new RegExp(`Quick note.*column 2.*${total} of ${total}`) }).waitFor();
+    await focused();
+    for (let place = total - 1; place >= 2; place--) {
+      await page.keyboard.press("ArrowUp");
+      await said.filter({ hasText: new RegExp(`Quick note.*column 2.*${place} of ${total}`) }).waitFor();
+      await focused();
+    }
+    assert.ok(await stacked(upNext, note), "Quick note is not under Up next");
+    assert.equal(await board.evaluate((node) => [...node.querySelectorAll("[data-widget]")].flatMap((slot) => slot.getAnimations()).length), 0, "widgets glide under reduced motion");
+    // Shift + Down: taller by a few grid steps.
+    const before = await note.boundingBox();
+    await page.keyboard.press("Shift+ArrowDown");
+    await said.filter({ hasText: /Quick note.*\d+ pixels tall/ }).waitFor();
+    const taller = (await note.boundingBox()).height;
+    assert.ok(taller - before.height >= 24 && taller - before.height <= 56, `Shift + Down took ${before.height} to ${taller}`);
+    // Shift + Right: its column wider.
+    const column = board.locator(".column").nth(1);
+    const narrow = (await column.boundingBox()).width;
+    await page.keyboard.press("Shift+ArrowRight");
+    await said.filter({ hasText: /Quick note.*column.*%/ }).waitFor();
+    assert.ok((await column.boundingBox()).width > narrow + 10, "Shift + Right did not widen the widget's column");
+    await focused();
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("outside edit mode home has no handles, dividers or resize edges, and a drag moves nothing", async () => {
+    const { page, problems, context } = await open("today");
+    const board = page.getByRole("region", { name: "Home widgets" });
+    const note = board.getByRole("region", { name: "Quick note" });
+    await board.getByRole("region", { name: "Up next" }).waitFor();
+    await page.waitForLoadState("networkidle").catch(() => {});
+    const locked = async (when) => {
+      assert.equal(await page.getByRole("button", { name: /^Move / }).count(), 0, `a move handle ${when}`);
+      assert.equal(await page.getByRole("separator", { name: /^Width of/ }).count(), 0, `a divider ${when}`);
+      assert.equal(await page.locator('.home [draggable="true"], .home [data-resize], [data-drag-preview]').count(), 0, `something to drag ${when}`);
+    };
+    await locked("before edit mode");
+    const before = rounded(await note.boundingBox());
+    await dragBy(page, center(await note.getByRole("heading", { name: "Quick note" }).boundingBox()), 400, 160);
+    const after = rounded(await note.boundingBox());
+    assert.deepEqual([after.x, after.y], [before.x, before.y], "a drag outside edit mode moved Quick note");
+    await page.keyboard.press("Control+Shift+Space");
+    await homeBar(page).waitFor();
+    assert.ok(await page.getByRole("button", { name: /^Move / }).count() > 0, "edit mode has no move handles");
+    assert.ok(await page.locator(".home [data-resize]").count() > 0, "edit mode has no resize edges");
+    await saveHome(page);
+    await locked("after edit mode");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});

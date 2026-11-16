@@ -22,7 +22,7 @@ export const navigation = [
   { id: "schema", label: "Mind maps", icon: "schema", module: "workspace" },
   { id: "ai", label: "AI settings", icon: "ai", module: null },
   { id: "inbox", label: "New jobs", icon: "inbox", module: "applyai" },
-  { id: "queue", label: "Prepare applications", icon: "queue", module: "applyai" },
+  { id: "queue", label: "Ready to apply", icon: "queue", module: "applyai" },
   { id: "jobs", label: "Find jobs", icon: "jobs", module: "applyai" },
   { id: "pipeline", label: "My applications", icon: "applications", module: "applyai" },
   { id: "applications", label: "Application list", icon: "applications", module: "applyai" },
@@ -55,7 +55,7 @@ const EXTERNAL_ID = new RegExp(`^m/${SLUG}/${SLUG}$`);
 const EXTERNAL_HASH = new RegExp(`^(m/${SLUG}/${SLUG})(?:/|$)`);
 /** Drawn for an add-on whose icon name rika! does not know (the Modules settings icon). */
 export const GENERIC_ICON = "atlas";
-const GROUP_LABELS: Record<ExternalView["group"], string> = { plan: "Plan", study: "Study", jobs: "Job search", settings: "Settings" };
+const GROUP_LABELS: Record<ExternalView["group"], string> = { plan: "Plan", study: "Study", jobs: "Career", settings: "Settings" };
 
 export function externalViewId(view: Pick<ExternalView, "module" | "id">): ExternalViewId {
   return `m/${view.module}/${view.id}`;
@@ -91,6 +91,8 @@ export function missingPack(view: View, missing: readonly string[]): string | nu
 export function isView(value: string): value is View {
   return navigation.some(item => item.id === value);
 }
+/** Words old links used for a page that has since merged into another: `#apply` was Apply, `#find` Find. */
+const HASH_ALIASES: Record<string, View> = { apply: "queue", find: "jobs" };
 /**
  * The view a route hash (without `#`) opens: `<view>/<detail>` for built-ins,
  * `m/<module>/<view>/<detail>` for add-ons; null when it names neither.
@@ -99,7 +101,7 @@ export function viewFromHash(hash: string): AnyView | null {
   const external = EXTERNAL_HASH.exec(hash);
   if (external) return external[1] as ExternalViewId;
   const view = hash.split("/")[0];
-  return isView(view) ? view : null;
+  return isView(view) ? view : Object.hasOwn(HASH_ALIASES, view) ? HASH_ALIASES[view] : null;
 }
 /** `#notes/<number>`: a link to one note page (the rika! Inbox block in Tern opens these). */
 export function notePageLink(hash: string): number | null {
@@ -116,7 +118,7 @@ export function visibleNavigation(enabled: Enabled, external: Externals = []): N
   return [...navigation.filter(item => viewEnabled(item.id, enabled)), ...external.map(externalItem)];
 }
 
-/** `tone` is the group's graph colour, used to mark its tabs. */
+/** `tone` is the group's graph colour, used to mark its tabs; a group opens on its first view other than home. */
 export const navigationGroups: { label: string; shortcut: string; tone: string; views: View[] }[] = [
   {
     label: "Plan",
@@ -126,15 +128,16 @@ export const navigationGroups: { label: string; shortcut: string; tone: string; 
   },
   { label: "Study", shortcut: "", tone: "var(--c3)", views: ["study", "math", "learnharness", "flashcards", "notes", "quick-notes", "schema", "documents"] },
   {
-    label: "Job search",
+    // Career opens on Track (its first view); Find (`jobs`) stays its hub on the atlas.
+    label: "Career",
     shortcut: "",
     tone: "var(--c4)",
     views: [
+      "pipeline",
       "jobs",
       "inbox",
       "favorites",
       "queue",
-      "pipeline",
       "applications",
       "resumes",
       "sources",
@@ -232,8 +235,10 @@ const shortcutGroups: ShortcutGroup[] = [
       ["Ctrl + Alt", "Plan (outside text editing)"],
       ["Ctrl + Space · Ctrl / ⌘ + K", "Search commands, sections, and jobs"],
       ["Ctrl + Shift + Space", "Edit this page"],
-      ["Ctrl + Tab / Ctrl + Shift + Tab", "Next / previous tab (the tab switcher in the top bar lists them all)"],
+      ["Ctrl + Tab / Ctrl + Shift + Tab", "Next / previous tab, wrapping (works inside editors too)"],
+      ["Ctrl + O", "Every open tab as a card: arrows or 1–9 to pick, Enter to open, Esc to stay"],
       ["Ctrl + T / Ctrl + W", "New tab / close tab"],
+      ["Ctrl + Y", "Slide through your themes live: Ctrl + Y again for the next, Enter keeps, Esc undoes (redo while typing)"],
       ["Settings, Theme, Notifications", "Search, or the tab switcher's menu"],
       [
         "Calendar / Study / Notes / Mind maps / AI",
@@ -242,9 +247,10 @@ const shortcutGroups: ShortcutGroup[] = [
       ["?", "Show keyboard help"],
       ["/ on home", "Ask Rika"],
       ["Ctrl + J", "Ask Rika: the field on home, the drawer elsewhere (anywhere but a terminal)"],
+      ["Ctrl + R", "Rika beside the page you are on; Ctrl + R again or Escape closes her"],
       ["Enter in Rika's field", "Ask Rika; away from home the reply lands as a toast"],
       ["F / Esc", "Toggle focused panel fullscreen / exit (outside text editing)"],
-      ["Ctrl + Shift + F", "Toggle panel fullscreen inside terminal views"],
+      ["Ctrl + Shift + F", "Toggle panel fullscreen anywhere, while typing or in a terminal"],
       ["Escape", "Close dialog or details; leave a text field"],
     ],
   },

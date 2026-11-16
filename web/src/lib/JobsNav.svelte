@@ -3,25 +3,26 @@
   import type { View } from "./workspace";
 
   /**
-   * Job search in four steps, the same on every one of its pages: find a job, save it,
-   * apply, track the application. Everything else (resumes, sources, email, questions,
-   * reports) is one menu away.
+   * Career in three steps, the same on every one of its pages: find a job (and apply,
+   * Find's "Ready to apply" filter), save it, track the application. Everything else
+   * (resumes, sources, email, questions, reports) is one menu away, at the bar's far right.
    */
   let { view, onview }: { view: View; onview: (next: View) => void } = $props();
-  const STEPS: [View, string][] = [["jobs", "Find"], ["favorites", "Saved"], ["queue", "Apply"], ["pipeline", "Track"]];
+  /** Each step and the views it stands for: Find holds the old Apply page (`queue`). */
+  const STEPS: [View, string, View[]][] = [["jobs", "Find", ["jobs", "queue"]], ["favorites", "Saved", ["favorites"]], ["pipeline", "Track", ["pipeline"]]];
   const MORE: [View, string][] = [["inbox", "New jobs"], ["applications", "All applications"], ["resumes", "Resumes"], ["questions", "Questions"],
     ["sources", "Job sources"], ["finder", "Find companies"], ["triage", "Rank jobs"], ["mail", "Email updates"], ["reports", "Reports"]];
   let open = $state(false);
   const elsewhere = $derived(MORE.find(([id]) => id === view));
 </script>
 
-<nav class="jobs-nav" aria-label="Job search">
+<nav class="jobs-nav" aria-label="Career">
   <div class="steps">
-    {#each STEPS as [id, label] (id)}
-      <button type="button" aria-current={view === id ? "page" : undefined} onclick={() => onview(id)}>{label}</button>
+    {#each STEPS as [id, label, views] (id)}
+      <button type="button" aria-current={views.includes(view) ? "page" : undefined} onclick={() => onview(id)}>{label}</button>
     {/each}
   </div>
-  <Popover label="More job search pages" bind:open placement="bottom-end" class="jobs-more">
+  <Popover label="More Career pages" bind:open placement="bottom-end" class="jobs-more">
     {#snippet trigger(props)}
       <button type="button" class="more" aria-current={elsewhere ? "page" : undefined} {...props}>{elsewhere ? elsewhere[1] : "More"}</button>
     {/snippet}
@@ -42,6 +43,7 @@
   }
   .steps {
     display: flex;
+    flex: 1 1 auto;
     gap: 4px;
   }
   :global(:root body) .jobs-nav button {

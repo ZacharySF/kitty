@@ -209,18 +209,17 @@
       [includeClosed && view !== "queue", onlyFavorites, companyOnly, view === "inbox" && allDates].filter(Boolean).length,
   );
   const limit = 100;
+  /** Find and its "Ready to apply" filter (`queue`, once the Apply page) share one title. */
   const heading = $derived(
     view === "today"
       ? "Jobs to explore"
       : view === "inbox"
         ? "New jobs"
-        : view === "queue"
-          ? "Apply"
-          : view === "applications"
-            ? "Application list"
-            : view === "favorites"
-              ? "Saved"
-              : "Find jobs",
+        : view === "applications"
+          ? "Application list"
+          : view === "favorites"
+            ? "Saved"
+            : "Find jobs",
   );
 
   function query() {
@@ -590,7 +589,7 @@
       </div>
     {:else}
       <header class="jobs-head">
-        <h1 title={view === "queue" ? "Open, unsubmitted jobs ranked A or B" : undefined}>{heading}</h1>
+        <h1>{heading}</h1>
         <span class="total" title={`${total.toLocaleString()} matching`}>{total.toLocaleString()}</span>
         <div class="tools">
           {#if view === "jobs" && graphFocus}<button type="button" class="text-button all-types" onclick={rootSchema}>All job types</button>{/if}
@@ -599,6 +598,10 @@
               <button type="button" aria-pressed={presentation === "map"} onclick={() => (presentation = "map")}>Map</button>
               <button type="button" aria-pressed={presentation === "list"} onclick={() => (presentation = "list")}>List</button>
             </nav>
+          {/if}
+          {#if view === "jobs" || view === "queue"}
+            <button type="button" class="pill ready" aria-pressed={view === "queue"} title="Open, unsubmitted jobs ranked A or B"
+              onclick={() => onview(view === "queue" ? "jobs" : "queue")}>Ready to apply</button>
           {/if}
           {#if view === "jobs" || view === "inbox"}
             <button type="button" class="pill" disabled={scraping} title="Look for new jobs on your job sources now" onclick={scrape}>{scraping ? "Scraping…" : "Scrape"}</button>
@@ -921,6 +924,10 @@
   /* The pressed segment takes the theme's pressed-toggle pair: the selection must read at
      3:1 against its neighbours (--select-fill is a subtler wash, too faint for that here). */
   :global(:root body) .jobs-views button:is([aria-pressed="true"], [aria-current="page"]) {
+    background: var(--press-fill, var(--accent));
+    color: var(--press-ink, var(--on-accent));
+  }
+  :global(:root body) .jobs-head .ready[aria-pressed="true"] {
     background: var(--press-fill, var(--accent));
     color: var(--press-ink, var(--on-accent));
   }
