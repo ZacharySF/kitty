@@ -1754,6 +1754,14 @@ html[data-panel-fullscreen] body .contents:not([data-kitty-panel][data-panel-ful
   padding-bottom: 10px;
   margin-right: var(--build-editor-space, 0px);
 }
+/* Rika's side panel (Ctrl + R, rika/RikaDock.svelte) stands below the bar on the right and
+   publishes --rika-dock-space; the page narrows beside it, the bar keeps its full width. */
+.workbench > main {
+  margin-right: var(--rika-dock-space, 0px);
+}
+@media (max-width: 599.98px) {
+  .workbench > main { margin-right: 0; }
+}
 /* The herdr view fills its workspace tab. */
 .herdr-view {
   height: calc(100dvh - var(--workbench-top, 0px) - 34px);

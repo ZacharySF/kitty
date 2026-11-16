@@ -4,6 +4,7 @@
   import { api, apiFetch, followApiLink, type TaskRecord } from './api';
   import DocumentImport from './DocumentImport.svelte';
   import Icon from './Icon.svelte';
+  import FullscreenButton from './ui/FullscreenButton.svelte';
   import RichDocumentEditor from './RichDocumentEditor.svelte';
   import { documentHTML } from './notesDocument';
   import { useWorkspaceContext } from './workspaceContext.svelte';
@@ -202,6 +203,7 @@
       <button type="button" aria-pressed={!rich} onclick={() => editing = 'source'}>Source</button>
       <button type="button" aria-pressed={rich} disabled={format !== 'markdown'} onclick={() => editing = 'rich'}>Rich text</button>
     </div>
+    <FullscreenButton class="pill icon-pill" />
     <Popover bind:open={configuring} placement="bottom-end" arrow={false}>
       {#snippet trigger(props)}<button {...props} type="button" class="pill icon-pill" aria-label="Document settings" title="Format and notes destination"><Icon name="settings" size={15} /></button>{/snippet}
       <div class="settings">
@@ -261,9 +263,9 @@
 
   /* Compact bar: document switcher, save state, mode, actions. */
   .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--hairline); }
-  .bar .pill { min-height: 30px; padding: 3px 12px; }
-  .bar .pill:disabled { opacity: 0.55; }
-  .icon-pill { width: 30px; justify-content: center; padding: 0 !important; }
+  .bar :global(.pill) { min-height: 30px; padding: 3px 12px; }
+  .bar :global(.pill:disabled) { opacity: 0.55; }
+  .bar :global(.icon-pill) { width: 30px; justify-content: center; padding: 0 !important; }
   .doc-pill { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 32px; padding: 0 4px 0 10px; border: 1px solid var(--hairline); border-radius: 999px; background: color-mix(in srgb, var(--solid-panel) 40%, transparent); }
   .doc-pill:focus-within { border-color: color-mix(in srgb, var(--violet) 55%, var(--hairline)); }
   /* Outrank the global glass field fill: the title and source sit flush in their chrome. */

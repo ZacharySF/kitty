@@ -71,7 +71,7 @@ test('quiet hours hold reminders, then hand them over as one morning digest', ()
   assert.deepEqual(morning.digest.map(n => n.key), [lecture.key, followup.key]);
   assert.deepEqual(morning.ledger.held, []);
   assert.deepEqual(step(morning.ledger, [lecture, followup], night, at(8)).toasts, []);
-  assert.equal(digestLine(morning.digest), '1 calendar · 1 job search');
+  assert.equal(digestLine(morning.digest), '1 calendar · 1 career');
   // Without the digest, held reminders wait unread in the notification center instead.
   const silent = step(held.ledger, [lecture, followup], { ...night, digest: false }, at(8));
   assert.equal(silent.digest, null);
@@ -108,7 +108,7 @@ test('an urgent Rika match becomes a notice keyed by its match', () => {
   assert.equal(SOURCE_LABEL.rika, 'Rika');
 });
 
-test('quiet hours hold Rika alerts like job search, even when calendar rings through', () => {
+test('quiet hours hold Rika alerts like Career notices, even when calendar rings through', () => {
   const ringing = { ...night, letCalendar: true };
   assert.equal(holds(ringing, stripe, 23 * 60), true);
   const held = step(emptyLedger(), [lecture, stripe], ringing, at(23));
@@ -116,7 +116,7 @@ test('quiet hours hold Rika alerts like job search, even when calendar rings thr
   assert.deepEqual(held.ledger.held, [stripe.key]);
   const morning = step(held.ledger, [lecture, stripe], ringing, at(8));
   assert.deepEqual(morning.digest.map(n => n.key), [stripe.key]);
-  assert.equal(digestLine([lecture, followup, stripe]), '1 calendar · 1 job search · 1 rika');
+  assert.equal(digestLine([lecture, followup, stripe]), '1 calendar · 1 career · 1 rika');
   const day = step(emptyLedger(), [stripe], DEFAULT_QUIET, at(10));
   assert.deepEqual(day.toasts.map(n => n.key), [stripe.key]);
 });

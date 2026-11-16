@@ -10,7 +10,7 @@ import { spawn } from "node:child_process";
 import { createServer as createNetServer } from "node:net";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
-import { chromium } from "playwright-core";
+import { chromium, webkit } from "playwright-core";
 import { routeBuild } from "./buildRoutes.mjs";
 import { announcement, authorize, exchange } from "./kittyServer.js";
 
@@ -112,8 +112,8 @@ after(async () => {
  *  `prefs`), so one test's theme or look never leaks into the shared backend.
  *  `storage` seeds device-state localStorage before the first load; `setup(context)` adds
  *  routes or init scripts before the first page load. */
-async function open(hash, { viewport = DEFAULT, modules, theme, storage, setup, build } = {}) {
-  const context = await browser.newContext({ viewport });
+async function open(hash, { viewport = DEFAULT, modules, theme, storage, setup, build, engine } = {}) {
+  const context = await (engine ?? browser).newContext({ viewport });
   await authorize(context, secret);
   await context.route("**/api/account", (route) =>
     route.request().method() === "GET"
@@ -474,7 +474,7 @@ describe("top bar", () => {
     const bar = page.locator(".system-bar");
     const groups = page.getByRole("navigation", { name: "Workspace groups" });
     await groups.waitFor();
-    assert.deepEqual(await groups.getByRole("button").allTextContents(), ["Brain", "Plan", "Study", "Job search", "Rika"]);
+    assert.deepEqual(await groups.getByRole("button").allTextContents(), ["Brain", "Plan", "Study", "Career", "Rika"]);
     assert.equal(await bar.getByRole("button", { name: /Theme|Refresh|^Notifications/ }).count(), 0, "the bar still carries theme, refresh or the bell");
     assert.ok(!/Search anything/.test(await bar.innerText()), "the search button still has words");
     assert.equal(await page.locator('.workbench-top [role="tab"], .workbench-top [role="tablist"]').count(), 0, "a tab strip is still drawn");
@@ -781,8 +781,40 @@ describe("Liquid Glass theme", () => {
 });
 
 describe("study focus-first", () => {
-  test("Study opens on the timer alone, centred, without scrolling at 1440×900; [ and ] slide the drawers over it and are remembered", async () => {
-    const { page, problems, context } = await open("study", { viewport: { width: 1440, height: 900 }, setup: (context) => context.addInitScript(() => {
+  async function readableDrawerControl(page, name) {
+    const control = page.getByRole("button", { name, exact: true });
+    assert.ok(await control.isVisible(), `${name} control is hidden`);
+    const geometry = await control.evaluate((node) => {
+      const label = node.querySelector("span");
+      const text = label.firstChild;
+      const range = document.createRange();
+      range.selectNodeContents(label);
+      const bounds = range.getBoundingClientRect();
+      range.setStart(text, 0);
+      range.setEnd(text, 1);
+      const first = range.getBoundingClientRect();
+      range.setStart(text, text.length - 1);
+      range.setEnd(text, text.length);
+      const last = range.getBoundingClientRect();
+      const button = node.getBoundingClientRect();
+      return {
+        button: button.toJSON(), label: bounds.toJSON(), first: first.toJSON(), last: last.toJSON(),
+        font: parseFloat(getComputedStyle(label).fontSize), viewport: innerWidth,
+        hit: node.contains(document.elementFromPoint(button.x + button.width / 2, button.y + button.height / 2)),
+      };
+    });
+    const { button, label, first, last, font } = geometry;
+    assert.ok(button.width >= 120 && button.height >= 44, `${name} is too small to read or tap`);
+    assert.ok(font >= 13, `${name} text is too small`);
+    assert.ok(label.left >= button.left && label.right <= button.right && label.top >= button.top && label.bottom <= button.bottom,
+      `${name} label is clipped by its control`);
+    assert.ok(label.height <= font * 3 && (last.top > first.top + 1 || (Math.abs(first.top - last.top) < 1 && first.left < last.left)),
+      `${name} label is vertical or upside-down`);
+    assert.ok(button.left >= 0 && button.right <= geometry.viewport && geometry.hit, `${name} is outside the viewport or covered`);
+  }
+
+  test("Study opens on a readable centred timer at 1568×942; [ and ] slide the drawers over it and are remembered", async () => {
+    const { page, problems, context } = await open("study", { viewport: { width: 1568, height: 942 }, setup: (context) => context.addInitScript(() => {
       if (!sessionStorage.getItem("seeded")) { localStorage.removeItem("kitty.study.drawers"); sessionStorage.setItem("seeded", "1"); }
     }) });
     page.on("dialog", (dialog) => dialog.accept());
@@ -803,14 +835,17 @@ describe("study focus-first", () => {
     assert.ok(Math.abs((area.left + area.right) / 2 - (card.left + card.right) / 2) < 2, "the timer is not centred horizontally");
     assert.ok(Math.abs((area.top + area.bottom) / 2 - (card.top + card.bottom) / 2) < 24, "the timer is not centred vertically");
     const overflow = await page.evaluate(() => document.documentElement.scrollHeight - innerHeight);
-    assert.ok(overflow <= 1, `the Study page scrolls ${overflow}px at 1440×900`);
+    assert.ok(overflow <= 1, `the Study page scrolls ${overflow}px at 1568×942`);
     const floor = await page.evaluate(() => innerHeight);
     assert.ok(area.bottom <= floor && area.bottom >= floor - 20, `the session page ends at ${area.bottom}, not at the window's foot ${floor}`);
+    const ring = await rect(timer.getByRole("img"));
+    assert.ok(ring.width >= 320 && ring.height >= 320, "the desktop session ring is too small");
+    const start = await rect(timer.getByRole("button", { name: /Start session/ }));
+    assert.ok(start.height >= 44, "the session action is too small to tap");
     for (const name of ["Subjects & tasks", "Guide & notes"]) {
       const edge = page.getByRole("button", { name, exact: true });
-      assert.ok(await edge.isVisible(), `${name} edge tab is hidden`);
+      await readableDrawerControl(page, name);
       assert.equal(await edge.getAttribute("aria-expanded"), "false");
-      assert.equal(await edge.evaluate((node) => getComputedStyle(node).writingMode), "vertical-rl");
     }
 
     // ] and [ open the drawers over the page: the timer does not move.
@@ -829,6 +864,8 @@ describe("study focus-first", () => {
     assert.ok(await right.getByRole("textbox", { name: "Session notes" }).isVisible(), "session notes are not in the guide drawer");
     assert.equal(await page.getByRole("button", { name: "Guide & notes", exact: true }).getAttribute("aria-expanded"), "true");
     assert.ok(await page.getByRole("button", { name: "Guide & notes", exact: true }).isVisible(), "the edge tab is hidden by its drawer");
+    await readableDrawerControl(page, "Subjects & tasks");
+    await readableDrawerControl(page, "Guide & notes");
     assert.deepEqual(JSON.parse(await page.evaluate(() => localStorage.getItem("kitty.study.drawers"))), { left: true, right: true });
 
     // Add and pick a subject from the left drawer; the timer's session chip follows.
@@ -854,6 +891,46 @@ describe("study focus-first", () => {
     await page.getByRole("group", { name: "Tool" }).getByRole("button", { name: "Helpers" }).click();
     await page.getByRole("heading", { name: "Active recall" }).waitFor();
     assert.equal(await page.locator(".study select").count(), 0, "a native select is still shown");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("Study drawer labels and timer stay readable and operable on a narrow viewport", async () => {
+    const { page, problems, context } = await open("study", { viewport: { width: 390, height: 844 }, setup: (context) => context.addInitScript(() => {
+      localStorage.removeItem("kitty.study.drawers");
+    }) });
+    page.on("dialog", (dialog) => dialog.accept());
+    const timer = page.getByRole("region", { name: "Session timer" });
+    await timer.waitFor();
+    const stop = timer.getByRole("button", { name: /^Stop/ });
+    if (await stop.count()) await stop.click();
+    const start = timer.getByRole("button", { name: /Start session/ });
+    await start.waitFor();
+    for (const name of ["Subjects & tasks", "Guide & notes"]) {
+      await readableDrawerControl(page, name);
+      const card = await rect(timer);
+      const control = page.getByRole("button", { name, exact: true });
+      await control.click();
+      const drawer = page.getByRole("complementary", { name });
+      await drawer.waitFor();
+      await page.waitForTimeout(250);
+      assert.deepEqual(await rect(timer), card, `${name} opening moved the timer`);
+      await readableDrawerControl(page, name);
+      const bounds = await rect(drawer);
+      assert.ok(bounds.left >= 0 && bounds.right <= 390, `${name} drawer extends outside the viewport`);
+      await control.click();
+      await drawer.waitFor({ state: "detached" });
+    }
+    const ring = await rect(timer.getByRole("img"));
+    assert.ok(ring.width >= 240 && ring.left >= 0 && ring.right <= 390, "the narrow session ring is too small or clipped");
+    assert.ok(Math.abs(ring.width - ring.height) < 1, "the narrow session ring is distorted");
+    await start.scrollIntoViewIfNeeded();
+    const action = await rect(start);
+    assert.ok(action.height >= 44 && action.left >= 0 && action.right <= 390, "the narrow session action is clipped or too small");
+    await start.click();
+    await timer.getByRole("button", { name: /^Pause/ }).waitFor();
+    await timer.getByRole("button", { name: /^Stop/ }).click();
+    await start.waitFor();
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -938,6 +1015,93 @@ describe("study progress", () => {
     assert.match(await goals.getByRole("listitem").filter({ hasText: "Today" }).textContent(), /\d+ min\s*\/\s*30 min/);
     assert.deepEqual(problems, []);
     await context.close();
+  });
+
+  test("the by-subject share ring keeps its total inside the ring and its legend beside it, for one subject and for long names, wide and narrow, in Chromium and the native shell's WebKit", async (t) => {
+    const stamp = Date.now();
+    /** Seeds a fixed past week: `[name, minutes]` pairs, a null name being unassigned study. */
+    const seed = (page, date, parts) => page.evaluate(async ({ date, parts }) => {
+      const post = async (path, body) => {
+        const response = await fetch(`/api/study/${path}`, { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1", "X-Kitty-Secret": window.__KITTY_UI_SECRET__ }, body: JSON.stringify(body) });
+        return (await response.json()).item;
+      };
+      let hour = 8;
+      for (const [name, minutes] of parts) {
+        const subject = name ? await post("subjects", { name, color: "#3070e0" }) : null;
+        await post("sessions", { request_id: crypto.randomUUID(), started_at: `${date}T${String(hour++).padStart(2, "0")}:00:00+00:00`, timezone: "UTC", duration_seconds: minutes * 60, subject_id: subject?.id ?? null });
+      }
+    }, { date, parts });
+    const weeks = [
+      { date: "2025-03-12", parts: [[null, 13]] },
+      { date: "2025-06-11", parts: [
+        [`Advanced organic chemistry: reaction mechanisms and synthesis ${stamp}`, 95],
+        [`Comparative constitutional law of the European Union ${stamp}`, 60],
+        [`Linear algebra and numerical methods for engineers ${stamp}`, 25],
+        [`History ${stamp}`, 13],
+      ] },
+    ];
+    const { page: seeder, context: seeding } = await open("study");
+    await seeder.getByRole("region", { name: "Session timer" }).waitFor();
+    for (const week of weeks) await seed(seeder, week.date, week.parts);
+    await seeding.close();
+    const intersects = (a, b) => a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5;
+    const inside = (inner, outer) => inner.left >= outer.left - 0.5 && inner.right <= outer.right + 0.5 && inner.top >= outer.top - 0.5 && inner.bottom <= outer.bottom + 0.5;
+    // The native window is WebKitGTK, where the ring was drawn over its legend.
+    const engines = [["Chromium", null], ["WebKit", await webkit.launch().catch((error) => t.diagnostic(`no Playwright WebKit here: ${error.message.split("\n")[0]}`))]];
+    for (const [name, engine] of engines) for (const viewport of [{ width: 1568, height: 942 }, { width: 390, height: 844 }]) {
+      if (name === "WebKit" && !engine) continue;
+      const { page, problems, context } = await open("study", { viewport, engine });
+      await page.getByRole("region", { name: "Session timer" }).waitFor();
+      await page.getByRole("navigation", { name: "Study tools" }).getByRole("button", { name: "Progress", exact: true }).click();
+      for (const week of weeks) {
+        const where = `${week.parts.length} subject(s) at ${viewport.width}px in ${name}`;
+        await page.getByLabel("Jump to date").fill(week.date);
+        await page.getByLabel("Jump to date").dispatchEvent("change");
+        const card = page.getByRole("region", { name: "Study by subject" });
+        const items = card.getByRole("listitem");
+        await page.waitForFunction((count) => document.querySelectorAll('[aria-label="Study by subject"] li').length === count, week.parts.length);
+        await page.waitForTimeout(250);
+        const layout = await card.evaluate((panel) => {
+          const box = (node) => node.getBoundingClientRect().toJSON();
+          const ring = panel.querySelector("svg circle");
+          const textOf = (button) => {
+            const range = document.createRange();
+            const words = [...button.childNodes].filter((node) => node.nodeType === Node.TEXT_NODE || (node.nodeType === Node.ELEMENT_NODE && !node.matches("b") && node.textContent.trim()));
+            range.setStartBefore(words[0]);
+            range.setEndAfter(words.at(-1));
+            return box(range);
+          };
+          return {
+            panel: box(panel), overflow: panel.scrollWidth - panel.clientWidth,
+            ring: box(ring), centre: [...panel.querySelectorAll("svg text")].map(box),
+            items: [...panel.querySelectorAll("li")].map((item) => {
+              const button = item.querySelector("button");
+              return { item: box(item), name: textOf(button), value: box(button.querySelector("b")), valueText: button.querySelector("b").textContent };
+            }),
+          };
+        });
+        assert.ok(layout.overflow <= 1, `the card overflows sideways with ${where}`);
+        assert.ok(Math.abs(layout.ring.width - layout.ring.height) < 1, `the ring is distorted with ${where}`);
+        assert.ok(layout.ring.width >= 96 && layout.ring.width <= 200, `the ring is ${Math.round(layout.ring.width)}px wide with ${where}`);
+        // The total sits in the hole of the ring: inside its inner edge, clear of the stroke.
+        const hole = { left: layout.ring.left + layout.ring.width * 0.15, right: layout.ring.right - layout.ring.width * 0.15,
+          top: layout.ring.top + layout.ring.height * 0.15, bottom: layout.ring.bottom - layout.ring.height * 0.15 };
+        for (const text of layout.centre) assert.ok(inside(text, hole), `the ring's centre text spills out of the ring with ${where}`);
+        assert.equal(await items.count(), week.parts.length);
+        for (const [index, entry] of layout.items.entries()) {
+          assert.ok(inside(entry.item, layout.panel), `legend entry ${index} leaves the card with ${where}`);
+          assert.ok(!intersects(entry.item, layout.ring), `legend entry ${index} overlaps the ring with ${where}`);
+          for (const text of layout.centre) assert.ok(!intersects(entry.item, text), `legend entry ${index} covers the ring's total with ${where}`);
+          assert.ok(inside(entry.name, entry.item) && inside(entry.value, entry.item), `legend entry ${index} spills its text with ${where}`);
+          assert.ok(!intersects(entry.name, entry.value), `legend entry ${index}'s name runs into its value with ${where}`);
+          assert.match(entry.valueText, /\d+ (min|h)/);
+          for (const other of layout.items.slice(index + 1)) assert.ok(!intersects(entry.item, other.item), `legend entries overlap with ${where}`);
+        }
+      }
+      assert.deepEqual(problems, []);
+      await context.close();
+    }
+    await engines[1][1]?.close();
   });
 });
 
@@ -1909,6 +2073,150 @@ describe("calendar redesign", () => {
     assert.deepEqual(problems, []);
     await context.close();
   });
+
+  /** Local `YYYY-MM-DD`, `offset` days from today. */
+  const localDay = (offset = 0) => {
+    const d = new Date();
+    d.setDate(d.getDate() + offset);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
+  /** Native automated drags are flaky in Chromium; dispatch the same DOM events a drag fires. */
+  const dropOnto = async (page, source, target) => {
+    const transfer = await page.evaluateHandle(() => new DataTransfer());
+    await source.dispatchEvent("dragstart", { dataTransfer: transfer });
+    await target.dispatchEvent("dragover", { dataTransfer: transfer });
+    await target.dispatchEvent("drop", { dataTransfer: transfer });
+    await source.dispatchEvent("dragend", { dataTransfer: transfer });
+  };
+  const savedEvent = (page, id) => page.evaluate(async (ident) =>
+    (await fetch(`/api/calendar/events/${ident}`, { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json(), id);
+
+  test("an all-day event dropped on a time becomes a one-hour event there, saved and undoable; dropped on the all-day row it is all-day again", async () => {
+    const { page, problems, context } = await open("calendar");
+    await page.getByRole("region", { name: "Week calendar" }).waitFor();
+    const day = localDay();
+    const created = await addEvent(page, { title: "Eat at 7", all_day: true, start: day, end: localDay(1) });
+    await page.reload();
+    const row = page.getByRole("group", { name: `All-day events and tasks on ${day}` });
+    const chip = row.getByRole("button", { name: "Eat at 7", exact: true });
+    const block = page.getByRole("group", { name: "Eat at 7", exact: true });
+    const slotAt = (time) => page.getByRole("button", { name: `Create event ${day} ${time}`, exact: true });
+    await chip.waitFor();
+    await dropOnto(page, chip, slotAt("13:00"));
+    await block.getByText("13:00–14:00").waitFor();
+    assert.equal(await chip.count(), 0, "the event is still in the all-day row");
+    const timed = await savedEvent(page, created.id);
+    assert.equal(timed.all_day, false);
+    assert.equal(new Date(timed.start).getHours(), 13);
+    assert.equal(Date.parse(timed.end) - Date.parse(timed.start), 3600000);
+    await page.getByRole("button", { name: "Undo last change" }).click();
+    await chip.waitFor();
+    assert.equal(await block.count(), 0, "Undo left the timed block");
+    assert.equal((await savedEvent(page, created.id)).all_day, true);
+    // And back: a timed event dropped on the all-day row becomes all-day on that date.
+    await dropOnto(page, chip, slotAt("10:00"));
+    await block.getByText("10:00–11:00").waitFor();
+    await dropOnto(page, block, row);
+    await chip.waitFor();
+    assert.equal(await block.count(), 0);
+    const allDay = await savedEvent(page, created.id);
+    assert.deepEqual([allDay.all_day, allDay.start, allDay.end], [true, day, localDay(1)]);
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("a task dragged onto a time leaves Tasks to schedule", async () => {
+    const { page, problems, context } = await open("calendar");
+    page.on("pageerror", (e) => console.log("STACK", e.stack));
+    await page.getByRole("region", { name: "Week calendar" }).waitFor();
+    await page.evaluate(() => fetch("/api/calendar/tasks", { method: "POST", headers: { "Content-Type": "application/json", "X-Kitty-Request": "1", "X-Kitty-Secret": window.__KITTY_UI_SECRET__ },
+      body: JSON.stringify({ title: "Fddf", priority: "normal", status: "todo" }) }));
+    await page.reload();
+    const tray = page.getByRole("complementary", { name: "Selected date plan" }).getByRole("region", { name: "Tasks to schedule" });
+    const waiting = tray.getByRole("button", { name: /^Fddf\b/ });
+    await waiting.waitFor();
+    await dropOnto(page, waiting, page.getByRole("button", { name: `Create event ${localDay()} 13:30`, exact: true }));
+    await page.getByRole("region", { name: "Week calendar" }).getByRole("button", { name: /^Fddf\b.*13:30/ }).waitFor();
+    await waiting.waitFor({ state: "detached" });
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("the Calendar title is a menu of its pages with the current one marked; each page has an address and the old section bar is gone", async () => {
+    const { page, problems, context } = await open("calendar");
+    await page.getByRole("region", { name: "Week calendar" }).waitFor();
+    const workspace = page.getByRole("region", { name: "Calendar workspace" });
+    assert.equal(await page.getByRole("navigation", { name: "Calendar sections" }).count(), 0, "the section bar is still shown");
+    const title = workspace.getByRole("heading", { level: 1 }).getByRole("button");
+    const menu = page.getByRole("menu", { name: "Calendar pages" });
+    const go = async (name) => {
+      await title.click();
+      await menu.getByRole("menuitemradio", { name, exact: true }).click();
+      await menu.waitFor({ state: "detached" });
+    };
+    assert.equal((await title.textContent()).trim(), "Calendar");
+    await title.click();
+    assert.deepEqual((await menu.getByRole("menuitemradio").allTextContents()).map((text) => text.trim()),
+      ["Calendar", "Tasks", "Activity", "Availability", "Imports & Google"]);
+    assert.equal(await menu.getByRole("menuitemradio", { name: "Calendar", exact: true }).getAttribute("aria-checked"), "true");
+    await page.keyboard.press("Escape");
+    await go("Tasks");
+    await workspace.getByRole("region", { name: "All tasks" }).waitFor();
+    assert.equal(await page.evaluate(() => location.hash), "#calendar/tasks");
+    assert.equal((await title.textContent()).trim(), "Tasks");
+    await go("Availability");
+    await workspace.getByRole("heading", { name: "Free / busy" }).waitFor();
+    assert.equal(await page.evaluate(() => location.hash), "#calendar/availability");
+    await go("Imports & Google");
+    await workspace.getByRole("heading", { name: "Import / export" }).waitFor();
+    assert.equal(await page.evaluate(() => location.hash), "#calendar/imports");
+    await title.click();
+    assert.equal(await menu.getByRole("menuitemradio", { name: "Imports & Google" }).getAttribute("aria-checked"), "true");
+    await page.keyboard.press("Escape");
+    // Back returns to the page before; an address opens its page directly.
+    await page.goBack();
+    await workspace.getByRole("heading", { name: "Free / busy" }).waitFor();
+    await page.reload();
+    await workspace.getByRole("heading", { name: "Free / busy" }).waitFor();
+    assert.equal((await title.textContent()).trim(), "Availability");
+    await go("Calendar");
+    await page.getByRole("region", { name: "Week calendar" }).waitFor();
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("Imports & Google: imports are plain buttons of one height in one row that upload a picked file; Google setup sits behind How to set up", async () => {
+    const { page, problems, context } = await open("calendar/imports");
+    const panel = page.getByRole("region", { name: "Import / export" });
+    await panel.waitFor();
+    const buttons = ["Import ICS…", "Import CSV…", "Export ICS", "Refresh linked dates"].map((name) => panel.getByRole("button", { name, exact: true }));
+    const boxes = await Promise.all(buttons.map((button) => button.boundingBox()));
+    assert.equal(new Set(boxes.map((box) => Math.round(box.height))).size, 1, `the buttons differ in height: ${boxes.map((box) => box.height)}`);
+    assert.equal(new Set(boxes.map((box) => Math.round(box.y))).size, 1, "the buttons are not one row");
+    assert.equal(await panel.locator("fieldset, label.file").count(), 0, "a boxed file field remains");
+    // The button opens the picker; the chosen file's name shows only once picked.
+    assert.equal(await panel.getByText("term.ics").count(), 0);
+    const chooser = page.waitForEvent("filechooser");
+    await buttons[0].click();
+    const ics = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//rika test//EN", "BEGIN:VEVENT", "UID:file-button-1@test", "DTSTAMP:20261101T000000Z",
+      "DTSTART:20261201T090000Z", "DTEND:20261201T100000Z", "SUMMARY:Imported lecture", "END:VEVENT", "END:VCALENDAR", ""].join("\r\n");
+    await (await chooser).setFiles({ name: "term.ics", mimeType: "text/calendar", buffer: Buffer.from(ics) });
+    await panel.getByText("term.ics").waitFor();
+    await panel.getByText(/Imported lecture/).waitFor();
+    await panel.getByRole("button", { name: "Cancel", exact: true }).click();
+    await panel.locator('input[type="file"][accept*="csv"]').setInputFiles({ name: "dates.csv", mimeType: "text/csv", buffer: Buffer.from("title,date\nCSV deadline,2026-12-03\n") });
+    await panel.getByText("dates.csv").waitFor();
+    await panel.getByText(/CSV deadline/).waitFor();
+    // Google Calendar: the setup steps are folded away; sync still needs its approval.
+    const google = page.getByRole("region", { name: "Google Calendar" });
+    const step = google.getByRole("listitem").filter({ hasText: "Desktop app OAuth client" });
+    assert.equal(await step.isVisible(), false, "the setup steps are always shown");
+    await google.getByText("How to set up", { exact: true }).click();
+    await step.waitFor();
+    assert.equal(await google.getByRole("checkbox", { name: /approve/i }).count(), 1, "sync lost its approval");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
 });
 
 describe("notes pages as app tabs and floating outline", () => {
@@ -2379,6 +2687,55 @@ describe("documents side-by-side", () => {
   });
 });
 
+describe("editor full screen", () => {
+  /** One visible click fills the window; the same button exits, as does Escape. Ctrl+Shift+F works while typing. */
+  async function fullScreenRoundTrip(page, editor, what) {
+    const view = page.locator('[data-kitty-panel="view"]:not([hidden])');
+    const before = await rect(view);
+    const enter = page.getByRole("button", { name: "Full screen", exact: true });
+    assert.equal(await enter.isVisible(), true, `${what}: no visible Full screen button`);
+    assert.match(await enter.getAttribute("title"), /Ctrl\+Shift\+F/, `${what}: the tooltip does not name the shortcut`);
+    await enter.click();
+    const exit = page.getByRole("button", { name: "Exit full screen", exact: true });
+    await exit.waitFor();
+    const full = await rect(view);
+    const size = page.viewportSize();
+    assert.deepEqual([full.top, full.left, full.width, full.height].map(Math.round), [0, 0, size.width, size.height], `${what}: the editor does not fill the window`);
+    assert.equal(await exit.isVisible(), true, `${what}: the exit button is hidden in full screen`);
+    await page.keyboard.press("Escape");
+    await enter.waitFor();
+    assert.deepEqual(await rect(view), before, `${what}: Escape did not restore the layout`);
+
+    await editor.click();
+    await page.keyboard.press("Control+Shift+F");
+    await exit.waitFor();
+    assert.equal(await editor.evaluate((node) => node === document.activeElement), true, `${what}: the shortcut took focus from the editor`);
+    // While typing, Escape first leaves the field (the app's rule), then exits.
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+    await enter.waitFor();
+    assert.deepEqual(await rect(view), before, `${what}: Escape after typing did not restore the layout`);
+  }
+
+  test("notes: a visible Full screen button fills the window and Escape restores it", async () => {
+    const { page, problems, context } = await open("notes");
+    const title = page.getByRole("textbox", { name: "Page title" });
+    await title.waitFor();
+    await fullScreenRoundTrip(page, title, "notes");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("documents: a visible Full screen button fills the window and Escape restores it", async () => {
+    const { page, problems, context } = await open("documents");
+    const source = page.getByRole("textbox", { name: "Markdown source" });
+    await source.waitFor();
+    await fullScreenRoundTrip(page, source, "documents");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
+
 describe("mind-map free positioning", () => {
   test("Alt-drag places a node anywhere and keeps its parent; Reset position snaps it back into the layout", async () => {
     const { page, problems, context } = await open("study");
@@ -2658,10 +3015,12 @@ describe("one mind-map editor", () => {
     const schema = page.getByRole("region", { name: "Mental schema maps" });
     await schema.waitFor();
     await createMap(page, schema, "Chrome map", "Lecture");
-    // One slim bar: switcher, title, Layout, Map/Graph and ⋯ (last) share one row of at most 48px.
+    assert.equal(await schema.getByRole("group", { name: "View", exact: true }).count(), 0, "mind maps still offer a view switch");
+    assert.equal(await schema.getByRole("button", { name: "Graph", exact: true }).count(), 0, "the per-map Graph option remains");
+    // One slim bar: switcher, title, Layout and ⋯ (last) share one row of at most 48px.
     const switcher = await rect(schema.getByRole("button", { name: "Switch map" }));
     const parts = [schema.getByRole("textbox", { name: "Map title" }), schema.getByRole("button", { name: "Layout" }),
-      schema.getByRole("group", { name: "View" }), schema.getByRole("button", { name: "More map actions" })];
+      schema.getByRole("button", { name: "More map actions" })];
     const boxes = await Promise.all(parts.map(rect));
     for (const box of boxes) assert.ok(Math.abs(box.top + box.height / 2 - (switcher.top + switcher.height / 2)) < 3, "the top bar is not one row");
     assert.ok(boxes.at(-1).left >= Math.max(...boxes.slice(0, -1).map((box) => box.right)), "⋯ is not the last control");
@@ -2689,12 +3048,22 @@ describe("one mind-map editor", () => {
     await mapNode(page, "Questions").click();
     await page.getByRole("textbox", { name: "Connection label" }).press("Enter");
     await page.locator("svg.stage path.edge.cross").waitFor();
+    // Node creation remains editable in Map, and the stored tree and cross-link survive reload.
+    await mapNode(page, "Questions").click();
+    await page.keyboard.press("Tab");
+    await page.keyboard.type("Editable child");
+    await page.keyboard.press("Escape");
+    await mapNode(page, "Editable child").waitFor();
     // Edits save by themselves: the title persists without pressing anything.
     await schema.getByRole("textbox", { name: "Map title" }).fill("Chrome map, renamed");
     await page.waitForFunction(() => document.querySelector(".schema")?.dataset.saveState === "unsaved");
     await page.waitForFunction(() => document.querySelector(".schema")?.dataset.saveState === "saved");
     await page.reload();
     await page.waitForFunction(() => document.querySelector('.schema input[aria-label="Map title"]')?.value === "Chrome map, renamed");
+    await mapNode(page, "Editable child").waitFor();
+    for (const label of ["Key ideas", "Examples", "Questions"]) await mapNode(page, label).waitFor();
+    assert.equal(await schema.locator("svg.stage path.edge.cross").count(), 1, "the saved connection was lost");
+    assert.equal(await schema.getByRole("group", { name: "View", exact: true }).count(), 0);
     // Same component as the Notes canvas pill: identical computed look.
     await page.evaluate(() => { location.hash = "#notes"; });
     await openCanvas(page);
@@ -3423,7 +3792,7 @@ describe("notifications", () => {
     const lecture = toasts.filter({ hasText: "Linear algebra lecture" });
     const followup = toasts.filter({ hasText: "Northwind Labs (demo)" });
     assert.match(await lecture.textContent(), /Calendar/);
-    assert.match(await followup.textContent(), /Job search/);
+    assert.match(await followup.textContent(), /Career/);
     const box = await stack.boundingBox();
     const viewport = page.viewportSize();
     // Bottom-right, in the window's corner.
@@ -3493,9 +3862,9 @@ describe("notifications", () => {
     const items = center.getByRole("listitem");
     assert.equal(await items.count(), 2);
     assert.match(await items.filter({ hasText: "Linear algebra lecture" }).textContent(), /Calendar/);
-    assert.match(await items.filter({ hasText: "Northwind Labs" }).textContent(), /Job search/);
+    assert.match(await items.filter({ hasText: "Northwind Labs" }).textContent(), /Career/);
     // Sources filter the list.
-    await center.getByRole("button", { name: "Job search", exact: true }).click();
+    await center.getByRole("button", { name: "Career", exact: true }).click();
     assert.equal(await items.count(), 1);
     await center.getByRole("button", { name: "All sources" }).click();
     await center.getByRole("tab", { name: /Unread/ }).click();
@@ -3542,7 +3911,7 @@ describe("notifications", () => {
     await page.getByRole("dialog", { name: "Open tabs" }).getByRole("button", { name: "Notifications 2 unread" }).waitFor();
     await page.keyboard.press("Escape");
     assert.equal(await page.locator('[aria-label="New notifications"] > li').count(), 0, "a reminder toasted during quiet hours");
-    await panel.getByText("Held now: 1 calendar · 1 job search").waitFor();
+    await panel.getByText("Held now: 1 calendar · 1 career").waitFor();
     // Pull the end of the window back past now: the held reminders arrive together as the digest.
     const before = Number(await until.getAttribute("aria-valuenow"));
     await until.focus();
@@ -3552,7 +3921,7 @@ describe("notifications", () => {
     const digest = page.locator('[aria-label="New notifications"] > li');
     await digest.filter({ hasText: "Morning digest" }).waitFor();
     assert.equal(await digest.count(), 1, "held reminders toasted one by one");
-    assert.match(await digest.textContent(), /1 calendar · 1 job search/);
+    assert.match(await digest.textContent(), /1 calendar · 1 career/);
     await digest.getByRole("button", { name: "Open" }).click();
     const center = page.getByRole("dialog", { name: "Notification center" });
     await center.waitFor();
@@ -3606,7 +3975,7 @@ describe("Google calendar conflicts", () => {
     const event = (fields) => ({ title: "Linear algebra lecture", start: "2026-11-02T09:00:00+00:00", end: "2026-11-02T10:30:00+00:00", all_day: false,
       timezone: "UTC", location: "Hall B", description: "Bring problem set 6", reminders: [15], rrule: "", ...fields });
     const resolved = [];
-    const { page, problems, context } = await open("calendar", {
+    const { page, problems, context } = await open("calendar/imports", {
       setup: async (context) => {
         await context.route("**/api/bootstrap", async (route) => {
           const response = await route.fetch();
@@ -3623,7 +3992,6 @@ describe("Google calendar conflicts", () => {
         });
       },
     });
-    await page.getByRole("button", { name: "Imports & Google" }).click();
     const conflict = page.getByRole("article", { name: "Conflict: Linear algebra lecture" });
     await conflict.waitFor();
     assert.equal(await page.locator("pre").filter({ hasText: '"summary": "raw"' }).count(), 0, "raw JSON is still shown");

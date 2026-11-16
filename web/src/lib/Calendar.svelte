@@ -74,7 +74,50 @@
     free: [],
   });
   let view = $state<CalendarView>("week");
-  let section = $state("calendar");
+  /** The calendar's pages, opened from the title; each has an address, `#calendar/<slug>`. */
+  const SECTIONS = [
+    { id: "calendar", label: "Calendar", slug: "" },
+    { id: "tasks", label: "Tasks", slug: "tasks" },
+    { id: "activity", label: "Activity", slug: "activity" },
+    { id: "availability", label: "Availability", slug: "availability" },
+    { id: "integrations", label: "Imports & Google", slug: "imports" },
+  ] as const;
+  type Section = (typeof SECTIONS)[number]["id"];
+  const isSection = (value: unknown): value is Section => SECTIONS.some((s) => s.id === value);
+  /** The page a hash names: `undefined` when it is another view, `null` for bare `#calendar`. */
+  function sectionIn(hash: string): Section | null | undefined {
+    const [name, slug] = hash.slice(1).split("/");
+    if (name !== "calendar") return undefined;
+    return SECTIONS.find((s) => s.slug && s.slug === slug)?.id ?? null;
+  }
+  let section = $state<Section>(untrack(() => (pane.active && sectionIn(location.hash)) || "calendar"));
+  const sectionLabel = $derived(SECTIONS.find((s) => s.id === section)?.label ?? "Calendar");
+  let pagesOpen = $state(false);
+  /** Opens a page and records it, so Back returns to the previous one. */
+  function showSection(next: Section) {
+    const slug = SECTIONS.find((s) => s.id === next)?.slug;
+    const hash = slug ? `#calendar/${slug}` : "#calendar";
+    if (pane.active && location.hash !== hash) history.pushState({ ...history.state, calendarSection: next }, "", hash);
+    section = next;
+  }
+  /** Back, Forward or a typed address; a bare `#calendar` keeps the page unless its history entry names one. */
+  function followSection() {
+    if (!pane.active) return;
+    const named = sectionIn(location.hash);
+    if (named === undefined) return;
+    const remembered = history.state?.calendarSection;
+    section = named ?? (isSection(remembered) ? remembered : section);
+  }
+  /** Arrow keys, Home and End move through the pages menu. */
+  function pagesKey(event: KeyboardEvent) {
+    const items = [...(event.currentTarget as HTMLElement).querySelectorAll<HTMLElement>('[role="menuitemradio"]')];
+    const at = items.indexOf(document.activeElement as HTMLElement);
+    const moves: Record<string, number> = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: items.length - 1 };
+    const next = moves[event.key];
+    if (next === undefined) return;
+    event.preventDefault();
+    items[(next + items.length) % items.length]?.focus();
+  }
   const initialDate = new Date();
   const initialDay = `${initialDate.getFullYear()}-${String(initialDate.getMonth() + 1).padStart(2, "0")}-${String(initialDate.getDate()).padStart(2, "0")}`;
   let anchor = $state(initialDay);
@@ -145,9 +188,9 @@
     pane.setStatus(error ? { state: "failed", detail: error } : pending > 0 ? { state: "unsaved", detail: "Saving…" } : { state: "saved" });
     return () => pane.setStatus(null);
   });
+  /** Open tasks without a time yet (undated or dated only); a task with a time is on the grid, so scheduled. */
   const trayTasks = $derived(data.tasks.filter((task) =>
-    task.status !== "done" && task.status !== "cancelled" &&
-    (!task.due || task.due.length === 10 || parts(task.due).date === selectedDate),
+    task.status !== "done" && task.status !== "cancelled" && (!task.due || task.due.length <= 10),
   ));
   let taskDueInput = $state("");
   let taskDueTimed = $state(false);
@@ -466,13 +509,15 @@
     if (!isActive) return;
     error = "";
     if (section !== "calendar") {
-      section = "calendar";
+      showSection("calendar");
       await tick();
     }
     selectedDate = start.slice(0, 10);
     quickPick = { start, end };
     quickOpen = true;
   }
+  /** A new timed event's length: a quick add without an end, or an all-day event dropped on a time. */
+  const EVENT_MINUTES = 60;
   /** Creates the typed event or task; `more` then opens it in the drawer. */
   async function quickSave(plan: QuickPlan, kind: QuickKind, more: boolean) {
     const calendar_id = (data.calendars.find((c) => c.visible) || data.calendars[0])?.id || "personal";
@@ -486,7 +531,7 @@
       : api<Event>("/calendar/events", {
           title: plan.title, calendar_id, timezone: tz, all_day: plan.start === null,
           start: plan.start === null ? plan.day : await at(plan.start),
-          end: plan.start === null ? plan.endDay : await at(plan.end ?? plan.start + 60),
+          end: plan.start === null ? plan.endDay : await at(plan.end ?? plan.start + EVENT_MINUTES),
           description: "", location: plan.where, url: "", rrule: plan.rrule, exdates: [], privacy: "default", busy: true,
           reminders: [10], attendees: [], attachments: [], event_type: "default", google_options: {}, subject_id: null, color: null,
         }));
@@ -713,6 +758,15 @@
       }
     }
   }
+  /** Whether the dragged event may land here: anywhere, except a resize leaving its own row or grid. */
+  const eventFits = (selected: Event | null, mode: string, allDay: boolean) =>
+    !!selected && (mode !== "resize" || selected.all_day === allDay);
+  /** Calendar days a timed event touches in the display zone: an end at midnight ends the day before. */
+  function daysTouched(e: Event) {
+    const end = parts(e.end);
+    const last = end.time === "00:00" ? addDays(end.date, -1) : end.date;
+    return Math.max(1, Math.round((dateAt(last).getTime() - dateAt(parts(e.start).date).getTime()) / 86400000) + 1);
+  }
   async function dropOn(value: string, allDay: boolean, event: DragEvent) {
     event.preventDefault();
     event.stopPropagation();
@@ -720,7 +774,7 @@
     const mode = dragMode;
     const taskId = event.dataTransfer?.getData("application/kitty-task");
     const task = taskId && data.tasks.find((item) => item.id === taskId);
-    const valid = isActive && !pending && (!!task || (!!selected && allDay === selected.all_day));
+    const valid = isActive && !pending && (!!task || eventFits(selected, mode, allDay));
     finishDrag();
     if (!valid) return;
     selectedDate = value.slice(0, 10);
@@ -738,10 +792,18 @@
     await changed(async () => {
       let start = selected.start;
       let end: string;
-      if (allDay) {
+      if (allDay && !selected.all_day) {
+        // A timed event dropped on the all-day row becomes all-day over the days it touched.
+        start = value;
+        end = addDays(value, daysTouched(selected));
+      } else if (allDay) {
         const duration = Math.round((dateAt(selected.end).getTime() - dateAt(selected.start).getTime()) / 86400000);
         if (mode === "resize") end = addDays(value, 1);
         else { start = value; end = addDays(value, duration); }
+      } else if (selected.all_day) {
+        // An all-day event dropped on a time becomes a timed event of the default length there.
+        start = await resolveTime(value, tz);
+        end = await resolveTime(shiftWall(value, EVENT_MINUTES), tz);
       } else {
         // Slots are wall-clock times in the displayed timezone, not the event's timezone.
         const target = await resolveTime(value, tz);
@@ -757,7 +819,7 @@
         revision: selected.revision,
         scope: selected.rrule ? "this" : "all",
         occurrence: selected.occurrence,
-        changes: { start, end },
+        changes: allDay === selected.all_day ? { start, end } : { all_day: allDay, start, end },
       });
       return result;
     });
@@ -776,16 +838,23 @@
     event.stopPropagation();
     const task = event.dataTransfer?.types.includes("application/kitty-task");
     if (!dragEvent && !task) return;
-    const valid = isActive && !pending && (task || dragEvent?.all_day === allDay);
+    const valid = isActive && !pending && (task || eventFits(dragEvent, dragMode, allDay));
     event.preventDefault();
     if (event.dataTransfer) event.dataTransfer.dropEffect = valid ? "move" : "none";
     const target = `${allDay ? "day" : "time"}:${value}`;
     dragTarget = valid ? target : "";
     invalidDropTarget = valid ? "" : target;
-    dragMessage = valid
-      ? `Drop to ${dragMode === "resize" && !task ? "resize" : "schedule"} at ${value.replace("T", " ")} (${tz})`
-      : pending ? "Wait for the current save to finish." : "Keep timed events in timed slots and all-day events in the all-day row.";
+    dragMessage = !valid
+      ? pending ? "Wait for the current save to finish." : "Resize within the same row."
+      : !task && dragMode === "resize" ? `Drop to resize at ${value.replace("T", " ")} (${tz})`
+      : !task && dragEvent && dragEvent.all_day !== allDay
+        ? allDay ? `Drop to make it all-day on ${value}` : `Drop to schedule at ${value.replace("T", " ")} for ${EVENT_MINUTES} minutes (${tz})`
+      : `Drop to schedule at ${value.replace("T", " ")} (${tz})`;
   }
+  /** A month cell is a date: a timed event dropped there keeps its time of day; anything else lands all-day. */
+  const monthDrop = (day: string): [string, boolean] =>
+    dragEvent && !dragEvent.all_day ? [`${day}T${parts(dragEvent.start).time}`, false] : [day, true];
+  const onDay = (target: string, day: string) => target === `day:${day}` || target.startsWith(`time:${day}T`);
   function leaveDrop(event: DragEvent) {
     if (event.relatedTarget instanceof Node && (event.currentTarget as HTMLElement).contains(event.relatedTarget)) return;
     dragTarget = "";
@@ -970,12 +1039,17 @@
   });
   onMount(() => {
     window.addEventListener("click", blockDragClick, true);
+    if (pane.active && sectionIn(location.hash) === null) history.replaceState({ ...history.state, calendarSection: section }, "");
+    window.addEventListener("popstate", followSection);
+    window.addEventListener("hashchange", followSection);
     const syncTheme = () => (theme = getTheme(currentTheme()));
     window.addEventListener(THEME_EVENT, syncTheme);
     void loadTaskMaps();
     const clockTimer = setInterval(() => (clock = new Date().toISOString()), 60000);
     return () => {
       window.removeEventListener("click", blockDragClick, true);
+      window.removeEventListener("popstate", followSection);
+      window.removeEventListener("hashchange", followSection);
       window.removeEventListener(THEME_EVENT, syncTheme);
       clearInterval(clockTimer);
     };
@@ -1013,14 +1087,23 @@
 />
 
 <section class="calendar-workspace" class:drawer-open={!!editor} aria-label="Calendar workspace">
-  <!-- One row, like the rest of the app: the title, the sections, then search; the grid sits on the page under a hairline. -->
+  <!-- One row, like the rest of the app: the title (it opens the calendar's pages), then search; the grid sits on the page under a hairline. -->
   <header class="toolbar">
-    <h1 title={`Times in ${tz}`}>Calendar</h1>
-    <nav class="tabs" aria-label="Calendar sections">
-      {#each [["calendar", "Calendar"], ["tasks", "Tasks"], ["activity", "Activity"], ["availability", "Availability"], ["integrations", "Imports & Google"]] as [key, title]}
-        <button class="section-tab" aria-pressed={section === key} onclick={() => (section = key)}>{title}</button>
-      {/each}
-    </nav>
+    <h1>
+      <Popover label="Calendar pages" role="menu" focus="none" bind:open={pagesOpen}
+        onopen={(node) => node.querySelector<HTMLElement>('[aria-checked="true"]')?.focus()}>
+        {#snippet trigger(props)}
+          <button type="button" class="title-button" title={`Times in ${tz}`} {...props}>{sectionLabel}</button>
+        {/snippet}
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div class="pages" onkeydown={pagesKey}>
+          {#each SECTIONS as page (page.id)}
+            <button type="button" role="menuitemradio" tabindex="-1" class="page-item" aria-checked={section === page.id}
+              onclick={() => { pagesOpen = false; showSection(page.id); }}>{page.label}</button>
+          {/each}
+        </div>
+      </Popover>
+    </h1>
     <div class="header-actions">
       {#if undoId}<Button size="sm" disabled={pending > 0}
         onclick={() =>
@@ -1094,11 +1177,11 @@
             }}
             onpointerdown={(e) => { if (e.target === e.currentTarget) beginRange(day, true, e); }}
             onpointerenter={() => extendRange(day)}
-            class:drop-target={dragTarget === `day:${day}`}
-            class:invalid-drop={invalidDropTarget === `day:${day}`}
+            class:drop-target={onDay(dragTarget, day)}
+            class:invalid-drop={onDay(invalidDropTarget, day)}
             ondragleave={leaveDrop}
-            ondragover={(e) => allowDrop(day, true, e)}
-            ondrop={(e) => dropOn(day, true, e)}
+            ondragover={(e) => allowDrop(...monthDrop(day), e)}
+            ondrop={(e) => dropOn(...monthDrop(day), e)}
           >
             <div class="day-top">
               <button class="day-head" onclick={() => (selectedDate = day)}
@@ -1801,7 +1884,6 @@
     resize: vertical;
   }
   .toolbar,
-  .tabs,
   footer {
     display: flex;
     align-items: center;
@@ -1821,24 +1903,51 @@
     color: var(--muted);
     font-size: 0.85rem;
   }
-  /* The sections read as quiet words; the current one is a soft fill, like the top bar's groups. */
-  .tabs {
-    gap: 2px;
-  }
-  .section-tab {
+  /* The title opens the calendar's pages: the heading's own words with a small chevron, no box until hovered. */
+  .title-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    margin-left: -10px;
+    padding: 2px 10px;
     border: 0;
-    border-radius: 999px;
+    border-radius: var(--r-control);
     background: transparent;
-    color: var(--muted);
-    padding: 6px 12px;
-    font-size: 15px;
+    font: inherit;
+    white-space: nowrap;
   }
-  .section-tab:hover:not(:disabled) {
-    color: var(--ink);
+  .title-button::after {
+    content: "";
+    width: 7px;
+    height: 7px;
+    margin-top: -5px;
+    border-right: 2px solid var(--muted);
+    border-bottom: 2px solid var(--muted);
+    transform: rotate(45deg);
   }
-  .section-tab[aria-pressed="true"] {
-    background: color-mix(in srgb, var(--ink) 12%, transparent);
-    color: var(--ink);
+  .title-button:hover:not(:disabled),
+  .title-button[aria-expanded="true"] {
+    background: color-mix(in srgb, var(--ink) 8%, transparent);
+  }
+  .pages {
+    display: grid;
+    gap: 1px;
+    min-width: 190px;
+  }
+  .page-item {
+    height: var(--control-h);
+    padding: 0 9px;
+    border: 0;
+    border-radius: var(--r-item);
+    background: transparent;
+    font: 400 var(--fs-control) / 1 var(--font-ui);
+    text-align: left;
+    white-space: nowrap;
+  }
+  .page-item:hover,
+  .page-item:focus {
+    background: var(--wash);
+    outline: none;
   }
   .header-actions {
     display: flex;

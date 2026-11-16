@@ -110,3 +110,28 @@ export function columnShares(saved: readonly number[], count: number): number[] 
 export function rikaShare(fraction: number): number {
   return Number(snap(fraction, RIKA_LIMITS).toFixed(2));
 }
+
+/**
+ * A widget's height set by hand, in pixels: on an 8px grid, between these (the build keeps
+ * `ui.home.heights`, one `widget:pixels` entry per sized widget; the rest are as tall as their content).
+ * `key` is one press of Shift + Up or Down on a widget's handle.
+ */
+export const HEIGHT_LIMITS = { min: 120, max: 1600, step: 8, key: 40 };
+
+/** `pixels` on the grid and within the limits. */
+export function snapHeight(pixels: number): number {
+  return snap(pixels, HEIGHT_LIMITS);
+}
+
+/** The height `widget` was given, or null when it has none (a value off the grid or out of range is brought onto it). */
+export function widgetHeight(heights: readonly string[], widget: string): number | null {
+  const entry = heights.find((item) => item.startsWith(`${widget}:`));
+  const pixels = Number(entry?.slice(widget.length + 1));
+  return entry && Number.isFinite(pixels) ? snapHeight(pixels) : null;
+}
+
+/** `heights` with `widget` given `pixels`, or back to its content's height (null); other widgets' entries are kept. */
+export function withHeight(heights: readonly string[], widget: string, pixels: number | null): string[] {
+  const rest = heights.filter((item) => !item.startsWith(`${widget}:`));
+  return pixels === null ? rest : [...rest, `${widget}:${snapHeight(pixels)}`];
+}

@@ -110,13 +110,17 @@ const BORDER_PROBE = `(style, side) => {
   return width > 0 && kind !== "none" && kind !== "hidden" && !/rgba\\(.*,\\s*0\\)$/.test(color) && color !== "transparent";
 }`;
 
-describe("Find jobs", () => {
-  test("job search is four steps on every page; Find opens on the list, with the map one press away", async () => {
+describe("Career", () => {
+  test("Career is three steps with More at the far right; Find opens on the list, with the map one press away", async () => {
     const { page, problems, context } = await open("jobs");
-    const steps = page.getByRole("navigation", { name: "Job search" });
+    const steps = page.getByRole("navigation", { name: "Career" });
     await steps.waitFor();
-    assert.deepEqual(await steps.locator(".steps button").allInnerTexts(), ["Find", "Saved", "Apply", "Track"]);
+    assert.deepEqual(await steps.getByRole("button").allInnerTexts(), ["Find", "Saved", "Track", "More"]);
     assert.equal(await steps.getByRole("button", { name: "Find", exact: true }).getAttribute("aria-current"), "page");
+    // More is the bar's last item and sits at its far right, level with the page's right edge.
+    const more = steps.getByRole("button", { name: "More", exact: true });
+    const [moreBox, pageBox] = [await more.boundingBox(), await page.locator("section.opportunities").boundingBox()];
+    assert.ok(Math.abs(moreBox.x + moreBox.width - (pageBox.x + pageBox.width)) <= 2, `More is not at the far right (${moreBox.x + moreBox.width} vs ${pageBox.x + pageBox.width})`);
 
     // Find jobs lists the jobs first: something to pick is on screen without a press.
     const views = page.getByRole("navigation", { name: "Jobs view" });
@@ -146,23 +150,98 @@ describe("Find jobs", () => {
     await views.getByRole("button", { name: "List", exact: true }).click();
     await page.getByRole("region", { name: "Job results" }).waitFor();
 
+    // Applying is part of Find: one press narrows it to the jobs ready to apply to, and back.
+    const ready = page.getByRole("button", { name: "Ready to apply", exact: true });
+    assert.equal(await ready.getAttribute("aria-pressed"), "false");
+    await ready.click();
+    await page.waitForFunction(() => location.hash === "#queue");
+    await page.getByRole("button", { name: /^Fill in the form/ }).waitFor();
+    assert.equal(await page.getByRole("button", { name: "Ready to apply", exact: true }).getAttribute("aria-pressed"), "true");
+    assert.equal(await steps.getByRole("button", { name: "Find", exact: true }).getAttribute("aria-current"), "page");
+    await page.getByRole("button", { name: "Ready to apply", exact: true }).click();
+    await page.waitForFunction(() => location.hash === "#jobs");
+
     // The same steps lead through the whole section, and name where you are.
-    for (const [step, hash, heading] of [["Saved", "#favorites", /^Saved/], ["Apply", "#queue", /^Apply/], ["Track", "#pipeline", /^Track/]]) {
-      await page.getByRole("navigation", { name: "Job search" }).getByRole("button", { name: step, exact: true }).click();
+    for (const [step, hash, heading] of [["Saved", "#favorites", /^Saved/], ["Track", "#pipeline", /^Track/], ["Find", "#jobs", /^Find jobs/]]) {
+      await steps.getByRole("button", { name: step, exact: true }).click();
       await page.waitForFunction((wanted) => location.hash === wanted, hash);
       await page.getByRole("heading", { name: heading }).first().waitFor();
-      assert.equal(await page.getByRole("navigation", { name: "Job search" }).getByRole("button", { name: step, exact: true }).getAttribute("aria-current"), "page", step);
+      assert.equal(await steps.getByRole("button", { name: step, exact: true }).getAttribute("aria-current"), "page", step);
     }
     // Everything else is one menu away, and the menu's button says which of them is open.
-    await page.getByRole("navigation", { name: "Job search" }).getByRole("button", { name: "More", exact: true }).click();
+    await steps.getByRole("button", { name: "More", exact: true }).click();
     await page.getByRole("button", { name: "Resumes", exact: true }).click();
     await page.waitForFunction(() => location.hash === "#resumes");
-    const more = page.getByRole("navigation", { name: "Job search" }).locator("button.more");
-    await page.waitForFunction(() => document.querySelector('nav[aria-label="Job search"] button.more')?.textContent === "Resumes");
-    assert.equal(await more.getAttribute("aria-current"), "page");
+    await page.waitForFunction(() => document.querySelector('nav[aria-label="Career"] button.more')?.textContent === "Resumes");
+    assert.equal(await steps.locator("button.more").getAttribute("aria-current"), "page");
     assert.deepEqual(problems, []);
     await context.close();
   });
+
+  test("legacy Apply and Find links open the merged Find tab", async () => {
+    for (const [hash, pressed] of [["queue", "true"], ["apply", "true"], ["jobs", "false"], ["find", "false"]]) {
+      const { page, problems, context } = await open(hash);
+      const steps = page.getByRole("navigation", { name: "Career" });
+      await steps.waitFor();
+      assert.equal(await steps.getByRole("button", { name: "Find", exact: true }).getAttribute("aria-current"), "page", hash);
+      assert.equal(await steps.getByRole("button", { name: "Apply", exact: true }).count(), 0, "Apply is still a step");
+      assert.equal(await page.getByRole("button", { name: "Ready to apply", exact: true }).getAttribute("aria-pressed"), pressed, hash);
+      assert.deepEqual(problems, []);
+      await context.close();
+    }
+  });
+
+  test("the Career group opens on Track, with Rika at its right at 1568x942 and below it when narrow", async () => {
+    const { page, problems, context } = await open("calendar", { viewport: { width: 1568, height: 942 } });
+    const groups = page.getByRole("navigation", { name: "Workspace groups" });
+    await groups.getByRole("button", { name: "Career", exact: true }).click();
+    await page.waitForFunction(() => location.hash === "#pipeline");
+    const steps = page.getByRole("navigation", { name: "Career" });
+    assert.equal(await steps.getByRole("button", { name: "Track", exact: true }).getAttribute("aria-current"), "page");
+    const board = page.getByRole("region", { name: "Application pipeline" });
+    const rika = page.getByRole("region", { name: "Rika", exact: true });
+    await board.waitFor();
+    await rika.waitFor();
+    const [boardBox, rikaBox] = [await board.boundingBox(), await rika.boundingBox()];
+    assert.ok(rikaBox.x >= boardBox.x + boardBox.width, `Rika is not to the right of the board (${rikaBox.x} < ${boardBox.x + boardBox.width})`);
+    assert.ok(rikaBox.x + rikaBox.width <= 1568, "Rika runs off the screen");
+    assert.ok(rikaBox.y < 942 && boardBox.y < 942, "the board or Rika starts below the fold");
+    // The board stays readable: its lanes fit without sideways scrolling.
+    assert.equal(await page.locator(".pipeline .lanes").evaluate((node) => node.scrollWidth <= node.clientWidth + 1), true, "the board scrolls sideways at 1568px");
+
+    // Narrow, Rika moves below the board instead of squeezing it.
+    await page.setViewportSize({ width: 900, height: 942 });
+    await page.waitForFunction(() => {
+      const board = document.querySelector('[aria-label="Application pipeline"]');
+      const rika = [...document.querySelectorAll("section.home-widget")].find((node) => node.querySelector("h3")?.textContent === "Rika");
+      return board && rika && rika.getBoundingClientRect().top >= board.getBoundingClientRect().bottom;
+    });
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("AI sorting controls share one height and line", async () => {
+    const { page, problems, context } = await open("triage", { viewport: { width: 1568, height: 942 } });
+    const form = page.getByRole("form", { name: "Sort jobs with AI" });
+    await form.waitFor();
+    const controls = [
+      form.getByRole("combobox", { name: "Track" }),
+      form.getByRole("spinbutton", { name: "Jobs to send" }),
+      form.getByRole("button", { name: "See the price" }),
+      form.getByRole("button", { name: "Sort with free rules" }),
+    ];
+    const boxes = [];
+    for (const control of controls) boxes.push(await control.boundingBox());
+    const heights = boxes.map((box) => Math.round(box.height));
+    assert.ok(Math.max(...heights) - Math.min(...heights) <= 1, `the controls differ in height: ${heights}`);
+    const middles = boxes.map((box) => box.y + box.height / 2);
+    assert.ok(Math.max(...middles) - Math.min(...middles) <= 1, `the controls are not on one line: ${middles}`);
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});
+
+describe("Find jobs", () => {
 
   test("Scrape shows the brain in place of the list while the sources run, then reloads and says what came in", async () => {
     const { page, problems, context } = await open("jobs");

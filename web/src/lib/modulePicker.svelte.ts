@@ -18,6 +18,8 @@ class ModuleStore {
   phase = $state<"" | "downloading" | "saving">("");
   /** `apply`'s downloads as one measure: the pack arriving now, bytes so far of them all. */
   progress = $state<{ label: string; received: number; total: number } | null>(null);
+  /** The add-on module (owner/repo or name) Settings is downloading and checking now; "" when none. */
+  addon = $state("");
   /** Whether the desktop app is on the other end (it can restart itself); null until asked. */
   desktop = $state<boolean | null>(null);
   restarting = $state(false);

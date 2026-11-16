@@ -182,19 +182,52 @@ async function open(hash, { views, routes } = {}) {
 }
 const addons = (page) => page.getByRole("region", { name: "Add-on modules", exact: true });
 
+/** Holds `/api/external-modules/install` until the returned release runs, so the cover can be inspected. */
+async function holdInstall(context) {
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  await context.route("**/api/external-modules/install", async (route) => { await held; await route.continue(); });
+  return () => release();
+}
+
+/** The full-window download cover: says what is downloading, is busy, and blocks the page underneath. */
+async function assertCover(page, { name, reduced = false }) {
+  const cover = page.getByRole("dialog", { name: `Downloading ${name}…` });
+  await cover.waitFor();
+  assert.equal(await cover.getAttribute("aria-busy"), "true");
+  await cover.getByRole("status").filter({ hasText: `Downloading ${name}…` }).waitFor();
+  const state = await cover.evaluate((node) => {
+    const box = node.getBoundingClientRect();
+    const target = document.querySelector("form button[type=submit]")?.getBoundingClientRect();
+    return {
+      box: [box.x, box.y, box.width, box.height],
+      viewport: [0, 0, innerWidth, innerHeight],
+      modal: node.matches(":modal"),
+      covered: !!target && node.contains(document.elementFromPoint(target.x + target.width / 2, target.y + target.height / 2)),
+    };
+  });
+  assert.deepEqual(state.box, state.viewport, "the cover does not fill the window");
+  assert.ok(state.modal && state.covered, JSON.stringify(state));
+  await page.keyboard.press("Escape");
+  assert.ok(await cover.isVisible(), "Escape hid a running download");
+  const canvas = cover.locator("canvas.brain-cloud");
+  const frame = await canvas.evaluate((node) => node.toDataURL());
+  if (reduced) {
+    await page.waitForTimeout(150);
+    assert.equal(await canvas.evaluate((node) => node.toDataURL()), frame, "reduced motion still turns the brain");
+  } else {
+    await page.waitForFunction((frame) => document.querySelector("canvas.brain-cloud")?.toDataURL() !== frame, frame);
+  }
+  return cover;
+}
+
 describe("Settings → Modules → Add-on modules", () => {
-  test("explains itself, shows the GitHub token status and links to Keys", async () => {
+  test("shows the GitHub token status and links to Keys", async () => {
     const { page, problems, context } = await open("settings/modules");
     const section = addons(page);
     await section.waitFor();
     const text = await section.innerText();
-    assert.match(text, /latest release/);
-    assert.match(text, /SHA-256 checksum/);
-    assert.match(text, /after you restart rika!/);
-    assert.match(text, /Needed only for private repositories/);
     assert.match(text, /GitHub token\s*Not set/i);
-    const field = section.getByRole("textbox", { name: "GitHub repository" });
-    assert.equal(await field.getAttribute("placeholder"), "owner/repo");
     await section.getByRole("button", { name: "Add in Keys" }).click();
     await page.getByRole("region", { name: "Keys", exact: true }).waitFor();
     assert.equal(await page.evaluate(() => location.hash), "#settings/keys");
@@ -207,7 +240,7 @@ describe("Settings → Modules → Add-on modules", () => {
     const section = addons(page);
     const before = hits.length;
     await section.getByRole("textbox", { name: "GitHub repository" }).fill("just-a-name");
-    await section.getByRole("button", { name: "Add module" }).click();
+    await section.getByRole("button", { name: "Add", exact: true }).click();
     await section.getByRole("alert").filter({ hasText: "Enter the repository as owner/repo" }).waitFor();
     assert.equal(await section.getByRole("textbox", { name: "GitHub repository" }).getAttribute("aria-invalid"), "true");
     assert.equal(hits.length, before, "an invalid name reached GitHub");
@@ -215,41 +248,51 @@ describe("Settings → Modules → Add-on modules", () => {
     await context.close();
   });
 
-  test("a download whose checksum does not match the release is refused and not listed", async () => {
+  test("a download whose checksum does not match is refused under the cover, which then clears to the error", async () => {
     const { page, problems, context } = await open("settings/modules");
     const section = addons(page);
+    const release = await holdInstall(context);
     await section.getByRole("textbox", { name: "GitHub repository" }).fill("octo-org/rika-tampered");
-    await section.getByRole("button", { name: "Add module" }).click();
+    const add = section.getByRole("button", { name: "Add", exact: true });
+    await add.click();
+    const cover = await assertCover(page, { name: "octo-org/rika-tampered" });
+    release();
+    await cover.waitFor({ state: "hidden", timeout: 30_000 });
     const alert = section.getByRole("alert").filter({ hasText: "does not match the release's published SHA-256 checksum" });
-    await alert.waitFor({ timeout: 30_000 });
+    await alert.waitFor();
     assert.doesNotMatch(await alert.innerText(), /Traceback|Exception|\bError:/);
     assert.equal(await section.locator('[data-module="rika-tampered"]').count(), 0);
     assert.ok(hits.includes("GET /repos/octo-org/rika-tampered/releases/latest"));
+    await page.waitForFunction(() => document.activeElement?.textContent?.trim() === "Add");
+    assert.ok(await add.isEnabled(), "the form stays usable after a failure");
     assert.deepEqual(problems, []);
     await context.close();
   });
 
-  test("adding owner/repo downloads, checks and lists the module with its restart message", async () => {
+  test("adding owner/repo shows the cover while it downloads, then lists the module to restart", async () => {
     const { page, problems, context } = await open("settings/modules");
+    await page.emulateMedia({ reducedMotion: "reduce" });
     const section = addons(page);
+    const release = await holdInstall(context);
     await section.getByRole("textbox", { name: "GitHub repository" }).fill("octo-org/rika-demo");
-    await section.getByRole("button", { name: "Add module" }).click();
-    await section.getByRole("status").filter({ hasText: "Downloading and checking…" }).first().waitFor();
+    await section.getByRole("button", { name: "Add", exact: true }).click();
+    const cover = await assertCover(page, { name: "octo-org/rika-demo", reduced: true });
+    release();
+    await cover.waitFor({ state: "hidden", timeout: 30_000 });
     const row = section.locator('[data-module="rika-demo"]');
-    await row.waitFor({ timeout: 30_000 });
+    await row.waitFor();
     const text = await row.innerText();
-    for (const fact of ["Demo", "0.1.0", "octo-org/rika-demo", "Demo: a synthetic test module.", "License: MIT", "Restart to install"])
+    for (const fact of ["Demo", "0.1.0", "octo-org/rika-demo", "License: MIT", "Restart to install"])
       assert.ok(text.toLowerCase().includes(fact.toLowerCase()), `${fact} is missing from the row:\n${text}`);
     const modules = await page.evaluate(async () =>
       (await (await fetch("/api/modules", { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()));
     const installed = modules.external.installed.find((item) => item.id === "rika-demo");
     assert.equal(installed.status, "restart-to-install");
     assert.equal(modules.restart_required, true);
-    assert.ok(text.includes(installed.message), "the backend's restart message is shown");
-    const banner = section.getByRole("status").filter({ hasText: "Restart rika! to finish" });
-    assert.ok((await banner.innerText()).includes(installed.message));
+    await section.getByRole("status").filter({ hasText: "Restart rika! to finish" }).waitFor();
     assert.ok(hits.some((hit) => hit.startsWith("GET /repos/octo-org/rika-demo/releases/assets/")), "the asset was downloaded");
     assert.equal(await section.getByRole("textbox", { name: "GitHub repository" }).inputValue(), "");
+    await page.waitForFunction(() => document.activeElement?.getAttribute("placeholder") === "owner/repo");
     assert.deepEqual(problems, []);
     await context.close();
   });

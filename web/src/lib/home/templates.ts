@@ -30,7 +30,7 @@ function template(id: TemplateId, name: string, modules: ModuleId[], columns: Ho
 
 export const TEMPLATES: Template[] = [
   template("student", "Student", ["workspace", "math"], [["next", "focus", "note"], ["agenda"]], "Studying"),
-  template("job-search", "Job search", ["applyai", "workspace"], [["agenda", "next"], ["note"]], "Finding a job"),
+  template("job-search", "Career", ["applyai", "workspace"], [["agenda", "next"], ["note"]], "Finding a job"),
   template("builder", "Builder", ["terminal", "workspace", "brain"], [["agents", "session", "note"], ["agenda", "next"]], "Building with agents"),
   template("minimal", "Minimal", ["workspace"], [["agenda", "note"]], "Notes and a calendar"),
   template("exam-week", "Exam week", ["workspace"], [["week", "cards", "focus"], ["next", "goals"]]),
@@ -61,7 +61,7 @@ export type Signals = { enabled: readonly string[]; counts?: { jobs: number; app
 
 /**
  * The template Rika offers: the one whose modules best match what is on (each one on
- * counts for it, each one off against), job records tipping a tie toward Job search.
+ * counts for it, each one off against), job records tipping a tie toward Career.
  */
 export function suggestTemplate({ enabled, counts }: Signals): Template {
   const records = (counts?.jobs ?? 0) + (counts?.applications ?? 0);

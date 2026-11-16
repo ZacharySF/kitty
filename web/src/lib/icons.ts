@@ -64,6 +64,8 @@ export const ICONS: Record<string, IconDef> = {
   redo: plain("m15 14 5-5-5-5m5 5H9a5 5 0 0 0 0 10h3"),
   plus: plain("M12 5v14M5 12h14"),
   more: plain("M5 11a1 1 0 1 1 0 2 1 1 0 0 1 0-2ZM12 11a1 1 0 1 1 0 2 1 1 0 0 1 0-2ZM19 11a1 1 0 1 1 0 2 1 1 0 0 1 0-2Z"),
+  expand: plain("M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"),
+  collapse: plain("M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"),
   // Canvas drawing tools (Notes), keyed `tool-<tool id>`.
   "tool-select": plain("M5 3l13 8-6 1.4L9 18.5Z"),
   "tool-lasso": plain("M12 4c4.4 0 8 2.4 8 5.5S16.4 15 12 15s-8-2.4-8-5.5S7.6 4 12 4ZM7 13.5c-1.6 1.6-.6 3.5 1.2 3.5 1.5 0 1.8 1.9.3 3.5"),

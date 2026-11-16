@@ -11,6 +11,7 @@
   import CommandPalette from "./lib/CommandPalette.svelte";
   import KeyboardHelp from "./lib/KeyboardHelp.svelte";
   import TabSwitcher from "./lib/TabSwitcher.svelte";
+  import TabOverview from "./lib/TabOverview.svelte";
   import NotificationCenter from "./lib/NotificationCenter.svelte";
   import NotificationToasts from "./lib/NotificationToasts.svelte";
   import { notifier } from "./lib/notifications.svelte";
@@ -21,16 +22,22 @@
   import { focusContext, installPanelFullscreen, type PanelFullscreen } from "./lib/panelFullscreen";
   import { isCloseTabShortcut } from "./lib/tabShortcut";
   import Onboarding from "./lib/Onboarding.svelte";
+  import ModuleDownload from "./lib/ModuleDownload.svelte";
   import PairingPrompt from "./lib/PairingPrompt.svelte";
   import EffectsPrompt from "./lib/EffectsPrompt.svelte";
   import BuildEditor from "./lib/BuildEditor.svelte";
-  import { buildStore } from "./lib/build.svelte";
+  import { buildStore, previewLook, setTheme } from "./lib/build.svelte";
+  import ThemeCarousel from "./lib/themes/ThemeCarousel.svelte";
+  import { getTheme } from "./lib/themes/catalog";
+  import { shownThemes } from "./lib/themes/installed";
   import PetalDrift from "./lib/PetalDrift.svelte";
   import ThemeLayer from "./lib/themes/ThemeLayer.svelte";
   import { APPEARANCE_EVENT, savedAppearance, type Appearance } from "./lib/appearance";
   import QuickCard from "./lib/flashcards/QuickCard.svelte";
   import Rika from "./lib/rika/Rika.svelte";
   import { rika } from "./lib/rika/session.svelte";
+  import RikaDock from "./lib/rika/RikaDock.svelte";
+  import { templatePicker } from "./lib/home/templatePicker.svelte";
   import { goalHash } from "./lib/goals/goals";
   import PageEdit from "./lib/pageEdit/PageEdit.svelte";
   import PageWidgets from "./lib/pageEdit/PageWidgets.svelte";
@@ -99,7 +106,7 @@
     icon: tab.view === "today" ? "kitty" : navItem(tab.view, external)?.icon || "atlas",
     status: tab.pane?.saveStatus() ?? null,
   })));
-  /** The bar carries only the groups you move between; Settings is reached from search and the tab menu. */
+  /** The bar carries only the groups you move between; Settings is the gear at its end (and in search and the tab menu). */
   const barGroups = $derived(groups.filter(group => group.label !== "Settings"));
   /** The Icons module: a page's title carries its view's icon, drawn by CSS as a mask (styles.css). */
   function viewIcon(view: AnyView): string {
@@ -108,7 +115,7 @@
     return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
   }
   /** The Icons module: one icon per top-bar group. */
-  const GROUP_ICONS: Record<string, string> = { Plan: "calendar", Study: "study", "Job search": "jobs", Rika: "actor-rika" };
+  const GROUP_ICONS: Record<string, string> = { Plan: "calendar", Study: "study", Career: "jobs", Rika: "actor-rika" };
   const menuExtras = $derived([
     { label: "Settings", run: () => openSettings() },
     ...(workspace ? [{ label: "Notifications", detail: notifier.unread ? `${notifier.unread} unread` : "", run: () => (notifier.drawer = true) }] : []),
@@ -414,6 +421,74 @@
     window.addEventListener("keydown", paletteChord, { capture: true });
     return () => window.removeEventListener("keydown", paletteChord, { capture: true });
   });
+  /** Ctrl + R (Cmd + R): Rika beside the page (rika/RikaDock.svelte), never a reload. Home (with its Rika
+   *  column) and the Rika page already show her: there it focuses her field and the dock stays out of the way. */
+  let rikaDock = $state(false);
+  let dockReturn: HTMLElement | null = null;
+  const ownRika = $derived(view === "rika" ||
+    (view === "today" && (!buildStore.build.ui.home.hidden.includes("rika") || templatePicker.open)));
+  const dockShown = $derived(Boolean(workspace) && rikaDock && !ownRika);
+  async function openDock() {
+    dockReturn = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null;
+    rikaDock = true;
+    await tick();
+    rika.showDrawer();
+  }
+  async function closeDock() {
+    rikaDock = false;
+    const back = dockReturn;
+    dockReturn = null;
+    await tick();
+    if (back?.isConnected && back.getClientRects().length) back.focus({ preventScroll: true });
+    else document.getElementById("main-content")?.focus({ preventScroll: true });
+  }
+  function rikaChord(event: KeyboardEvent) {
+    if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== "r") return;
+    if (focusContext(event.target as HTMLElement | null) === "terminal") return;
+    event.preventDefault();
+    if (event.repeat || !workspace || document.querySelector('dialog[open], [role="dialog"][aria-modal="true"]')) return;
+    event.stopPropagation();
+    if (dockShown) void closeDock();
+    else if (ownRika) rika.showDrawer();
+    else void openDock();
+  }
+  $effect(() => {
+    window.addEventListener("keydown", rikaChord, { capture: true });
+    return () => window.removeEventListener("keydown", rikaChord, { capture: true });
+  });
+  /** Ctrl + O: every tab as a card to pick from. Ctrl + Y: the theme carousel. */
+  let overview = $state(false);
+  let carousel = $state(false);
+  const carouselThemes = $derived(shownThemes(buildStore.build.ui.themes.installed, getTheme(buildStore.build.theme.base).id));
+  function stepTab(direction: number) {
+    const index = tabs.findIndex(tab => tab.id === activeId);
+    return selectTab(tabs[(index + direction + tabs.length) % tabs.length].id);
+  }
+  /** Tab and theme chords, in the capture phase: an editor that takes Tab (or a letter) for itself never sees them.
+   *  Ctrl + Tab / Ctrl + Shift + Tab (and Ctrl + PageDown / PageUp) step through the tabs, wrapping. In a text field
+   *  Ctrl + Y stays the field's redo; anywhere else it opens the theme carousel. */
+  function tabKeys(event: KeyboardEvent) {
+    if (!(event.ctrlKey || event.metaKey) || event.altKey || !workspace) return;
+    const target = event.target as HTMLElement | null;
+    const context = focusContext(target);
+    if (context === "terminal" || document.querySelector('dialog[open], [role="dialog"][aria-modal="true"]')) return;
+    const key = event.key.toLowerCase();
+    const stepping = event.ctrlKey && (key === "tab" || key === "pageup" || key === "pagedown");
+    const opening = !event.shiftKey && key === "o";
+    const theming = !event.shiftKey && key === "y" && context !== "text";
+    if (!stepping && !opening && !theming) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.repeat && !stepping) return;
+    tabBar?.close(false);
+    if (stepping) void stepTab(key === "pageup" || (key === "tab" && event.shiftKey) ? -1 : 1);
+    else if (opening) overview = true;
+    else carousel = true;
+  }
+  $effect(() => {
+    window.addEventListener("keydown", tabKeys, { capture: true });
+    return () => window.removeEventListener("keydown", tabKeys, { capture: true });
+  });
   async function keyboard(event: KeyboardEvent) {
     planChord = false;
     if (event.defaultPrevented || document.querySelector('dialog[open], [role="dialog"][aria-modal="true"]')) return;
@@ -429,13 +504,6 @@
         // In a fullscreen canvas (no top bar), Ctrl T starts a new page there instead of a tab.
         if (!await activeTab.pane?.createCanvasPage()) await newTab();
       } catch (cause) { error = (cause as Error).message; }
-      return;
-    }
-    if (event.ctrlKey && !event.altKey && ["PageUp", "PageDown", "Tab"].includes(event.key)) {
-      event.preventDefault();
-      const direction = event.key === "PageUp" || (event.key === "Tab" && event.shiftKey) ? -1 : 1;
-      const index = tabs.findIndex(tab => tab.id === activeId);
-      await selectTab(tabs[(index + direction + tabs.length) % tabs.length].id);
       return;
     }
     // Ctrl+Alt alone opens Plan when it is released, so chords that start with it
@@ -512,6 +580,13 @@
         aria-label={applyai ? "Search pages, jobs and commands" : "Search pages and commands"}
         title="Search · Ctrl Space"
         ><Icon name="jobs" size={18} /></button>
+      <button
+        class="system-command"
+        onclick={() => openSettings()}
+        aria-label="Settings"
+        aria-current={view === "settings" ? "page" : undefined}
+        title="Settings"
+        ><Icon name="settings" size={18} /></button>
     </div>
   </header>
   </div>
@@ -562,6 +637,17 @@
 </div>
 {#if notifySources}<NotificationToasts onopen={openNotice} /><NotificationCenter onopen={openNotice} />{/if}
 {#if workspace}<Rika onnavigate={next => { if (isView(next) && next !== view) navigate(next); }} />{/if}
+{#if dockShown}<RikaDock onclose={() => void closeDock()} />{/if}
+{#if overview}
+  <TabOverview tabs={tabLabels} {activeId} onclose={() => (overview = false)}
+    onselect={(id) => { overview = false; void selectTab(id); }} />
+{/if}
+{#if carousel}
+  <ThemeCarousel themes={carouselThemes} current={getTheme(buildStore.build.theme.base).id}
+    onpreview={(id) => previewLook({ ...buildStore.build.theme, base: id })}
+    onkeep={(id) => { carousel = false; previewLook(null); void setTheme(id as Parameters<typeof setTheme>[0]); }}
+    oncancel={() => { carousel = false; previewLook(null); }} />
+{/if}
 {#if buildStore.editorOpen}<BuildEditor onclose={() => (buildStore.editorOpen = false)} />{/if}
 <PageEdit {view} tab={activeId} bind:editing={pageEditing} />
 {#if workspace}<Onboarding {workspace} onview={next => { if (next !== view) navigate(next); }} />{/if}
@@ -614,3 +700,4 @@
       openJob(id);
     }}
   />{/if}
+<ModuleDownload />

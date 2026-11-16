@@ -21,7 +21,9 @@ test('each module alone exposes only its own views',()=>{
   const applyaiOnly=ids(visibleNavigation(['applyai']));
   assert.ok(applyaiOnly.includes('jobs')&&applyaiOnly.includes('profile')&&applyaiOnly.includes('reminders'));
   assert.ok(!applyaiOnly.includes('notes')&&!applyaiOnly.includes('calendar'));
-  assert.deepEqual(labels(visibleGroups(['applyai'])),['Plan','Job search','Rika','Settings']);
+  assert.deepEqual(labels(visibleGroups(['applyai'])),['Plan','Career','Rika','Settings']);
+  // Career opens on Track: its first view is the application board.
+  assert.equal(visibleGroups(['applyai'])[1].views[0],'pipeline');
   assert.deepEqual(visibleGroups(['applyai'])[0].views,['today','goals','reminders']);
   assert.equal(viewEnabled('study',['applyai']),false);
   assert.equal(viewEnabled('study',['workspace']),true);

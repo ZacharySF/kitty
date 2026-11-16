@@ -17,6 +17,7 @@
   import Icon from "./Icon.svelte";
   import Select from "./ui/Select.svelte";
   import OverflowMenu, { type OverflowItem } from "./ui/OverflowMenu.svelte";
+  import FullscreenButton from "./ui/FullscreenButton.svelte";
   import Popover from "./ui/Popover.svelte";
   import EditDrawer from "./ui/EditDrawer.svelte";
   import { useWorkspaceContext, type SaveStatus } from "./workspaceContext.svelte";
@@ -1918,6 +1919,7 @@
       aria-label={mirrors.list.length ? `Mirror (${mirrors.list.length} live)` : "Mirror"}
       title="Mirror: the browser tab the rika! extension is mirroring, beside this page"
       onclick={()=>mirrorOpen=!mirrorOpen}><Icon name="external" size={15}/>{#if mirrors.list.length}<span class="mirror-live" aria-hidden="true"></span>{/if}</button>
+    <FullscreenButton />
     <OverflowMenu items={pageActions} label="More page actions" />
   </header>
   {#if operationStatus}<p class="op-status" role="status">{operationStatus}</p>{/if}
