@@ -309,7 +309,6 @@ fn parse(value: &str) -> Option<Stamp> {
         _ => return None,
     };
     let mut micros = date.days() * 86_400_000_000;
-    let mut date = date;
     if !time_text.is_empty() {
         if time_text.len() < 2 {
             return None;
@@ -330,14 +329,11 @@ fn parse(value: &str) -> Option<Stamp> {
             offset = if time_text.as_bytes()[at] == b'-' { -magnitude } else { magnitude };
         }
         let [hour, minute, second, fraction] = clock;
-        if hour == 24 && minute == 0 && second == 0 && fraction == 0 {
-            date = date.add_days(1);
-            micros += 86_400_000_000;
-        } else if hour > 23 || minute > 59 || second > 59 {
+        // datetime.fromisoformat rejects hour 24, even for next-day midnight.
+        if hour > 23 || minute > 59 || second > 59 {
             return None;
-        } else {
-            micros += ((hour * 60 + minute) * 60 + second) * 1_000_000 + fraction;
         }
+        micros += ((hour * 60 + minute) * 60 + second) * 1_000_000 + fraction;
         micros -= offset;
     }
     Some(Stamp { date, micros })
@@ -818,11 +814,32 @@ mod tests {
         assert_eq!(day("2026-11-12").as_deref(), Some("2026-11-12"));
         assert_eq!(day("20261112").as_deref(), Some("2026-11-12"));
         assert_eq!(day("2026-11-12 23:30:00-05:00").as_deref(), Some("2026-11-12"));
-        assert_eq!(day("2026-11-12T24:00:00").as_deref(), Some("2026-11-13"));
+        assert!(parse("2026-11-12T24:00:00").is_none());
         assert_eq!(day("2026-11-12T10:00:00.5+01:00").as_deref(), Some("2026-11-12"));
         assert!(parse("2026-02-30").is_none() && parse("soon").is_none() && parse("2026-11-12T25:00").is_none());
         let utc = parse("2026-11-12T00:00:00+01:00").unwrap();
         assert_eq!(utc.micros, parse("2026-11-11T23:00:00Z").unwrap().micros);
+    }
+
+    #[test]
+    fn hour_24_is_invalid_instead_of_next_day_midnight() {
+        let now = Now { micros: parse("2026-11-16T00:00:00Z").unwrap().micros };
+        for value in [
+            "2026-11-12T24:00:00",
+            "2026-11-12T24:00:00Z",
+            "2026-11-12T24:00:00-05:00",
+            "20261112T240000",
+            "2026-12-31T24:00:00",
+        ] {
+            assert!(parse(value).is_none(), "{value}");
+            assert_eq!(days_since(Some(value), now), 0);
+            assert_eq!(short_date(Some(value)), value);
+        }
+        let before = parse("2026-11-12T23:59:59.999999Z").unwrap();
+        let after = parse("2026-11-13T00:00:00Z").unwrap();
+        assert_eq!(after.micros - before.micros, 1);
+        assert_eq!(before.date.iso(), "2026-11-12");
+        assert_eq!(after.date.iso(), "2026-11-13");
     }
 
     #[test]

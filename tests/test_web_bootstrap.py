@@ -142,7 +142,7 @@ def test_without_applyai_the_answer_is_the_module_state(tmp_path):
 def test_the_digest_command_matches_on_edge_data(workspace, monkeypatch):
     monkeypatch.setenv("SYNTHETIC_API_KEY", SECRET)
     populate(workspace.conn, workspace.config)
-    # Hour 24 is the next day's midnight; a weekly target of zero; an inactive track.
+    # Hour 24 is invalid to datetime.fromisoformat; a weekly target of zero; an inactive track.
     workspace.conn.execute("UPDATE applications SET applied_at='2026-11-12T24:00:00' WHERE id=(SELECT MIN(id) FROM applications)")
     workspace.conn.execute("UPDATE tracks SET weekly_target=0 WHERE rowid=(SELECT MIN(rowid) FROM tracks)")
     workspace.conn.execute("UPDATE tracks SET active=0 WHERE rowid=(SELECT MAX(rowid) FROM tracks)")
