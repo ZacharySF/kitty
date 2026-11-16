@@ -134,7 +134,6 @@ ROUTES = (
     _route(rf"/api/documents/{ID}", "document", "save"),
     _route(r"/api/documents", "document", "create"),
     _route(r"/api/documents/import", "document", "import"),
-    _route(r"/api/quick-notes/(create|save|delete)", "note", _group),
     _route(r"/api/study/(subjects|projects|targets|tasks|exams|plan)",
            lambda match, body: _singular(match[1]), _body_action()),
     _route(r"/api/study/sessions", "session", _body_action(), logged=lambda body: body.get("id") is None),

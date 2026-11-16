@@ -2,8 +2,9 @@
 
 rika-server owns every window's live socket (server/src/live/: ``POST /api/live/session``,
 ``GET /api/live/socket``, the protocol, the ``op_log`` poller and resume). Behind it, this
-module serves the two routes only the front reaches (it refuses ``/api/internal/...`` to
-pages):
+module serves the one route only the front reaches (it refuses ``/api/internal/...`` to
+pages); windows' block transactions are applied by the front's block engine
+(server/src/blocks/):
 
 GET  /api/internal/live/events   (WebSocket upgrade)
     The front's subscription to this worker. A binary frame ``{"type": "nudge"}`` follows
@@ -11,9 +12,6 @@ GET  /api/internal/live/events   (WebSocket upgrade)
     syncs the build a Settings screen may have written); each text frame is one message
     another extension sends to every window (``broadcast``: the page mirror's frames),
     forwarded as it is.
-POST /api/internal/live/txn  {"type": "txn", "txn_id"?, "ops", "base"?}
-    One window's block transaction (kitty.core.blocks.transact as the person at this
-    device): ``{"type": "ack", ...}`` or ``{"type": "reject", "txn_id", "status", "error"}``.
 """
 from __future__ import annotations
 
@@ -22,18 +20,11 @@ import os
 import queue
 import select
 import socket
-import sqlite3
 import threading
-import uuid
-from contextlib import closing
 
-from kitty.core import blocks
-from kitty.core.blocks import actor
-from kitty.db import connect
 from kitty.web_socket import Closed, Reader, accept, close_code, frame, handshake_key, send_close
 
 EVENTS_PATH = "/api/internal/live/events"
-TXN_PATH = "/api/internal/live/txn"
 NUDGE = json.dumps({"type": "nudge"}).encode()
 
 
@@ -64,7 +55,7 @@ class Subscriber:
 
 
 class Live:
-    """What the worker pushes through the front, and the block transactions it applies."""
+    """What the worker pushes through the front."""
 
     def __init__(self, app):
         self.app = app
@@ -95,22 +86,6 @@ class Live:
             self._fronts.discard(subscriber)
         subscriber.close()
 
-    def transact(self, conn: sqlite3.Connection, message: dict) -> dict:
-        txn_id = message.get("txn_id") or str(uuid.uuid4())
-        if "workspace" not in self.app.modules:
-            return {"type": "reject", "txn_id": txn_id, "status": 403, "error": "Block edits need the workspace module"}
-        try:
-            if set(message) - {"type", "txn_id", "ops", "base"}:
-                raise blocks.BlockError("Unexpected transaction fields")
-            # A window's editor is the person at this device.
-            result = blocks.transact(conn, message.get("ops"), base=message.get("base"), txn_id=txn_id, suggest=True,
-                                     actor=actor.USER)
-        except blocks.BlockError as exc:
-            return {"type": "reject", "txn_id": txn_id, "status": exc.status, "error": str(exc)}
-        except sqlite3.OperationalError:
-            return {"type": "reject", "txn_id": txn_id, "status": 503, "error": "Local workspace is busy; send the transaction again"}
-        return {"type": "ack", **result}
-
 
 def start(app) -> None:
     app.live = Live(app)
@@ -126,9 +101,6 @@ def get(app, conn, path, query):
 
 
 def post(app, conn, path, body):
-    if path == TXN_PATH:
-        # RequestHandler._dispatch holds the mutation lock and opened `conn` for this request.
-        return app.live.transact(conn, body)
     return None
 
 

@@ -27,8 +27,8 @@
 //! A window sends:
 //!
 //! - `{"type": "txn", "txn_id"?, "ops": [...], "base"?: {page_id: revision}}`, applied by the
-//!   worker's block store (`POST /api/internal/live/txn`, kitty.web_live), which answers the
-//!   sender `{"type": "ack", ...}` or `{"type": "reject", "txn_id", "status", "error"}`;
+//!   front's block engine (crate::blocks::live), which answers the sender `{"type": "ack", ...}`
+//!   or `{"type": "reject", "txn_id", "status", "error"}`;
 //! - `{"type": "resume", "after": seq}`: replays the changes it missed while away, or
 //!   `{"type": "reset", "horizon"}` when history before the horizon was compacted;
 //! - `{"type": "subscribe", "pages": [page_id, ...] | null}`: limits live block changes
@@ -92,6 +92,8 @@ struct State {
 pub struct Hub {
     db_path: PathBuf,
     backend: Backend,
+    /// The worker's active modules: block transactions need the workspace module.
+    modules: Vec<String>,
     tokens: Mutex<HashMap<String, Instant>>,
     state: Mutex<State>,
     wake: (Mutex<bool>, Condvar),
@@ -109,6 +111,7 @@ pub fn start(front: &Front, db_path: PathBuf) {
     let hub = Arc::new(Hub {
         db_path,
         backend: front.backend.clone(),
+        modules: front.workspace.active.clone(),
         tokens: Mutex::new(HashMap::new()),
         state: Mutex::new(State { seq: 0, device_id: String::new(), started: false, next: 0, windows: HashMap::new() }),
         wake: (Mutex::new(false), Condvar::new()),
@@ -122,6 +125,14 @@ pub fn start(front: &Front, db_path: PathBuf) {
 pub fn broadcast_text(message: String) {
     if let Some(hub) = HUB.get() {
         hub.broadcast_text(message);
+    }
+}
+
+/// A mutation the front answered committed (`web_live.mutated`): push its block changes now
+/// rather than at the next poll.
+pub fn nudge() {
+    if let Some(hub) = HUB.get() {
+        hub.nudge();
     }
 }
 

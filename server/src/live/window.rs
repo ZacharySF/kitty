@@ -1,6 +1,6 @@
 //! One window's socket (`web_live._serve` and `_handle` in Python): its hello, every push
-//! while it is open, and what it sends: block transactions (applied by the worker), resume
-//! after a reconnect and its page subscription.
+//! while it is open, and what it sends: block transactions (applied by the front's block
+//! engine), resume after a reconnect and its page subscription.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -13,8 +13,6 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use super::changes::{self, BATCH};
 use super::socket::{self, Closed, Reader};
 use super::{Hub, Push};
-
-pub const TXN_PATH: &str = "/api/internal/live/txn";
 
 /// What ends a window's stream: a close frame to answer with, or a connection already gone.
 enum End {
@@ -110,18 +108,17 @@ async fn handle<S: AsyncWrite + Unpin>(hub: &Hub, window: &Window, pages: &mut O
     Ok(())
 }
 
-/// `Live.transact`, which needs Python's block store: the worker applies the transaction
-/// and answers the ack or reject; the front pushes the committed change to every window.
+/// `Live.transact`: the front's block engine applies the transaction on the workspace
+/// connection the ported routes share and answers the ack or reject; every window then gets
+/// the committed change.
 async fn transact(hub: &Hub, message: Value) -> Value {
-    let answer = match super::worker::post(&hub.backend, TXN_PATH, &message).await {
-        Ok((200, answer)) if answer.is_object() => answer,
-        _ => {
-            let txn_id = message.get("txn_id").filter(|id| id.is_string()).cloned().unwrap_or(Value::Null);
-            json!({ "type": "reject", "txn_id": txn_id, "status": 503, "error": "Local workspace is busy; send the transaction again" })
-        }
-    };
+    let (db, modules) = (hub.db_path.clone(), hub.modules.clone());
+    let applied = tokio::task::spawn_blocking(move || {
+        let answer = crate::ported::db::with(&db, |conn| Ok(crate::blocks::live::transact(conn, &modules, &message)));
+        answer.unwrap_or_else(|_| crate::blocks::live::busy(&message))
+    }).await;
     hub.nudge();
-    answer
+    applied.unwrap_or_else(|_| json!({ "type": "reject", "txn_id": Value::Null, "status": 503, "error": crate::blocks::live::BUSY }))
 }
 
 /// `Live.resume`: the changes a reconnecting window missed, up to its hello, or a reset when

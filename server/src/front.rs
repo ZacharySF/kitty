@@ -501,6 +501,10 @@ impl Front {
             let target = parse_target(&forward_target)?;
             let body = if mutation { crate::ported::no_query(&target)?; let length = content_length(request.headers())?; Some(json_object(&read_body(request.into_body(), length).await?)?) } else { None };
             let answer = tokio::task::block_in_place(|| crate::ported::answer(&self.workspace, &self.bootstrap, &target, body))?;
+            if mutation {
+                // `WebApplication.mutated`: windows get a committed block change at once.
+                crate::live::nudge();
+            }
             return Ok(send_json(StatusCode::OK, &answer, method == Method::HEAD));
         }
         if mutation {

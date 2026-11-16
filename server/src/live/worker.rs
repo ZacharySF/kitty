@@ -1,60 +1,23 @@
-//! The front's two links to the worker for the live channel.
-//!
-//! - Its event stream, `GET /api/internal/live/events` (a WebSocket upgrade on the worker,
-//!   kitty.web_live): a binary frame `{"type": "nudge"}` after every mutation the worker
-//!   committed (push now, not at the next poll), and each text frame one message another
-//!   Python extension pushes to every window, forwarded verbatim.
-//! - Internal calls, `POST /api/internal/...`: what the front still needs Python for (a
-//!   window's block transaction), sent as the front sends any forwarded mutation.
+//! The front's link to the worker for the live channel: its event stream,
+//! `GET /api/internal/live/events` (a WebSocket upgrade on the worker, kitty.web_live): a
+//! binary frame `{"type": "nudge"}` after every mutation the worker committed (push now, not
+//! at the next poll), and each text frame one message another Python extension pushes to
+//! every window, forwarded verbatim.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use base64::Engine;
-use bytes::Bytes;
-use http_body_util::{BodyExt, Full};
-use hyper::Request;
-use hyper_util::rt::TokioIo;
-use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 use super::socket::{self, Reader};
 use super::Hub;
 use crate::auth;
-use crate::front::Backend;
 
 pub const EVENTS_PATH: &str = "/api/internal/live/events";
 /// How long the front waits before opening the stream again after it dropped.
 const RECONNECT: Duration = Duration::from_millis(500);
-/// Internal calls are local and small; a worker that takes longer than this is stuck.
-const CALL_TIMEOUT: Duration = Duration::from_secs(60);
-
-/// POST `body` to the worker's internal `path`; its status and JSON answer.
-pub async fn post(backend: &Backend, path: &str, body: &Value) -> Result<(u16, Value), ()> {
-    let call = async {
-        let stream = TcpStream::connect(&backend.authority).await.map_err(|_| ())?;
-        stream.set_nodelay(true).map_err(|_| ())?;
-        let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream)).await.map_err(|_| ())?;
-        tokio::spawn(connection);
-        let data = Bytes::from(body.to_string());
-        let request = Request::post(path)
-            .header("host", &backend.authority)
-            .header("x-kitty-secret", &backend.secret)
-            .header("x-kitty-front", &backend.front_secret)
-            .header("x-kitty-request", "1")
-            .header("content-type", "application/json")
-            .header("content-length", data.len())
-            .body(Full::new(data))
-            .map_err(|_| ())?;
-        let response = sender.send_request(request).await.map_err(|_| ())?;
-        let status = response.status().as_u16();
-        let raw = response.into_body().collect().await.map_err(|_| ())?.to_bytes();
-        let answer = serde_json::from_slice(&raw).map_err(|_| ())?;
-        Ok((status, answer))
-    };
-    tokio::time::timeout(CALL_TIMEOUT, call).await.unwrap_or(Err(()))
-}
 
 /// Keep the worker's event stream open for the front's whole life.
 pub async fn follow(hub: Arc<Hub>) {

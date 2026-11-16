@@ -19,9 +19,16 @@ http-body-util = "0.1.5"
 libc = "0.2.191"
 hyper = { version = "1.12", features = ["client", "http1", "server"] }
 hyper-util = { version = "0.1.21", features = ["tokio"] }
+# Python's dicts and insertion-ordered sets in the block engine (crate::blocks).
+indexmap = "2.14"
 # IANA time zones for the ported calendar and goals (crate::ported::time), the database
 # compiled in as Python's `tzdata` ships it, so every platform resolves the same zones.
 jiff = { version = "0.2.38", default-features = false, features = ["std", "tz-fat", "tzdb-bundle-always"] }
+# The pages' Loro documents (crate::blocks::crdt): the version and features Python's `loro`
+# 1.17.1 wraps, so a page's update and snapshot bytes are the ones Python writes.
+loro = "=1.17.1"
+# The FxHashMap a Loro map value is built in, as Python's `loro` builds it (crate::blocks::crdt).
+rustc-hash = "=2.1.1"
 minisign-verify = "0.2.5"
 percent-encoding = "2.3"
 # `kitty.core.sources.safe_error`'s redaction patterns (crate::bootstrap).
