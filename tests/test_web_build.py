@@ -43,11 +43,12 @@ class Window:
             if opcode == 1:
                 return json.loads(payload)
 
-    def build(self, timeout: float = 5) -> dict:
+    def build(self, timeout: float = 5, until=lambda message: True) -> dict:
+        """The next build push matching `until`; an in-place file write may first push its half-written state."""
         deadline = time.time() + timeout
         while True:
             message = self.receive(max(0.05, deadline - time.time()))
-            if message["type"] == "build":
+            if message["type"] == "build" and until(message):
                 return message
 
     def silent(self, timeout: float = .8) -> bool:
@@ -241,7 +242,7 @@ def test_block_transactions_need_the_workspace_module_but_the_build_is_live_with
             reply = window.receive()
             assert reply["type"] == "reject" and reply["status"] == 403
             edit_file(running, lambda data: data.update(theme={"base": "nord"}))
-            assert window.build()["build"]["theme"]["base"] == "nord"
+            window.build(until=lambda pushed: pushed["build"]["theme"]["base"] == "nord")
         finally:
             window.close()
 
