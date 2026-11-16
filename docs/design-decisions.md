@@ -54,3 +54,12 @@
 ## Module downloads (15 Nov 2026)
 - One full-window, opaque download surface covers the title bar and any onboarding dialog, whether a download starts in Settings, onboarding, or a theme choice. Reuse the turning point-cloud brain, with a short pack label and aggregate byte progress; no blur.
 - Use the native modal top layer: keep background controls inert and keyboard focus inside until the download succeeds or fails, then return focus to its caller (or the next available control). Escape does not hide a running download. Reduced motion keeps the brain still.
+
+## Navigation and polish round (16 Nov 2026)
+- The top bar ends with a Settings gear right of search. Ctrl + R (Cmd + R) docks Rika beside any page at her home width, never reloading; on home and the Rika page it just focuses her field.
+- Ctrl + Tab / Ctrl + Shift + Tab step through tabs in the capture phase, so editors that take Tab never swallow them. Ctrl + O lays every tab out as a card (arrows or 1–9, Enter, Esc). Ctrl + Y slides through the installed themes, previewing each live; Enter keeps, Esc undoes; in a text field it stays redo.
+- Job search is now Career and opens on Track with Rika in a right column. Its bar is Find · Saved · Track with More far right; Apply is Find's "Ready to apply" toggle, and #queue, #apply and #find still land there.
+- Calendar's sub-bar is gone: the Calendar title is a menu of its pages. All-day and timed events convert by dropping on the other row; a scheduled task leaves Tasks to schedule. Imports are plain buttons; Google setup sits behind "How to set up".
+- Home edit mode (Ctrl + Shift + Space or "Edit home" in search; no Edit link) moves widgets by their handle with a live preview, sets column widths by dividers, and sets widget heights by a bottom edge on an 8px grid (`ui.home.heights`); every action has a keyboard path on the handle and is announced. Widgets only glide after an actual move.
+- Study's drawer controls are upright pills along the top, drawers open beneath them, and the session ring sizes to the room (240–380px). Progress' share ring has a fixed size so WebKit never draws it over its legend.
+- Notes and Docs show a visible Full screen button (Ctrl + Shift + F works everywhere). Goal target dates use `ui/DatePicker.svelte`. Mind maps have no per-map Graph mode.

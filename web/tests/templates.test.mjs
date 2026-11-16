@@ -17,7 +17,7 @@ const template = (id) => TEMPLATES.find((item) => item.id === id);
 const widgets = HOME_WIDGETS.map((widget) => widget.id);
 
 test('templates ship with unique names, known modules and known widgets; the first four answer the first-run question', () => {
-  assert.deepEqual(USES.map((item) => item.name), ['Student', 'Job search', 'Builder', 'Minimal']);
+  assert.deepEqual(USES.map((item) => item.name), ['Student', 'Career', 'Builder', 'Minimal']);
   assert.deepEqual(USES.map((item) => item.use), ['Studying', 'Finding a job', 'Building with agents', 'Notes and a calendar']);
   assert.deepEqual(TEMPLATES.slice(0, 4), USES, 'the answers are the first four templates');
   assert.equal(new Set(TEMPLATES.map((item) => item.id)).size, TEMPLATES.length);
@@ -119,11 +119,11 @@ test('Rika offers the template that fits what is on; job records tip a tie', () 
 test('the offer is one or two short sentences', () => {
   assert.equal(suggestionLine(template('student'), { enabled: ['workspace', 'math'] }), 'The Student layout puts Up next, Focus and Quick note first.');
   assert.equal(suggestionLine(template('job-search'), { enabled: ['applyai', 'workspace'], counts: { jobs: 37, applications: 39 } }),
-    'You have 39 applications and 37 jobs. The Job search layout puts Today and Up next first.');
+    'You have 39 applications and 37 jobs. The Career layout puts Today and Up next first.');
   assert.equal(suggestionLine(template('job-search'), { enabled: ['applyai', 'workspace'], counts: { jobs: 1, applications: 1 } }),
-    'You have 1 application and 1 job. The Job search layout puts Today and Up next first.');
+    'You have 1 application and 1 job. The Career layout puts Today and Up next first.');
   assert.equal(suggestionLine(template('job-search'), { enabled: ['workspace'], counts: { jobs: 37, applications: 39 } }),
-    'The Job search layout puts Today and Up next first.');
+    'The Career layout puts Today and Up next first.');
   assert.equal(suggestionLine(template('minimal'), { enabled: [] }), 'The Minimal layout puts Today and Quick note first.');
 });
 

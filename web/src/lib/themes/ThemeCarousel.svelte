@@ -175,6 +175,7 @@
     background: color-mix(in srgb, var(--solid-panel, #1c1c1c) 80%, transparent);
   }
   .hint {
+    justify-self: center;
     margin: 0;
     color: var(--muted);
     font-size: 13px;

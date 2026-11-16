@@ -293,7 +293,8 @@ describe("shell: tab and theme keys", () => {
     await page.waitForFunction((second) => document.documentElement.dataset.theme !== second, second);
     const third = await theme();
     assert.notEqual(third, first);
-    // The centred card is the biggest.
+    // Once the strip has slid into place, the centred card is the biggest.
+    await page.waitForFunction(() => document.getAnimations().every((animation) => animation.playState !== "running" || !animation.effect?.target?.matches?.("[data-theme-card]")));
     const sizes = await carousel.locator("[data-theme-card]").evaluateAll((nodes) => nodes.map((node) => [node.getAttribute("aria-current") === "true", node.getBoundingClientRect().width]));
     const middle = sizes.find(([on]) => on)[1];
     assert.ok(sizes.every(([on, width]) => on || width < middle), "the centred theme is not the largest card");

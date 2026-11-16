@@ -79,8 +79,10 @@
     color: var(--ink);
   }
   .tab-overview[open] {
-    display: grid;
-    place-content: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
     gap: 28px;
   }
   .tab-overview::backdrop {
