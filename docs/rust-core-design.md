@@ -211,7 +211,8 @@ selection: base only.
    job counts, this week's total and streak and today's digest text, computed over rusqlite
    as `tracks.weekly_targets`, `jobs.count_jobs` with the job views and
    `today.build_digest`/`digest_text` do (stored timestamps read as `kitty.dates.parse`
-   reads them, `sources.safe_error`'s redaction with the worker's environment and `.env`,
+   reads them, including rejecting hour 24 rather than rolling it into the next day;
+   `sources.safe_error`'s redaction with the worker's environment and `.env`,
    Python's 503 for a busy database). Python's handler is deleted; the functions it
    composed stay (other routes and the CLI use them) and are the reference in
    `tests/test_web_bootstrap.py`, which compares the front's answer with them on a
