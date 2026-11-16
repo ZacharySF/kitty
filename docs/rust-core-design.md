@@ -729,6 +729,79 @@ selection: base only.
    still-forwarded route (`/api/calendar/google/status`) took 3.9 to 5.0 ms in both. The
    release binary grew from 14.80 to 15.10 MB. Start-up and memory were not measured.
 
+   *Built (math):* every `/api/math` route but one is answered by rika-server
+   (`server/src/math/`): topics and the next task, problems, answers, lessons, sprints and
+   their history, mixed review, the Grinstead & Snell exercises (list, item, issue, answers,
+   ratings) and own-book problems (add, edit, rate, delete), with `kitty.core.math`'s values,
+   stored rows, order of checks and refusals, the module guard and the math pack's 409.
+   Generation is Python's to the character: `pyrandom.rs` is CPython 3.12's `random.Random`
+   (the Mersenne Twister, string seeds through SHA-512, `_randbelow`, `choice`, `shuffle`,
+   `sample`), `frac.rs` `fractions.Fraction` over i128, and `templates/` the 75 generators of
+   the eight strands in registration order, so a stored `(template_id, seed)` gives the same
+   prompt, answer, steps, mistakes and choices on either side. Number and choice checks
+   (`checking.rs`) keep a typed answer exact (`big.rs`: a 500-character decimal or fraction
+   does not fit i128), read `\d` as CPython's `str.isdecimal` and refuse `Decimal`'s
+   InvalidOperation exponents. Mastery, reviews and FIRe-lite credit run on the flashcards'
+   py-fsrs port with no learning steps. The topic graph moved into
+   `src/kitty/core/math/topics.json` and the textbook's citation, topic links and authored
+   answers into `textbook.json`, read by Python and compiled into the front, so they exist
+   once; the exercises themselves (GNU FDL) stay outside the binary: the worker's readiness
+   line names their folder (`math_textbook`) and the front reads `exercises.json` from it.
+
+   Stay on Python: SymPy. An expression answer's equivalence and the TeX of an expression
+   (a revealed answer, a lesson example's `answer_md`) come from the worker's internal
+   `POST /api/internal/math/expression` (`kitty.web_math`, over `kitty.core.math.cas`), which
+   the front calls outside its database lock, as Python checked outside its write lock, and
+   which pages cannot reach. `POST /api/math/explain` is forwarded: it proposes an
+   `ai_request` effect in the worker's window session with the AI settings' fingerprint and
+   the OpenRouter key, all the AI client's. `web_math.py` keeps those two and `stop` (the CAS
+   worker); its other handlers are deleted. `kitty.core.math` stays whole: explain calls
+   `practice.explain_text`, `_attempt` and `_problem_for` and the generators, the internal
+   route `checking`, `cas` and `Problem.canonical`, and the rest is the reference of the
+   parity test and of the core tests (`tests/test_math_generators.py`, `test_math_calculus.py`,
+   `test_math_discrete.py`, `test_math_linalg.py`, `test_math_checking.py`,
+   `test_math_mastery.py`, `test_math_mixed.py`, `test_math_library.py`,
+   `test_math_textbook.py`, `test_math_migration.py`).
+
+   `tests/test_math_parity.py`: through `rika-server math` (test-only), every template over
+   240 seeds and every faded step of 30 (over 20,000 problems) and each topic's pick over 120
+   seeds equal Python's; more than 50,000 typed answers (exact, decimal, TeX and percent
+   forms, near misses at one to seven figures, the templates' mistakes, other scripts'
+   digits, huge exponents, nonsense) get Python's verdict and feedback; a lesson's draws for
+   every topic, sprint problems and the 706 exercises' topic links and problems match. Then
+   one scenario over every route (the refusals between, reveals, SymPy verdicts and TeX,
+   lessons, reviews, implicit credit, sprints, the textbook, books, ten and 410 days later)
+   runs through the front and through the Python core on two copies of a workspace at the
+   same clock readings (`KITTY_TEST_CLOCK`) and the same `secrets` draws
+   (`KITTY_TEST_MATH_RANDOM`, test-only: the front draws from `random.Random(n)`, the
+   reference's `secrets` is the same generator), and compares every answer and the eight math
+   tables (random ids and py-fsrs' wall-clock card ids masked); again without the math module
+   (every route 403); and the worker answers none of the moved routes while explain still
+   answers behind the front. Against `main`'s binary the parity tests fail (the routes are 404
+   once the handlers are gone). `tests/test_web_math.py` and `test_web_math_library.py` run
+   through the front; the answer-leak check of the first no longer looks inside the random
+   `problem_id` (about one run in a hundred, its hex held the answer's digits).
+
+   Known differences: a JSON integer past 64 bits is a float to the front's JSON reader
+   (Python kept it an int); a decimal exponent so large or small that Python would expand a
+   power of ten of millions of digits (minutes and gigabytes, or a MemoryError) is judged at
+   once with the exponent bounded, which gives the exact comparison's result; a sprint
+   history's `timezone` is a key of the zone database compiled in, as for the calendar;
+   `\d` and `str.isdigit` are CPython's Unicode 15.0 tables while the textbook's keyword
+   patterns use the regex crate's case folding (the parity test finds the same topics for
+   every exercise).
+
+   Measured on one synthetic workspace (8 mastered topics, 200 attempts, 30 book problems,
+   3 textbook cards; median of 300 fresh-connection requests; `main` at `ea8e6c1` against this
+   branch, release builds run alternately twice, at load 3.3 to 4.5): `GET /api/math/topics`
+   went from 5.61 / 3.36 ms (forwarded to Python) to 1.34 / 0.69 ms, `GET /api/math/next` from
+   4.36 / 3.25 ms to 0.99 / 0.62 ms, `GET /api/math/mixed` from 5.59 / 3.33 ms to 1.14 /
+   0.53 ms, `POST /api/math/problems` from 5.94 / 3.95 ms to 0.67 / 0.72 ms and
+   `GET /api/math/textbook` (706 exercises) from 9.58 / 5.13 ms to 7.21 / 4.37 ms, most of it
+   the 400 KB answer itself; a still-forwarded route (`/api/calendar/google/status`) took 2.7
+   to 4.7 ms in both. The release binary grew from 15.10 to 16.35 MB. Start-up and memory
+   were not measured.
+
    *Stays on Python (devices):* every `/api/devices` route (`GET /api/devices`, `POST
    /api/devices/{name, pair/show, pair/cancel, pair/enter, sync, unpair, address, pause}`) is
    still forwarded to the worker, and `web_devices.py` is kept. The routes have no state of

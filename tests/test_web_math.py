@@ -1,17 +1,27 @@
-"""rika! math over real loopback HTTP: topics, gated problems, graded answers, lessons,
-sprints and the approval-gated "Explain my mistake" review."""
+"""rika! math over real loopback HTTP, through rika-server (server/src/math): topics, gated
+problems, graded answers, lessons, sprints and the approval-gated "Explain my mistake" review
+(the worker's, behind the front)."""
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
+from terminal_support import front_site
 
 from kitty import web_ai
 from kitty.core import effects
 from kitty.core.math import mastery, problems
 from kitty.core.math import topics as graph
 
-from test_web_server import website  # noqa: F401  the shared loopback HTTP fixture
+
+@pytest.fixture
+def website(workspace):
+    """The front on the test workspace; `request` answers (status, body, headers) as the
+    Python server's fixture did."""
+    workspace.conn.commit()
+    with front_site(workspace.settings) as site:
+        yield SimpleNamespace(app=site.app, request=lambda path, body=None: (*site.request(path, body), {}))
 
 
 def master(workspace, *topic_ids):
@@ -55,7 +65,10 @@ def test_problems_are_gated_validated_and_hide_their_answer(website, workspace):
     assert status == 200 and one["prompt_md"] == two["prompt_md"] and one["problem_id"] != two["problem_id"]
     assert set(one) == {"problem_id", "topic_id", "purpose", "prompt_md", "answer_kind"}
     assert one["purpose"] == "lesson" and one["answer_kind"] == "number"
-    assert str(expected(one["problem_id"], workspace).answer) not in json.dumps(one).replace(one["prompt_md"], "")
+    # The prompt holds the operands and the random problem id can hold any digits; nothing
+    # else the page gets may give the answer away.
+    public = {key: value for key, value in one.items() if key not in ("prompt_md", "problem_id")}
+    assert str(expected(one["problem_id"], workspace).answer) not in json.dumps(public)
 
 
 def test_wrong_tries_reveal_after_three_and_undecided_costs_nothing(website, workspace):
