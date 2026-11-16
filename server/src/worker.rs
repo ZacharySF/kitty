@@ -49,6 +49,8 @@ pub struct Worker {
     /// The loopback ports of the worker's framed external-module servers, fixed at its start-up
     /// (`kitty.web_external_modules`); the front's Content-Security-Policy frames them.
     pub frame_ports: Vec<u16>,
+    /// The folder of the math textbook's `exercises.json` (`kitty.core.math.textbook.directory()`).
+    pub math_textbook: Option<std::path::PathBuf>,
     child: Child,
     /// Held open for the worker's lifetime; closing it tells the worker to stop. Shared with
     /// the desktop owner-pipe relay, which writes the shell's lines into it.
@@ -70,6 +72,8 @@ struct Readiness {
     packs: WorkerPacks,
     #[serde(default)]
     frame_ports: Vec<u16>,
+    #[serde(default)]
+    math_textbook: Option<String>,
 }
 
 /// The readiness line's `packs`: those built into the worker program, and those its active
@@ -163,6 +167,7 @@ impl Worker {
             digest: ready.digest,
             packs: ready.packs,
             frame_ports: ready.frame_ports,
+            math_textbook: ready.math_textbook.map(Into::into),
             child,
             stdin: Arc::new(Mutex::new(Some(stdin))),
             output: Some(stdout),
