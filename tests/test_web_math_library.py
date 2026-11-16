@@ -1,5 +1,5 @@
-"""rika! math phase 2 over real loopback HTTP: Grinstead & Snell exercises, own-book
-problems and mixed review."""
+"""rika! math phase 2 over real loopback HTTP, through rika-server (server/src/math): Grinstead
+& Snell exercises, own-book problems and mixed review."""
 from __future__ import annotations
 
 import pytest
@@ -7,8 +7,7 @@ import pytest
 from kitty.core.math import mastery, textbook
 from kitty.core.math import topics as graph
 
-from test_web_math import master
-from test_web_server import website  # noqa: F401  the shared loopback HTTP fixture
+from test_web_math import master, website  # noqa: F401  the front-served loopback fixture
 
 
 def self_graded():
