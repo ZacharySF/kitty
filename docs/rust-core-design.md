@@ -937,6 +937,7 @@ selection: base only.
    `GET /api/documents/<id>` from 2.53 to 0.49 ms, `POST /api/documents/topics` from 11.13 to
    4.89 ms and a revision-checked `POST /api/documents/<id>` save from 4.49 to 1.99 ms. The
    release binary grew from 21.23 to 21.42 MB. Start-up and memory were not measured.
+
    *Built (terminal: Settings → Agents and the local terminal routes):* Settings → Agents is
    answered by rika-server (`server/src/agents/`): `GET /api/agents` (the host guarantee, the
    newest hundred sessions, the policy in force, its versions, the retention floor, the
