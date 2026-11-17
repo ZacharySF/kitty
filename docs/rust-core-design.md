@@ -134,8 +134,8 @@ selection: base only.
    | --- | --- | --- | --- | --- |
    | Modules `GET/POST /api/modules` | ~~`WebApplication.set_modules`~~, `modules_state` | `config/build.json` (`modules`), careers templates | `test_web_modules.py`, `test_modules.py` | **Ported** (below) |
    | Bootstrap `GET /api/bootstrap` | ~~`WebApplication._bootstrap`~~ | modules state; with applyai, jobs, tracks and today's digest in SQLite | `test_web_bootstrap.py`, `test_web_modules.py` | **Ported** (below) |
-   | Build and settings `/api/build/*` | `web_build.py`, `core/builds/{store,project,share}` | build file, `data/build-history/`, settings rows projected into SQLite | `test_web_build.py`, `test_builds.py`, browser `settings`/`build` suites | the watcher's live push goes out over `web_live`'s WebSocket (Python), and `project.sync` writes SQLite; `fetch` needs an HTTPS client |
-   | Themes | no route: the theme list and `theme.base` live in the build (`document.theme_ids`, already in Rust) | build file | as build | moves with the build routes |
+   | Build and settings `/api/build/*` | ~~`web_build.py`~~ (keeps `/api/internal/build/applied`), `core/builds/{store,project,share}` | build file, `data/build-history/`, settings rows projected into SQLite | `test_build_parity.py`, `test_web_build.py`, `test_builds.py`, browser `settings`/`build` suites | **Ported** (*Built (build and settings)* below) |
+   | Themes | no route: the theme list and `theme.base` live in the build (`document.theme_ids`, already in Rust) | build file | as build | **Ported** with the build routes |
    | Keys `/api/keys/*` | ~~`web_keys.py`~~, `core/keys.py` | OS keyring (Secret Service over D-Bus) or owner-only file | `test_keys.py` | **Ported** (below); Python's AI providers keep reading the same store until they move |
    | Effects `/api/effects/*` | ~~`web_effects.py`~~, `web_effects_worker.py`, `core/effects.py`, `effect_kinds` | effect tables in SQLite | `test_effects.py` | **Ported** (below); executors and `submit_application`'s preconditions stay on the worker's internal routes |
    | Rika text chat `/api/rika/*` | `web_rika.py`, ~~`web_rika_memory.py`~~, `core/rika/*` | conversations, plans, memory in SQLite; AI provider calls | `test_web_rika*.py`, `test_rika_*.py`, `test_rika_data_parity.py` | history, routing memory, memory index and preferences **ported** (below); AI client and streaming WebSocket; Rika's tools reach every module's Python core |
@@ -266,7 +266,8 @@ selection: base only.
    unchanged within the noise (1.4-2.1 s before, 1.8-2.0 s after); the binary grew from 10.61
    to 10.81 MB.
 
-   Next: the build routes once the live channel can be driven from Rust.
+   Next: the build routes once the live channel can be driven from Rust (since built: *Built
+   (build and settings)* below).
 3. **Packs.** Signed pack builds and index in the release pipeline; download,
    verify and atomic install in the shell; Settings → Modules with size and
    progress.
@@ -1114,6 +1115,82 @@ selection: base only.
    route (`/api/calendar/google/status`) took 2.8 to 3.7 ms in both. The release binary grew
    from 16.35 to 16.46 MB (16,347,088 to 16,458,192 bytes). Start-up and memory were not
    measured.
+
+   *Built (build and settings):* every build route is answered by rika-server
+   (`server/src/builds/`): `GET /api/build` (the active build, the file's text and problems,
+   history, `local_preferences_moved`), `GET /api/build/history`, `GET /api/build/export` (the
+   shareable `kitty-build.json` as an attachment, also through a single-use link ticket) and
+   `POST /api/build/{check, save, preferences, local, preview, install, rollback, fetch}`, with
+   `web_build`'s messages, statuses, `problems` and order of checks. The reader (`document`,
+   `css`, the published schema), `store` (the `flock`ed atomic writes of the owner-only file,
+   the history folder, entry ids to the microsecond moved on when taken, pruning to ten),
+   `project` (the projection into `ai_settings`, `note_preferences`, `study_settings` with the
+   idle timer's settle, `opportunity_settings` with `next_run`, `tag_settings` and
+   `build_state`; the one-time move of settings rows into the file; `editing`'s 409 while the
+   file has an error) and `share` (previews, sensitive changes held unless accepted, the
+   restart flag, exports) are ported with them. The watcher (a stat every 0.25 s, acting once
+   the file stood still for one tick), every build write and every committed worker mutation
+   (the live channel's nudge: a Settings screen still on the worker wrote the file) sync the
+   projection and push `{"type": "build", ...}` to every window over the Rust live channel,
+   whose hello carries the active revision; when the active revision changes, the front posts
+   `/api/internal/build/applied` so the worker's `build_applied` hooks still run
+   (`web_opportunities`' monitoring schedule). Link fetching uses reqwest with rustls on ring,
+   the stack the packs and the desktop updater already use: https only, no credentials, at
+   most three redirects each re-checked, every resolved address global (CPython 3.12's
+   `is_global`), the request pinned to the checked addresses, 10 s timeouts, the 256 KB cap,
+   UTF-8; the background task is the front's own (`GET /api/tasks/<id>` answers its ids, every
+   other id is forwarded). The port landed in `a8c4490` and `b7f60db`; this slice adds the
+   parity scenario and the test clock (the build code's `Moment::now` reads
+   `KITTY_TEST_CLOCK` through `crate::ported::time`), and fixes the one difference the scenario
+   found: a link whose host only `getaddrinfo` reads (an IPv6 literal with a zone, such as
+   `https://[fe80::1%25eth0]/`) was refused as "That is not a valid link" where Python
+   resolved it and answered "Could not find fe80::1%25eth0" (or the public-address refusal).
+
+   Stay on Python: no build route. `web_build.py` keeps only the worker's internal
+   `POST /api/internal/build/applied`. `kitty.core.builds` stays: `project.sync` because
+   `open_workspace` (`core/workspace.py`) projects the file for every process the front does
+   not serve (CLI, TUI, MCP, the worker's own start); `project.editing` and `store` for the
+   Settings routes still on the worker (`POST /api/ai/settings` in `web_ai.py`,
+   `POST /api/opportunities/settings` through `core/opportunities.py`) and for the retained
+   cores that write the build (`core/study.py`, `core/notes.py`, `core/blocks/tags.py`, Rika's
+   tools and parity references); `project.tern_plugin_enabled` for `web_tern.py` and
+   `web_clients.py`; `startup_modules` and `BuildStoreError` for `web_server.py`; `document`
+   for `kitty.modules`. `share` has no Python caller left: it is the reference the parity
+   tests compare with.
+
+   `tests/test_build_parity.py` runs one scenario (152 requests, 74 of them refused: unknown
+   routes, queries, missing and extra fields, texts over 256 KB counted in UTF-8, stale and
+   non-text bases, invalid documents with their located problems, preferences the schema
+   refuses, a lone surrogate the file cannot hold (Python's 500, nothing written), installs
+   with a non-boolean `accept_sensitive` or a non-text source, stale previews, rollbacks to
+   invalid, missing, malformed and unreadable entries, 18 links fetching refuses) plus five
+   external editor saves (valid, invalid, truncated, stray history entries including a
+   symlink, the one-time move of rows) through the front and through `web_build`'s handlers
+   over the Python core on two copies of one workspace at one test clock, with a live window
+   open. It compares every answer (the export by bytes, type and disposition, each fetch
+   task's first and finished snapshot), every push (28) and every build the worker is told
+   was applied (26), and at nine checkpoints the build file and its mode, every history file
+   with its mode and the projected rows; again without modules and in safe mode. Against
+   `main`'s binary both front tests fail at the first checkpoint (`build_state.applied_at`
+   and `opportunity_settings.next_run` carry the real clock) and the zone link answers
+   differently. `tests/test_web_build.py` (two live windows, the Tern plugin switch, the link
+   ticket, the worker's internal route) and `tests/test_builds.py` run as before.
+
+   Known differences: a sync that fails on a busy database is retried at the next watcher
+   tick (Python's watcher had marked the file seen); the front's fetch tasks are not drained
+   at shutdown (Python's `TaskRunner.close` joined them; a fetch writes nothing).
+
+   Measured on one synthetic workspace (a build with 40 lines of custom CSS, no history;
+   median of 300 fresh-connection requests; `0e6e3b6`, the last commit with Python's
+   handlers, against this branch, release builds run alternately twice, at load 2.5 to 3.1):
+   `GET /api/build` went from 5.71 / 5.21 ms (forwarded to Python) to 1.35 / 1.36 ms, `GET
+   /api/build/history` from 2.78 / 4.46 to 0.12 / 0.17 ms, `POST /api/build/check` from 3.87 /
+   5.23 to 0.69 / 1.09 ms, `POST /api/build/preview` from 3.89 / 5.91 to 1.51 / 1.32 ms and a
+   `POST /api/build/preferences` that writes (the lock, the fsynced file, the SQLite commit
+   and the push) from 13.85 / 16.14 to 12.68 / 13.21 ms, while a still-forwarded route
+   (`/api/account`) took 3.3 to 4.9 ms in both. The port grew the release binary from
+   10,771,536 (`0e6e3b6`) to 11,064,016 bytes (`b7f60db`); this slice from 22,044,240 to
+   22,044,496 bytes against `main`. Start-up and memory were not measured.
 
    *Built (Rika's local state and the account's local half):* rika-server answers `GET
    /api/rika/history` (`server/src/rika/history.rs`), the routing memory (`GET /api/rika/routes`,
