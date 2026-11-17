@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 import httpx
 import pytest
 
-from kitty.core.rika import demo_seed, mail
+from kitty.core.rika import demo_seed, mail, store
 from kitty.core.workspace import open_workspace
 from kitty.db import connect
 from terminal_support import make_root, site
@@ -118,7 +118,8 @@ def test_check_drafts_then_send_holds_and_the_dispatcher_sends(demo, settings):
     assert thanks not in {draft["id"] for draft in demo.request("/api/rika/mail")[1]["drafts"]}
     assert demo.request("/api/rika/mail/drafts/" + "0" * 32 + "/send", {})[0] == 404
     assert demo.request(path + "/send", {"now": True})[0] == 400
-    history = demo.request("/api/rika/history")[1]["items"]
+    with closing(connect(demo.app.settings.db_path)) as conn:  # GET /api/rika/history is rika-server's
+        history = store.history(conn)["items"]
     assert [item["kind"] for item in history] == ["mail", "mail"]
     assert {item["reply_kind"] for item in history} == {"scheduling", "confirmation"}
 

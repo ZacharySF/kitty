@@ -5,7 +5,6 @@ import dataclasses
 import json
 import time
 from contextlib import closing
-from urllib.parse import quote
 
 import httpx
 import pytest
@@ -34,6 +33,13 @@ def demo(tmp_path, no_network):
     with site(settings) as running:
         yield running
     assert no_network == []
+
+
+def _history(running, before=None):
+    """`GET /api/rika/history`'s answer: rika-server answers that route (tests/test_rika_data_parity.py),
+    this demo's in-process site the rest of Rika."""
+    with closing(connect(running.app.settings.db_path)) as conn:
+        return store.history(conn, before)
 
 
 class Stream:
@@ -85,8 +91,8 @@ def test_a_demo_request_streams_tier_action_and_reply_and_undo_reverts_it(demo, 
     assert (tier["tier"], tier["model"], tier["reply_to"]) == ("fast", "deterministic", sent["message_id"])
     [action] = kinds(events, "action")
     assert action["action"]["summary"] == "Added the node Photosynthesis to Canvas" and action["action"]["reversible"]
-    status, history = demo.request("/api/rika/history")
-    assert status == 200 and [item["kind"] for item in history["items"]] == ["message", "message", "action"]
+    history = _history(demo)
+    assert [item["kind"] for item in history["items"]] == ["message", "message", "action"]
     assert history["has_more"] is False
     status, body = demo.request(f"/api/rika/actions/{action['action']['id']}/undo", {})
     assert status == 200 and body["action"]["status"] == "undone"
@@ -176,7 +182,6 @@ def test_requests_are_validated_and_header_protected(demo):
     assert demo.request("/api/rika/messages", {"text": "hi"}, headers={"X-Kitty-Request": None})[0] == 403
     assert demo.request("/api/rika/messages", {"text": "hi", "conversation_id": "missing"})[0] == 404
     assert demo.request("/api/rika/approvals/" + "0" * 32, {"decision": "approve"})[0] == 404
-    assert demo.request("/api/rika/history?before=;drop")[0] == 400
     assert demo.request("/api/rika/stream")[0] == 426
 
 
@@ -200,10 +205,9 @@ def test_history_pages_backwards(demo, stream):
         older = store.history(conn, before=page["next_before"], limit=4)
     assert page["has_more"] and len(page["items"]) == 4
     assert older["items"][-1]["created_at"] < page["items"][0]["created_at"]
-    everything = demo.request("/api/rika/history")[1]["items"]
+    everything = _history(demo)["items"]
     assert [item["kind"] for item in everything] == ["message", "message", "action"] * 3
-    status, body = demo.request("/api/rika/history?before=" + quote(page["next_before"]))
-    assert status == 200 and body["items"] == everything[:5]
+    assert _history(demo, page["next_before"])["items"] == everything[:5]
 
 
 # Voice and brain dumps (phase 2a) ----------------------------------------------
@@ -232,7 +236,7 @@ def test_voice_streams_over_the_rika_socket_and_the_spoken_request_routes_fast(d
     _control(stream, type="voice.stop")
     final = stream.until(lambda event: event["type"] == "voice.final")[-1]
     assert final["text"] == voice_engine.DEMO_COMMAND and final["mode"] == "command" and final["duration"] == 1.5
-    assert demo.request("/api/rika/history")[1]["items"] == []  # hearing stores nothing by itself
+    assert _history(demo)["items"] == []  # hearing stores nothing by itself
     # "Tomorrow" said before 04:00 asks which day is meant, so the calendar gets a zone where it is daytime now.
     from datetime import datetime
     from zoneinfo import ZoneInfo
@@ -347,7 +351,7 @@ def test_a_brain_dump_in_the_demo_makes_one_plan_grouped_by_area_and_a_dump_note
     assert notebook == "Brain dumps"
     assert any(text.startswith("Transcript · ") for text in texts)
     assert "0:00 " + DEMO_LINES[0] in texts and any(DEMO_LINES[-1] in text for text in texts)
-    history = demo.request("/api/rika/history")[1]["items"]
+    history = _history(demo)["items"]
     assert [item["kind"] for item in history] == ["message", "message", "plan"]
 
 
