@@ -6,7 +6,7 @@ import os
 
 import pytest
 
-from terminal_support import FrameReader, make_root, site
+from terminal_support import FrameReader, front_site, make_root, site
 from test_web_terminal import herdr, refused  # shared isolated executable fixture
 
 from kitty.core import agent_sessions
@@ -28,7 +28,7 @@ def test_agent_launcher_is_disabled_with_the_module(tmp_path, herdr):
 
 def test_external_attachment_instructions_are_explicit_and_do_not_start_a_session(tmp_path, herdr):
     settings = make_root(tmp_path, ("terminal",))
-    with site(settings) as running:
+    with front_site(settings) as running:  # answered by the front (server/src/terminal.rs)
         status, info = running.request("/api/terminal/agents")
         assert status == 200
         assert info["session"] == "kitty-test"
