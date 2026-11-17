@@ -54,6 +54,8 @@ pub struct Worker {
     /// The herdr runtime and workspace folder the Terminal module's routes answer with
     /// (crate::terminal), while that module is on; the front takes it once.
     pub terminal: Option<crate::terminal::Herdr>,
+    /// Whether the worker's Google sign-in has a client ID and secret (crate::account).
+    pub google_configured: bool,
     child: Child,
     /// Held open for the worker's lifetime; closing it tells the worker to stop. Shared with
     /// the desktop owner-pipe relay, which writes the shell's lines into it.
@@ -79,6 +81,8 @@ struct Readiness {
     math_textbook: Option<String>,
     #[serde(default)]
     terminal: Option<crate::terminal::Herdr>,
+    #[serde(default)]
+    google_configured: bool,
 }
 
 /// The readiness line's `packs`: those built into the worker program, and those its active
@@ -174,6 +178,7 @@ impl Worker {
             frame_ports: ready.frame_ports,
             math_textbook: ready.math_textbook.map(Into::into),
             terminal: ready.terminal,
+            google_configured: ready.google_configured,
             child,
             stdin: Arc::new(Mutex::new(Some(stdin))),
             output: Some(stdout),
