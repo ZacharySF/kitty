@@ -42,7 +42,7 @@
     <button class="today" title="Today (T)" aria-keyshortcuts="T" onclick={ontoday}>Today</button>
     <button class="chevron" aria-label={`Next ${unit}`} title={`Next ${unit} (K)`} aria-keyshortcuts="K" onclick={() => onstep(1)}>›</button>
   </div>
-  <nav class="views" aria-label="Calendar view">
+  <nav class="views" aria-label="Calendar view" data-page-tabs>
     {#each VIEWS as v (v.id)}
       <button aria-pressed={view === v.id} aria-keyshortcuts={v.key} title={`${v.label} (${v.key})`} onclick={() => onview(v.id)}>{v.label}</button>
     {/each}

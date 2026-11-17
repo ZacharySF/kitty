@@ -321,3 +321,53 @@ describe("shell: tab and theme keys", () => {
     await context.close();
   });
 });
+
+describe("shell: arrow keys", () => {
+  /** The label of the active button in a bar. */
+  const active = (bar) => bar.locator('[aria-current="page"], [aria-pressed="true"]').first().innerText();
+
+  test("← / → step through the page's own tabs, never while typing; Ctrl + ← / → step through the top bar's groups", async () => {
+    const { page, problems, context } = await open("study");
+    const study = page.getByRole("navigation", { name: "Study tools" });
+    await study.getByRole("button", { name: "Session", exact: true }).waitFor();
+    await page.locator("body").click({ position: { x: 5, y: 600 } });
+    assert.equal((await active(study)).trim(), "Session");
+    await page.keyboard.press("ArrowRight");
+    await page.waitForFunction(() => document.querySelector('nav[aria-label="Study tools"] [aria-pressed="true"]')?.textContent?.trim() === "Progress");
+    await page.keyboard.press("ArrowLeft");
+    await page.waitForFunction(() => document.querySelector('nav[aria-label="Study tools"] [aria-pressed="true"]')?.textContent?.trim() === "Session");
+    // In a text field the arrows move the caret, not the tabs.
+    await page.evaluate(() => {
+      const field = Object.assign(document.createElement("input"), { ariaLabel: "Scratch field", value: "abc" });
+      document.getElementById("main-content").append(field);
+      field.focus();
+    });
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("Control+ArrowRight");
+    await page.waitForTimeout(200);
+    assert.equal((await active(study)).trim(), "Session", "an arrow in a text field changed the page's tab");
+    assert.equal(await page.evaluate(() => location.hash), "#study", "Ctrl + → in a text field changed the group");
+    await page.evaluate(() => document.querySelector('[aria-label="Scratch field"]').remove());
+
+    // Ctrl + → / ← walk the top bar's groups in its order.
+    const groups = page.getByRole("navigation", { name: "Workspace groups" });
+    const names = (await groups.getByRole("button").allInnerTexts()).map((text) => text.trim());
+    const at = names.indexOf("Study");
+    await page.locator("body").click({ position: { x: 5, y: 600 } });
+    await page.keyboard.press("Control+ArrowRight");
+    await page.waitForFunction((name) => [...document.querySelectorAll('nav[aria-label="Workspace groups"] button')].find((button) => button.getAttribute("aria-current") === "page")?.textContent?.trim() === name, names[(at + 1) % names.length]);
+    await page.keyboard.press("Control+ArrowLeft");
+    await page.waitForFunction(() => [...document.querySelectorAll('nav[aria-label="Workspace groups"] button')].find((button) => button.getAttribute("aria-current") === "page")?.textContent?.trim() === "Study");
+
+    // Career's bar opens on Track, its first step; → goes on to Find.
+    await groups.getByRole("button", { name: "Career" }).click();
+    const career = page.getByRole("navigation", { name: "Career" });
+    await page.waitForFunction(() => location.hash === "#pipeline");
+    assert.equal((await active(career)).trim(), "Track");
+    await page.locator("body").click({ position: { x: 5, y: 600 } });
+    await page.keyboard.press("ArrowRight");
+    await page.waitForFunction(() => location.hash === "#jobs");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+});

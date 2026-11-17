@@ -3,13 +3,14 @@
   import type { View } from "./workspace";
 
   /**
-   * Career in three steps, the same on every one of its pages: find a job (and apply,
-   * Find's "Ready to apply" filter), save it, track the application. Everything else
+   * Career in three steps, the same on every one of its pages: track the applications (where
+   * Career opens), find a job (and apply, Find's "Ready to apply" filter), save it. Everything else
    * (resumes, sources, email, questions, reports) is one menu away, at the bar's far right.
+   * ← / → step through the three (App's page-tab keys).
    */
   let { view, onview }: { view: View; onview: (next: View) => void } = $props();
   /** Each step and the views it stands for: Find holds the old Apply page (`queue`). */
-  const STEPS: [View, string, View[]][] = [["jobs", "Find", ["jobs", "queue"]], ["favorites", "Saved", ["favorites"]], ["pipeline", "Track", ["pipeline"]]];
+  const STEPS: [View, string, View[]][] = [["pipeline", "Track", ["pipeline"]], ["jobs", "Find", ["jobs", "queue"]], ["favorites", "Saved", ["favorites"]]];
   const MORE: [View, string][] = [["inbox", "New jobs"], ["applications", "All applications"], ["resumes", "Resumes"], ["questions", "Questions"],
     ["sources", "Job sources"], ["finder", "Find companies"], ["triage", "Rank jobs"], ["mail", "Email updates"], ["reports", "Reports"]];
   let open = $state(false);
@@ -17,7 +18,7 @@
 </script>
 
 <nav class="jobs-nav" aria-label="Career">
-  <div class="steps">
+  <div class="steps" data-page-tabs>
     {#each STEPS as [id, label, views] (id)}
       <button type="button" aria-current={views.includes(view) ? "page" : undefined} onclick={() => onview(id)}>{label}</button>
     {/each}

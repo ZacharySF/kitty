@@ -525,7 +525,7 @@
   <header class="section-header">
     <h2>Study</h2>
     {#if data}
-      <nav class="tabs" aria-label="Study tools">
+      <nav class="tabs" aria-label="Study tools" data-page-tabs>
         {#each TABS as item (item.id)}<Button size="sm" aria-pressed={tab === item.id} onclick={() => (tab = item.id)}>{item.label}</Button>{/each}
       </nav>
     {/if}
