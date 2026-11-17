@@ -251,7 +251,21 @@ pub async fn fetch(url: &str, resolver: &impl Resolver, transport: &impl Transpo
     let mut url = url.to_owned();
     for _hop in 0..=MAX_REDIRECTS {
         let host = check_url(&url)?;
-        let parsed = Url::parse(&url).map_err(|_| NOT_A_LINK.to_owned())?;
+        let parsed = match Url::parse(&url) {
+            Ok(parsed) => parsed,
+            // Python resolved its hostname before httpx read the link: a host only getaddrinfo
+            // reads (an IPv6 literal with a zone) is refused with the reason Python gave.
+            Err(_) => {
+                let addresses = resolver.resolve(&host).await.map_err(|_| format!("Could not find {host}"))?;
+                if addresses.is_empty() {
+                    return Err(format!("Could not find {host}"));
+                }
+                if !addresses.iter().all(|address| is_global(*address)) {
+                    return Err(NOT_PUBLIC.into());
+                }
+                return Err(NOT_A_LINK.into());
+            }
+        };
         let addresses = match parsed.host() {
             None => return Err(NO_HOST.into()),
             Some(_) if parsed.domain().is_none() => {
@@ -311,6 +325,9 @@ mod tests {
 
     impl Resolver for Fake {
         async fn resolve(&self, host: &str) -> std::io::Result<Vec<IpAddr>> {
+            if host.contains("%25") {
+                return Err(std::io::Error::from(std::io::ErrorKind::NotFound));
+            }
             Ok(vec![if host == "evil.internal" { "127.0.0.1" } else { "140.82.112.3" }.parse().unwrap()])
         }
     }
@@ -386,6 +403,7 @@ mod tests {
             ("https://127.0.0.1/build.json", "public https address"),
             ("https://[::ffff:10.0.0.1]/build.json", "public https address"),
             ("https://[::1/build.json", "valid link"),
+            ("https://[fe80::1%25eth0]/build.json", "Could not find fe80::1%25eth0"),
             ("file:///etc/passwd", "https"),
             ("gist.githubusercontent.com/u/1", "https"),
             ("https://nowhere.example/", "fetch the link (ConnectError)"),

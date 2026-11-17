@@ -808,6 +808,9 @@ already in the lock through `mcp`).
   links, the build without the workspace module, safe mode, the Tern plugin switch, and every
   write path's file, history and rows compared with Python's `project`, previews and checks with
   `share` and `document`); link fetching is unit-tested in `server/src/builds/fetch.rs`;
+  `tests/test_build_parity.py` (every route, push and `build_applied` announcement, with the
+  file, history and rows, against `web_build`'s handlers over `kitty.core.builds` at one test
+  clock; docs/rust-core-design.md);
   `web/tests/builds.test.mjs` (pure client logic);
   `web/tests/builds.browser.test.mjs` (two real windows on a real server: a token edited in the
   editor and an external save restyle both, invalid saves marked at their line, import diff with
