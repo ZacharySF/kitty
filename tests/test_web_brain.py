@@ -11,6 +11,7 @@ import pytest
 from kitty import web_brain
 from kitty.core import blocks, calendar, documents, flashcards, quick_notes, record_events
 from kitty.web_server import APIError, WebApplication
+from terminal_support import front_site
 
 NODE_KEYS = {"id", "kind", "section", "type", "label", "at", "parent"}
 
@@ -158,7 +159,9 @@ def test_historical_logs_become_edits(app, workspace):
                  "VALUES(?,?,3,?,?,1000,'regular','{}')", (card, deck, "2026-01-01T09:00:00+00:00", "2026-01-01"))
     job = app.mutate(conn, "/api/jobs/add", {"company": "Acme", "title": "Intern",
                                              "url": "https://example.invalid/acme"})
-    app.mutate(conn, f"/api/jobs/{job['id']}", {"action": "applied", "value": True})
+    # Job status writes are rika-server's (server/src/jobs/).
+    with front_site(workspace.settings) as site:
+        assert site.request(f"/api/jobs/{job['id']}", {"action": "applied", "value": True})[0] == 200
     application = conn.execute("SELECT id FROM applications").fetchone()[0]
     subject = study_mutation(conn, "/api/study/subjects", {"name": "Chemistry"})["item"]
     session = study_mutation(conn, "/api/study/sessions", {

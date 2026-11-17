@@ -13,6 +13,7 @@ import pytest
 
 from kitty.core import documents, notes, quick_notes, record_events
 from kitty.web_server import ROUTE_MODULES, APIError, WebApplication
+from terminal_support import front_site
 
 
 @pytest.fixture
@@ -43,23 +44,31 @@ def test_migration_creates_an_append_only_table(workspace):
     assert events(conn) == [("notes", "page", "1", "save", "/api/notes/pages/1")]
 
 
-def _jobs(app, conn):
+def front_mutate(site, path, body):
+    """A mutation rika-server answers and records (server/src/jobs/)."""
+    status, data = site.request(path, body)
+    assert status == 200, (path, data)
+    return data
+
+
+def _jobs(app, site, conn):
     job = app.mutate(conn, "/api/jobs/add", {"company": "Acme", "title": "Intern",
                                              "url": "https://example.invalid/acme"})
     path = f"/api/jobs/{job['id']}"
-    app.mutate(conn, path, {"action": "favorite", "value": True})
+    front_mutate(site, path, {"action": "favorite", "value": True})
     return ("jobs", "job", str(job["id"]), "favorite", path)
 
 
-def _reminders(app, conn):
-    reminder = app.mutate(conn, "/api/reminders", {"date": "2030-01-05", "note": "Call back"})
+def _reminders(app, site, conn):
+    reminder = front_mutate(site, "/api/reminders", {"date": "2030-01-05", "note": "Call back"})
     return ("reminders", "reminder", str(reminder["id"]), "create", "/api/reminders")
 
 
 @pytest.mark.parametrize("case", [_jobs, _reminders], ids=lambda case: case.__name__[1:])
 def test_one_real_route_per_section_is_captured(app, workspace, case):
     conn = workspace.conn
-    expected = case(app, conn)
+    with front_site(workspace.settings) as site:
+        expected = case(app, site, conn)
     captured = events(conn)
     assert captured[-1] == expected
     assert all(section in record_events.SECTIONS for section, *_ in captured)
@@ -107,7 +116,8 @@ def test_logged_mutations_are_left_to_their_own_history(app, workspace):
     conn = workspace.conn
     job = app.mutate(conn, "/api/jobs/add", {"company": "Acme", "title": "Intern",
                                              "url": "https://example.invalid/acme"})
-    app.mutate(conn, f"/api/jobs/{job['id']}", {"action": "applied", "value": True})
+    with front_site(workspace.settings) as site:
+        front_mutate(site, f"/api/jobs/{job['id']}", {"action": "applied", "value": True})
     assert [row[3] for row in events(conn)] == ["create"]
     assert conn.execute("SELECT COUNT(*) FROM status_events").fetchone()[0] == 1
 

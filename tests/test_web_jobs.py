@@ -1,18 +1,48 @@
-"""Selection and workflow invariants against an isolated real workspace."""
+"""Selection and workflow invariants against an isolated real workspace.
+
+The jobs, pipeline, job-tools and reminders routes are rika-server's (server/src/jobs/), so these
+run through the front with the Python worker behind it, on the test's own workspace.
+"""
 from __future__ import annotations
 
-import pytest
+from contextlib import ExitStack
+from urllib.parse import urlencode
 
-from kitty.config import View, ViewFilters
+import pytest
+import yaml
+
 from kitty.core import applications, jobs
-from kitty.web_server import APIError, WebApplication
+from kitty.web_server import APIError
+from terminal_support import front_site
+
+
+class Front:
+    """`get_json`/`mutate` as the Python app offered them, answered by the front.
+
+    The front starts at the first request, so a test can write its YAML config before then."""
+
+    def __init__(self, workspace, stack):
+        self.workspace, self.stack, self.site = workspace, stack, None
+
+    def _request(self, path, body=None):
+        if self.site is None:
+            self.site = self.stack.enter_context(front_site(self.workspace.settings))
+        status, data = self.site.request(path, body)
+        if status != 200:
+            raise APIError(status, data.get("error", "") if isinstance(data, dict) else str(data))
+        return data
+
+    def get_json(self, _conn, path, query):
+        return self._request(path + ("?" + urlencode(query) if query else ""))
+
+    def mutate(self, _conn, path, body):
+        return self._request(path, body)
 
 
 @pytest.fixture
-def app(workspace, tmp_path):
-    instance = WebApplication(workspace.settings, workspace.config, tmp_path, ui_session="ui-test")
-    yield instance
-    instance.automation.close()
+def app(workspace):
+    with ExitStack() as stack:
+        yield Front(workspace, stack)
 
 
 def posting(workspace, number, *, company="Synthetic 100% Labs", title="Controls Intern"):
@@ -56,13 +86,14 @@ def test_bulk_invalid_member_is_atomic_and_star_toggles_only_all_starred(app, wo
 
 
 def test_bulk_track_is_additive_and_saved_views_preserve_scope(app, workspace):
+    views = {"views": [{"key": 9, "title": "Synthetic broad view", "filters": {"not_applied": False}}]}
+    (workspace.settings.root / "config" / "views.yaml").write_text(yaml.safe_dump(views), encoding="utf-8")
     first, second = posting(workspace, 1), posting(workspace, 2)
     track_a, track_b = workspace.config.track_names[:2]
     jobs.link_track(workspace.conn, first.id, track_a)
     app.mutate(workspace.conn, "/api/jobs/bulk", {"ids": [first.id], "action": "add_track", "value": track_b})
     assert set(jobs.get_job(workspace.conn, first.id).tracks) == {track_a, track_b}
     app.mutate(workspace.conn, "/api/jobs/bulk", {"ids": [first.id], "action": "favorite", "value": True})
-    workspace.config.views.views = [View(key=9, title="Synthetic broad view", filters=ViewFilters(not_applied=False))]
     saved = app.get_json(workspace.conn, "/api/jobs/selection", {"view": "favorites", "saved": "9"})
     assert saved["ids"] == [first.id]
     app.mutate(workspace.conn, f"/api/jobs/{second.id}", {"action": "applied", "value": True})

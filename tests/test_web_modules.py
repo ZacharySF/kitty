@@ -34,10 +34,13 @@ from terminal_support import front_site
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CAREERS = ("profile", "tracks", "sources", "watchlist", "answers", "views")
 COMBINATIONS = [(), ("applyai",), ("workspace",), ("applyai", "workspace")]
-APPLYAI_GETS = ("/api/dashboard", "/api/jobs", "/api/resumes", "/api/profile", "/api/sources",
-                "/api/reminders", "/api/pipeline", "/api/mail", "/api/triage", "/api/automation/status")
+APPLYAI_GETS = ("/api/dashboard", "/api/profile", "/api/sources",
+                "/api/mail", "/api/triage", "/api/automation/status")
 APPLYAI_POSTS = ("/api/jobs/add", "/api/automation/start", "/api/resumes/register",
-                 "/api/profile/basics", "/api/reminders")
+                 "/api/profile/basics")
+# The jobs, resume library, reminders and pipeline routes are rika-server's (server/src/jobs/).
+APPLYAI_FRONT_GETS = ("/api/jobs", "/api/resumes", "/api/reminders", "/api/pipeline")
+APPLYAI_FRONT_POSTS = ("/api/reminders",)
 # The calendar's local routes are rika-server's (tests/test_calendar.py); these two are Python's.
 WORKSPACE_GETS = ("/api/calendar/google/status", "/api/notes", "/api/schema", "/api/study", "/api/flashcards",
                   "/api/opportunities", "/api/atlas/sections/notes")
@@ -167,6 +170,13 @@ def test_disabled_routes_cannot_run_and_enabled_routes_are_reachable(tmp_path, m
             for path in posts:
                 status, body = request(path, {})
                 assert refused(status, body) == (module not in modules), path
+    with front(settings) as request:
+        for path in APPLYAI_FRONT_GETS:
+            status, body = request(path)
+            assert refused(status, body) == ("applyai" not in modules), path
+        for path in APPLYAI_FRONT_POSTS:
+            status, body = request(path, {})
+            assert refused(status, body) == ("applyai" not in modules), path
 
 
 @pytest.mark.parametrize("modules", COMBINATIONS)
@@ -415,21 +425,21 @@ def test_restart_activates_the_saved_selection_and_preserves_data(tmp_path):
 
 def test_disabling_applyai_preserves_careers_rows_and_tracks(tmp_path):
     settings = make_root(tmp_path, ("applyai", "workspace"))
-    with site(settings) as (app, request):
+    with front(settings) as request:
         with db(settings) as conn:
             job, _ = jobs.upsert_job(conn, company="Synthetic Co", title="Kept role", url="https://example.invalid/kept",
                                      source="manual", source_job_id="kept-1")
             tracks_before = conn.execute("SELECT COUNT(*) FROM tracks").fetchone()[0]
         assert tracks_before > 0 and request(f"/api/jobs/{job.id}")[0] == 200
     save_modules(settings.config_dir, ["workspace"])
-    with site(settings) as (app, request):
+    with front(settings) as request:
         assert request(f"/api/jobs/{job.id}")[0] == 403
         assert request("/api/atlas/sections/jobs")[0] == 403
     with db(settings) as conn:
         assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM tracks").fetchone()[0] == tracks_before
     save_modules(settings.config_dir, ["applyai"])
-    with site(settings) as (app, request):
+    with front(settings) as request:
         status, detail = request(f"/api/jobs/{job.id}")
         assert status == 200 and detail["title"] == "Kept role"
 
