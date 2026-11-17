@@ -802,6 +802,30 @@ selection: base only.
    to 4.7 ms in both. The release binary grew from 15.10 to 16.35 MB. Start-up and memory
    were not measured.
 
+   *Stays on Python (devices):* every `/api/devices` route (`GET /api/devices`, `POST
+   /api/devices/{name, pair/show, pair/cancel, pair/enter, sync, unpair, address, pause}`) is
+   still forwarded to the worker, and `web_devices.py` is kept. The routes have no state of
+   their own: each is one call on the worker's live `kitty.core.sync.service.SyncService`, and
+   its answers are that object's memory as much as the database: the pairing code with its
+   expiry and three tries (spent by the peer listener's handshake thread), each peer's status,
+   error and `online`, the devices the mDNS browser has seen, the listening port and the
+   keyring error. `pair/enter` runs the SPAKE2 + Noise `XXpsk3` handshake itself, and `sync`,
+   `address` and `pause` only wake the scheduler thread. Answering them in the front means
+   moving the service with them: the peer listener (Noise `IK`/`XXpsk3`, `noise.py`,
+   `channel.py`), mDNS (`discovery.py`), the scheduler and the protocol (`protocol.py`),
+   whose puller merges every batch through `kitty.core.blocks.merge` (op_log, History, tags,
+   the projection, live push) — the blocks core, which is not ported yet. A front that only
+   read `sync_device`/`sync_peer` would answer stale pairing and peer states, and splitting
+   the pairing code between two processes would weaken the code's single-owner try count. The
+   devices move once the blocks merge is in Rust, together with the service, against
+   `tests/test_sync_{noise,channel,discovery,service}.py` and a Python peer on the other end.
+   `kitty.core.sync` stays for `web_devices`, `kitty.core.reposync` (`peers`) and those tests.
+   `tests/test_web_devices.py` now also checks the front's forwarding with `KITTY_SYNC=off`
+   (the worker's 503, its 400 for an unexpected body, the origin guard's 403); the two-server
+   test already pairs and syncs through a front, and `web/tests/devices.browser.test.mjs`
+   passes with the front. Measured (median of 300 fresh-connection `GET /api/devices`, one
+   synthetic workspace, load about 5): 4.32 ms from Python directly, 5.25 ms through the front.
+
    *Built (terminal: Settings → Agents and the local terminal routes):* Settings → Agents is
    answered by rika-server (`server/src/agents/`): `GET /api/agents` (the host guarantee, the
    newest hundred sessions, the policy in force, its versions, the retention floor, the
