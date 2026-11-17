@@ -59,6 +59,17 @@ def test_devices_state_and_validation(pair_of_sites):
     assert a.request("/api/devices", headers={"Origin": "https://example.com"})[0] == 403
 
 
+def test_devices_routes_stay_on_the_worker_behind_the_front(tmp_path):
+    """rika-server forwards /api/devices/* to the worker, which owns the sync service (and its 503 when off)."""
+    off = {"KITTY_SYNC": "off"}
+    with front_site(make_root(tmp_path / "off", ("workspace",)), env=off) as front:
+        status, body = front.request("/api/devices")
+        assert status == 503 and "KITTY_SYNC=off" in body["error"]
+        assert front.request("/api/devices/pause", {"paused": True})[0] == 503
+        assert front.request("/api/devices/name", {"name": "x", "extra": 1})[0] == 400
+        assert front.request("/api/devices", headers={"Origin": "https://example.com"})[0] == 403
+
+
 def test_two_servers_pair_and_a_page_reaches_the_other_window_live(pair_of_sites):
     a, b = pair_of_sites
     a.request("/api/devices/name", {"name": "Laptop"})
