@@ -9,7 +9,7 @@ import uuid
 import pytest
 
 from kitty import web_brain
-from kitty.core import blocks, calendar, flashcards, record_events
+from kitty.core import blocks, calendar, flashcards, quick_notes, record_events
 from kitty.web_server import APIError, WebApplication
 
 NODE_KEYS = {"id", "kind", "section", "type", "label", "at", "parent"}
@@ -77,7 +77,7 @@ def seed(app, conn):
     page = app.mutate(conn, "/api/notes/pages", {"notebook_id": notebook["id"], "title": "Waves"})
     app.mutate(conn, f"/api/notes/pages/{page['id']}", {
         "revision": page["revision"], "title": "Standing waves", "document": page["document"]})
-    note = app.mutate(conn, "/api/quick-notes/create", {"body": "Private scratch body"})
+    note = quick_notes.create(conn, "Private scratch body")
     event = calendar_event(conn, "Lab session")
     subject = study_mutation(conn, "/api/study/subjects", {"name": "Chemistry"})["item"]
     job = app.mutate(conn, "/api/jobs/add", {"company": "Acme", "title": "Intern",
@@ -118,8 +118,8 @@ def test_records_and_captured_edits_form_a_valid_tree(app, workspace):
 
 def test_edits_are_newest_first_and_deleted_records_read_as_deleted(app, workspace):
     conn = workspace.conn
-    note = app.mutate(conn, "/api/quick-notes/create", {"body": "gone soon"})
-    app.mutate(conn, "/api/quick-notes/delete", {"id": note["id"], "revision": note["revision"]})
+    note = quick_notes.create(conn, "gone soon")
+    quick_notes.delete(conn, note["id"], note["revision"])
     result = brain(app, conn)
     assert_contract(result)
     edits = [node for node in result["nodes"] if node["kind"] == "edit"]
@@ -201,7 +201,7 @@ def test_truncation_keeps_records_before_edits(app, workspace):
     conn = workspace.conn
     seeded = brain(app, conn)["total"]["records"]  # e.g. the default calendar
     for index in range(4):
-        app.mutate(conn, "/api/quick-notes/create", {"body": f"note {index}"})
+        quick_notes.create(conn, f"note {index}")
     records = seeded + 4
     for limit in (2, records + 2):
         result = brain(app, conn, limit=limit)
@@ -234,7 +234,7 @@ def test_block_backend_pages_blocks_op_log_and_compacted_days(app, workspace):
                            {"op": "insert", "id": nested, "type": "text", "parent": child, "text": "nested"},
                            {"op": "insert", "id": gone, "type": "text", "parent": root, "text": "trashed"}])
     blocks.transact(conn, [{"op": "delete", "id": gone}])
-    quick = app.mutate(conn, "/api/quick-notes/create", {"body": "quick private body"})
+    quick = quick_notes.create(conn, "quick private body")
     # History older than the retention window survives as one snapshot per page per day.
     seq = conn.execute("SELECT MAX(seq) FROM op_log").fetchone()[0]
     conn.execute("INSERT INTO page_snapshots(page_id, day, seq, state) VALUES (?, '2001-01-01', ?, x'00')", (root, seq))
@@ -317,7 +317,7 @@ def test_records_created_after_the_block_migration_come_from_blocks(app, workspa
     item = str(uuid.uuid4())
     blocks.transact(conn, [{"op": "insert", "id": item, "type": "text", "parent": root, "text": "pH"}])
     blocks.transact(conn, [{"op": "text", "id": item, "text": "pH scale"}])
-    quick = app.mutate(conn, "/api/quick-notes/create", {"body": "later"})
+    quick = quick_notes.create(conn, "later")
     document = app.mutate(conn, "/api/documents", {"title": "Lab report", "content": "Body", "format": "text",
                                                    "notebook_id": notebook["id"]})
     # The frozen legacy tables never see them: only the block backend does.
