@@ -20,7 +20,7 @@ import sqlite3
 import sys
 import time
 from contextlib import closing
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlencode, urljoin, urlsplit
 
@@ -678,7 +678,7 @@ def copy_of(seeded: Settings, path: Path) -> Settings:
 
 
 def base_time():
-    return datetime.now(timezone.utc).replace(hour=9, minute=0, second=0, microsecond=250_000) + timedelta(days=1)
+    return datetime.now(UTC).replace(hour=9, minute=0, second=0, microsecond=250_000) + timedelta(days=1)
 
 
 def reference_run(settings, modules, safe, base, monkeypatch):
