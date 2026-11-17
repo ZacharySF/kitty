@@ -204,4 +204,4 @@ def test_identity_is_saved_only_by_one_use_initiator_receipt_and_disconnect_keep
     with db(settings) as conn:
         assert conn.execute("SELECT tutorial_completed FROM workspace_onboarding").fetchone()[0] == 1
     with site(settings) as (_, request):
-        assert request("/api/ai/status")[0] == 200
+        assert request("/api/usage")[0] == 200

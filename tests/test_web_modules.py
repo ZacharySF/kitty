@@ -35,7 +35,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 CAREERS = ("profile", "tracks", "sources", "watchlist", "answers", "views")
 COMBINATIONS = [(), ("applyai",), ("workspace",), ("applyai", "workspace")]
 APPLYAI_GETS = ("/api/dashboard", "/api/jobs", "/api/resumes", "/api/profile", "/api/sources",
-                "/api/reminders", "/api/pipeline", "/api/mail", "/api/triage", "/api/automation/status")
+                "/api/reminders", "/api/pipeline", "/api/finder", "/api/triage", "/api/automation/status")
 APPLYAI_POSTS = ("/api/jobs/add", "/api/automation/start", "/api/resumes/register",
                  "/api/profile/basics", "/api/reminders")
 # The calendar's local routes are rika-server's (tests/test_calendar.py); these two are Python's.
@@ -541,7 +541,8 @@ def test_schema_web_rejects_new_job_links_without_applyai(tmp_path):
 
 def test_ai_endpoints_split_between_core_and_workspace(tmp_path):
     settings = make_root(tmp_path, ("applyai",))
-    with site(settings) as (app, request):
+    # Status and settings are core routes the front answers (server/src/insights/ai.rs).
+    with front(settings) as request:
         assert request("/api/ai/status")[0] == 200
         assert request("/api/ai/preview", {"purpose": "summarize", "text": "note"})[0] == 403
         assert request("/api/ai/run", {})[0] == 403

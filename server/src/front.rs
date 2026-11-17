@@ -506,6 +506,13 @@ impl Front {
             response.headers_mut().insert("content-disposition", HeaderValue::from_str(&format!("attachment; filename=\"{name}\"")).expect("ASCII download name"));
             return Ok(response);
         }
+        if !mutation && !upgrade && target.path == crate::insights::EXPORT {
+            let target = parse_target(&forward_target)?;
+            let (data, kind, name) = tokio::task::block_in_place(|| crate::insights::download(&self.workspace, &self.bootstrap, &target))?;
+            let mut response = send(StatusCode::OK, data, kind, method == Method::HEAD);
+            response.headers_mut().insert("content-disposition", HeaderValue::from_str(&format!("attachment; filename=\"{name}\"")).expect("ASCII download name"));
+            return Ok(response);
+        }
         // The module routes ported to Rust over the workspace database (crate::ported).
         if !upgrade && crate::ported::owns(&target.path, mutation) {
             let target = parse_target(&forward_target)?;

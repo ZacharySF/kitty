@@ -1309,6 +1309,107 @@ selection: base only.
    both. The release binary grew from 22.04 to 22.24 MB (22,044,240 to 22,242,256 bytes).
    Start-up and memory were not measured.
 
+   *Built (ApplyAI's insights and Settings → AI):* rika-server answers ApplyAI's local insight
+   routes (`server/src/insights/`): `GET /api/reports` (`stats.response_report` by resume,
+   track, source and tier, and `report_summary`'s eight weeks, week, month and streak on the
+   test clock, `reports.rs`), `GET /api/reports/export?format=&dataset=` (`export.QUERIES` as
+   one `json.dumps(..., ensure_ascii=False, indent=2)` document, a CSV file as `csv.writer`
+   writes it with `escape_cell`'s formula guard, or a deflated zip of the three CSVs), `GET
+   /api/mail` (whether `config/gmail_client.json` and `data/gmail_token.json` exist, never
+   their contents, the last mail run and the pending proposals), `POST
+   /api/mail/proposals/<id>/{confirm, reject}`, `POST /api/finder/<id>/reject`, `POST
+   /api/questions` (`questions.log_question`, the `norm_question` hash included) and `GET
+   /api/apply/health` (`apply.health.report` with its Wilson intervals, causes and field
+   correctness, `health.rs`; a core path only ApplyAI's extension answered, so a 404 without
+   ApplyAI); and Settings → AI's local half (`ai.rs`): `GET /api/ai/status` and `POST
+   /api/ai/settings`, the key through the front's key store (crate::keys, now also read and
+   written for other routes), the rest through `project.editing` into the build file's
+   `settings.ai` and `ai_settings` (`crate::builds::edit_settings`). The daily budget is read
+   as `Decimal(str(value))` reads it (`decimal.rs`: underscores dropped, digits of any script,
+   `NaN` and `Infinity` refused as out of range), and today's spend sums the ledger in the
+   default decimal context (`rika/decimal.rs`, now shared). `web_insights.py` loses its reports
+   and mail reads, `download`, the proposal decisions and the finder's reject branch;
+   `web_automation.py` its health read and question log; `web_ai.py` its status, settings
+   write, `_status`, `_tiers`, `_write_key` and `_remove_key` (`PRIVACY_NOTICE` stays for
+   previews).
+
+   Stay on Python, forwarded, each for a reason that is not the route's shape:
+   - Every route that reads the worker's validated configuration: `GET /api/triage` (the
+     triage model and cap from `triage.yaml`, the track names), `POST /api/triage/run` with
+     `mode: rules` (`apply_rules_tiers` over each track's location and eligibility rules),
+     `GET /api/finder` (the watchlist), `GET /api/questions` and `POST /api/questions/refresh`
+     (`answers.yaml` and the profile), `GET /api/sources`. The config is YAML read by PyYAML and
+     validated by Pydantic once at start and again only on an explicit reload, so it is the
+     worker's memory, not the files on disk; the rules run would also start a task in the
+     worker's `TaskRunner`, whose results only the worker's `/api/tasks/<id>` returns.
+   - Paid and external work: `POST /api/triage/{estimate, run}` (`now`, `batch`, `collect`:
+     Anthropic or OpenRouter, the estimate tokens held in the worker's memory), `POST
+     /api/finder/run` and `/api/sources/*/run` (discovery's adapters, `python-jobspy`, the
+     discovery state the worker holds), `POST /api/postings/refresh`, `POST /api/mail/{auth,
+     check}` (Google's consent flow and read-only Gmail), `POST /api/ai/models/refresh`, `POST
+     /api/ai/{preview, mind-map/preview, run}` (the `ai_request` effect kind, its precondition
+     fingerprint and its executor that reserves spend are one Python registration; the
+     OpenRouter call follows in the worker) and `POST /api/questions/collect`.
+   - `POST /api/finder/<id>/approve`: it appends to `watchlist.yaml` and reloads the worker's
+     config.
+   - The browser controller: `GET /api/automation/status`, `POST /api/automation/{plan,
+     preflight, start, stop, restart-firefox}`: the Firefox BiDi worker, its thread and state
+     live in the worker's `AutomationController`; plans bind config sections and resume PDFs.
+   - Usage (`web_usage.py`) stays with its in-memory owner, as written above.
+
+   `kitty.core` stays whole: `stats.response_report` (`kitty report`), `export` (`kitty
+   export`), `apply.health` (`kitty apply report`), `gmail.proposals` and
+   `applications.confirm_proposal` / `reject_proposal` (`kitty gmail`, the MCP server),
+   `finder.reject` (the TUI), `questions.log_question` (the form filler, the demo seed, the
+   TUI) and `web_ai._key`, `_settings` and `_spent` (Rika's model calls, previews and runs);
+   with `stats.report_summary` and `router.configured` and `defaults` they are the parity
+   test's reference.
+
+   `tests/test_applyai_insights_parity.py` runs one scenario (111 requests, 78 of them refused:
+   queries on every read, export formats and datasets that do not exist, proposal and
+   candidate bodies without `confirm: true` or with other keys, unknown, decided and 30-digit
+   ids, question texts that are blank, 4,001 characters or carry NUL, job ids that are zero,
+   text, booleans, floats, past 2^53 or unknown, AI settings without confirmation, stale or
+   float revisions, unknown models, routing as a list (500), output limits and budgets out of
+   range, `NaN`, `-Infinity`, `0x10`, tier maps that are lists or name unknown tiers or models,
+   and keys that are short, numbers or both added and removed) over a seeded workspace:
+   applications stamped with `Z`, naive, `-11:00`, bare-date and microsecond spellings around
+   the week's Monday and the month's first day, a future one and an unparseable one, confirmed,
+   undone and proposed status changes, companies and titles that need CSV quoting and the
+   formula guard, finder candidates, mail runs, apply attempts past the sample floor with an
+   unknown cause and class, today's and yesterday's AI ledger, and an OpenRouter key on file.
+   It runs through the front and through the Python core on two copies of the workspace root
+   (database, build file, key file) at the same clock readings (`KITTY_TEST_CLOCK`), comparing
+   every answer, downloads by bytes, type and disposition (a zip by its entries: the stamps are
+   the writer's local time), and the application, status, candidate, question, AI and build
+   rows, `build.json`, the stored key and the private and config files; again without ApplyAI
+   (every ApplyAI route 403, apply health 404, the AI routes as with it). The worker answers
+   none of the moved routes, while triage, the finder, sources, automation status, question
+   summaries, finder approval and AI previews still answer behind the front. Against `main`'s
+   binary the scenario fails on the worker's real clock: at the first report with ApplyAI, at
+   today's AI spend without it. The export and
+   mail tests of `tests/test_web_insights.py`, the AI key and tier tests of
+   `tests/test_web_ai.py` and `tests/test_web_server.py`'s export check run through the front;
+   tests that used `/api/ai/status` as any authenticated worker route use `/api/usage`.
+
+   Known differences: a stored cost or budget that `Decimal` or `float` takes but that is no
+   finite decimal here, a `stats_json` or stamp holding `NaN`, and a JSON integer past 64 bits
+   are a 500 at the front; an invalid build file's 409 from the AI settings carries no
+   `problems` list; a lone surrogate escape is "Malformed JSON body"; apply health orders two
+   unknown field classes by name, where Python left them to string hashing.
+
+   Measured on one synthetic workspace (400 jobs, 300 applications with their status history,
+   50 proposals, 400 apply attempts with 1,200 fields and checks, 20 catalogue models; median of
+   300 fresh-connection requests after 10 warm-ups; `main` at `a3c6f96` with its Python
+   handlers against this branch, release builds run alternately twice, at load 2.9 to 3.0):
+   `GET /api/reports` went from 4.19 / 4.97 ms (forwarded to Python) to 2.10 / 1.42 ms, `GET
+   /api/apply/health` from 4.93 / 5.57 ms to 1.57 / 0.94 ms, `GET /api/mail` from 4.60 / 4.76
+   ms to 0.94 / 0.67 ms, `GET /api/ai/status` from 3.90 / 4.24 ms to 0.65 / 0.30 ms, the zip of
+   every CSV from 6.96 / 7.17 ms to 2.87 / 3.16 ms and a repeated `POST /api/questions` from
+   3.24 / 4.77 ms to 0.38 / 0.44 ms, while a still-forwarded route (`GET /api/triage`) took 2.5
+   to 4.3 ms in both. The release binary grew from 22.24 to 22.49 MB (22,242,256 to 22,490,064
+   bytes). Start-up and memory were not measured.
+
 ## Rules for every step
 
 - The Python suite and the browser suites pass against whatever mix serves the

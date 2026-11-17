@@ -15,7 +15,7 @@ import pytest
 
 from kitty import web_auth
 from kitty import web_automation as web
-from kitty.core import applications, effect_kinds, effects, favorites, form_questions, jobs, resumes
+from kitty.core import applications, effect_kinds, effects, favorites, form_questions, jobs, keys, questions, resumes
 from kitty.core.apply.filler import FillReport
 from kitty.core.apply.watch import PageView, WatchedTab, watch_tabs
 from kitty.db import connect
@@ -310,7 +310,8 @@ def test_start_refuses_another_kinds_effect(app, workspace, posting, monkeypatch
 
 
 def test_questions_log_list_and_collection_counters(app, workspace, posting, monkeypatch):
-    result = web.post(app, workspace.conn, "/api/questions", {"text": "Synthetic exact question?", "job_id": posting.id})
+    # Logging is rika-server's (server/src/insights; tests/test_applyai_insights_parity.py).
+    result = {"id": questions.log_question(workspace.conn, "Synthetic exact question?", job_id=posting.id).id}
     listed = web.get(app, workspace.conn, "/api/questions", {"job_id": str(posting.id)})
     assert listed["questions"][0]["id"] == result["id"]
     assert listed["questions"][0]["text"] == "Synthetic exact question?"
@@ -725,7 +726,7 @@ def test_structured_causes_survive_web_report_serialization(app, posting):
 
 def _recovery_model(app, workspace):
     from kitty import web_ai
-    web_ai._write_key(app, 'synthetic-recovery-key')
+    keys.for_settings(app.settings).set('OPENROUTER', 'synthetic-recovery-key')
     workspace.conn.execute('INSERT INTO ai_models VALUES(?,?,?,?,?,?)', (
         'synthetic/recovery', 'Synthetic recovery', '0.000001', '0.000002', 100000,
         web_ai._now().isoformat(),

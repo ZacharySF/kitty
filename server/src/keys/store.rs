@@ -257,6 +257,11 @@ impl Keys<'_> {
         Ok(None)
     }
 
+    /// `read`: NAME's value, or "" when unset.
+    pub fn read(&mut self, name: &str) -> Result<String> {
+        Ok(self.lookup(name)?.map(|(value, _)| value).unwrap_or_default())
+    }
+
     /// `set`: the keyring when one exists (dropping a stale file copy), else the owner-only file.
     pub fn set(&mut self, name: &Value, value: &Value) -> Result<()> {
         let name = canonical(name)?;

@@ -7,7 +7,7 @@
 //! client, the tools over every module's Python core, the speech engine, the roster's memory);
 //! `kitty.core.rika` stays whole for them.
 
-mod decimal;
+pub(crate) mod decimal;
 mod history;
 mod memory;
 mod routes;
