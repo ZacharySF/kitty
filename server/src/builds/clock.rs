@@ -1,6 +1,6 @@
 //! UTC timestamps as the Python build code writes them.
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use crate::ported::time::Dt;
 
 /// One moment in UTC, to the microsecond (`datetime.now(timezone.utc)`).
 #[derive(Clone, Copy)]
@@ -10,9 +10,10 @@ pub struct Moment {
 }
 
 impl Moment {
+    /// Now, or the test clock `KITTY_TEST_CLOCK` names (crate::ported::time).
     pub fn now() -> Moment {
-        let elapsed = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
-        Moment { seconds: elapsed.as_secs() as i64, micros: elapsed.subsec_micros() }
+        let micros = Dt::now_utc().utc();
+        Moment { seconds: micros.div_euclid(1_000_000), micros: micros.rem_euclid(1_000_000) as u32 }
     }
 
     fn parts(self) -> (i64, u32, u32, i64, i64, i64) {
