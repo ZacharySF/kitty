@@ -1,4 +1,15 @@
-"""Local welcome/tutorial preferences and optional Google identity connection."""
+"""Optional Google identity connection (Settings → Account).
+
+``GET /api/account`` and ``POST /api/account/onboarding`` (the welcome and tutorial flags)
+are answered by rika-server (server/src/account.rs), which learns ``configured`` from this
+worker's readiness line. The sign-in stays here: its pending attempt, PKCE verifier and
+loopback callback live in this process's ``GoogleConnection``.
+
+    POST /api/account/google/start {}       -> {url, ticket}
+    POST /api/account/google/poll {ticket}  -> {status, identity?}; a connected identity is saved
+    POST /api/account/google/cancel {ticket}
+    POST /api/account/google/disconnect {}  -> the account state, the identity forgotten
+"""
 from __future__ import annotations
 
 import os
@@ -25,26 +36,15 @@ def state(app, conn):
 
 
 def get(app, conn, path, query):
-    if path != "/api/account":
-        return None
-    app._no_query(query)
-    return state(app, conn)
+    return None
 
 
 def post(app, conn, path, body):
     from kitty.web_server import APIError
 
-    if not path.startswith("/api/account/"):
+    if not path.startswith("/api/account/google/"):
         return None
     try:
-        if path == "/api/account/onboarding":
-            if (not body or not set(body) <= {"welcome_completed", "tutorial_completed"}
-                    or any(type(value) is not bool for value in body.values())):
-                raise APIError(400, "Expected welcome_completed or tutorial_completed booleans")
-            for key, value in body.items():
-                conn.execute(f"UPDATE workspace_onboarding SET {key}=? WHERE id=1", (int(value),))
-            conn.commit()
-            return state(app, conn)
         if path in {"/api/account/google/start", "/api/account/google/disconnect"}:
             if body:
                 raise APIError(400, "Expected an empty object")

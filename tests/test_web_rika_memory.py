@@ -1,4 +1,6 @@
-"""Rika's routing memory, memory index and preferences over HTTP (synthetic, never a network call)."""
+"""Rika's routing memory, memory index and preferences over HTTP (synthetic, never a network call).
+
+rika-server answers these routes (server/src/rika/); the core writes the test's rows."""
 from __future__ import annotations
 
 import dataclasses
@@ -11,7 +13,7 @@ import pytest
 from kitty.core import notes
 from kitty.core.rika import routes
 from kitty.db import connect
-from terminal_support import make_root, site
+from terminal_support import front_site, make_root
 
 
 @pytest.fixture
@@ -29,7 +31,7 @@ def no_network(monkeypatch):
 @pytest.fixture
 def running(tmp_path, no_network):
     settings = dataclasses.replace(make_root(tmp_path, ("workspace",)), demo=True)
-    with site(settings) as running:
+    with front_site(settings) as running:
         yield running
     assert no_network == []
 

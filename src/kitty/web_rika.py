@@ -14,8 +14,8 @@ POST /api/rika/plans/<id> {decision: approve, items: [item ids], choices?: {item
     ``confirm``) and checks in on a task whose day passed (``checkin``): there a choice
     may be another date, ``{item id: {date: "YYYY-MM-DD", time?: "HH:MM"}}``, and
     dismissing is "Not now" (kitty.core.rika.slots, kitty.core.rika.followups).
-GET  /api/rika/history[?before=<created_at>]  ->  {items, has_more, next_before}
-    Messages, actions, approvals and plans, oldest first (shapes in kitty.core.rika.store).
+GET  /api/rika/history[?before=<created_at>] is answered by rika-server (server/src/rika/), as
+    are the routing memory, the memory index and the preferences (shapes in kitty.core.rika.store).
 POST /api/rika/approvals/<id> {decision: approve|reject}  ->  {approval}
 POST /api/rika/actions/<id>/undo {}  ->  {action}
 GET  /api/rika/agents  ->  {agents: [{id, kind, name, status, task, line, since, where, now}]}
@@ -53,7 +53,7 @@ import re
 import select
 
 from kitty import packs
-from kitty.core.rika import speech, store
+from kitty.core.rika import speech
 from kitty.core.rika.agents import AgentError
 from kitty.core.rika.loop import Rika, RikaError
 from kitty.core.rika.voice import FRAME_MAX, MODES, Session, VoiceError
@@ -99,13 +99,6 @@ def _voice(app, conn) -> dict:
 def get(app, conn, path, query):
     if path == STREAM:
         raise _error(426, "Open Rika's stream with a WebSocket upgrade")
-    if path == PREFIX + "/history":
-        if set(query) - {"before"}:
-            raise _error(400, "History accepts only before")
-        before = query.get("before")
-        if before is not None and not re.fullmatch(r"[0-9T:.+-]{10,40}", before):
-            raise _error(400, "before must be an item's created_at")
-        return store.history(conn, before)
     if path == PREFIX + "/agents":
         app._no_query(query)
         return {"agents": app.rika.agents.list()}
