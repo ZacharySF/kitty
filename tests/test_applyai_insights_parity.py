@@ -587,6 +587,7 @@ def test_reference_scenario(workspace, tmp_path, monkeypatch, modules, record_pr
     base, seeded, settings = prepare(workspace, tmp_path, modules)
     answers = reference_run(settings, seeded, base, monkeypatch, modules)
     record_property("requests", len(answers))
+    record_property("refused", sum(status != 200 for _, status, _ in answers))
     assert len(answers) > 100
     if "applyai" in modules:
         report = answers[0][2]
