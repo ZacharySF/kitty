@@ -13,7 +13,7 @@ import httpx
 import pytest
 
 from kitty import web_ai
-from kitty.core import notes
+from kitty.core import keys, notes
 from kitty.core.rika import llm, store
 from kitty.core.rika.loop import Rika, RikaError
 
@@ -181,7 +181,7 @@ def _text(*parts: str) -> bytes:
 @pytest.fixture
 def openrouter(workspace, monkeypatch):
     """A key, three priced tier models and a scripted OpenRouter behind a mock transport."""
-    web_ai._write_key(SimpleNamespace(settings=workspace.settings), "synthetic-openrouter-test-key")
+    keys.for_settings(workspace.settings).set("OPENROUTER", "synthetic-openrouter-test-key")
     for name in ("fast", "standard", "deep"):
         workspace.conn.execute("INSERT INTO ai_models VALUES(?,?,?,?,?,?)", (f"synthetic/{name}", name, "0.000001",
                                "0.000002", 200_000, web_ai._now().isoformat()))

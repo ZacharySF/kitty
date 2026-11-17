@@ -1,31 +1,28 @@
-"""Website adapters for discovery, reporting, read-only mail and approved triage.
+"""Website adapters for discovery, read-only mail and approved triage.
 
-No network operation is triggered by a GET. Paid runs require a fresh local
-estimate, an explicit approval and a cap no greater than the configured cap.
+Reports, the export, the mail status, mail-proposal decisions and finder rejections are
+answered by rika-server (server/src/insights). No network operation is triggered by a GET.
+Paid runs require a fresh local estimate, an explicit approval and a cap no greater than
+the configured cap.
 """
 from __future__ import annotations
 
 import copy
-import csv
 import hashlib
-import io
 import json
 import math
 import re
 import secrets
 import time
-import zipfile
 from contextlib import closing
 from dataclasses import asdict
 
-from kitty.core import applications, export, finder, refresh, sources, stats
+from kitty.core import finder, refresh, sources
 from kitty.core.discovery.pipeline import ADAPTERS, run_discover
 from kitty.core.gmail import auth
 from kitty.core.gmail.check import check_gmail
-from kitty.core.gmail.proposals import get_pending, pending_proposals
 from kitty.core.triage import run as triage
 from kitty.core.triage.rules import apply_rules_tiers
-from kitty.dates import now_iso
 from kitty.db import connect
 
 
@@ -121,26 +118,6 @@ def get(app, conn, path, query):
                 "counts": finder.decision_counts(conn),
                 "last_run": last_data,
                 "watchlist": [{"name": item.name, "tracks": item.tracks} for item in app.config.watchlist.companies]}
-    if path == "/api/reports":
-        _keys(query, {})
-        return {"sections": {name: [asdict(rate) | {"response_rate": rate.response_rate,
-                "advance_rate": rate.advance_rate} for rate in rates]
-                for name, rates in stats.response_report(conn).items()},
-                "summary": stats.report_summary(conn),
-                "datasets": list(export.QUERIES)}
-    if path == "/api/mail":
-        _keys(query, {})
-        state = auth.setup_state(app.settings)
-        last = conn.execute("SELECT started_at, stats_json, error FROM runs WHERE kind='mail' ORDER BY id DESC LIMIT 1").fetchone()
-        last_data = None
-        if last:
-            stored = json.loads(last["stats_json"] or "{}")
-            last_data = {"started_at": last["started_at"], "status": stored.get("status", "unknown"),
-                         "fetched": stored.get("fetched", 0), "proposed": stored.get("proposed", 0),
-                         "error": "Last check needs attention; review authorization or connection." if last["error"] else None}
-        return {"client_present": state.client_present, "token_present": state.token_present,
-                "ready": state.ready, "scope": "gmail.readonly", "last_check": last_data,
-                "proposals": [asdict(item) for item in pending_proposals(conn)]}
     if path == "/api/triage":
         _keys(query, {})
         return {"model": app.config.triage.model, "cap_usd": app.config.triage.max_cost_usd_per_run,
@@ -165,7 +142,7 @@ def post(app, conn, path, body):
                         "error": "Source could not complete; inspect source setup or restrictions." if item.error else None}
                         for name, item in result.adapters.items()}}
         return _task(app, "finder", run_finder)
-    match = re.fullmatch(r"/api/finder/([1-9][0-9]*)/(approve|reject)", path)
+    match = re.fullmatch(r"/api/finder/([1-9][0-9]*)/approve", path)
     if match:
         _keys(body, {"confirm"}); _confirm(body)
         from kitty.core.finder.store import get_candidate
@@ -173,12 +150,9 @@ def post(app, conn, path, body):
         candidate = get_candidate(conn, candidate_id)
         if candidate is None or candidate.decision != "pending":
             raise APIError(409, "Candidate is missing or already decided")
-        if match[2] == "approve":
-            finder.approve(conn, app.settings, app.config, candidate_id)
-            app.reload_config()
-        else:
-            finder.reject(conn, candidate_id)
-        return {"ok": True, "decision": "approved" if match[2] == "approve" else "rejected"}
+        finder.approve(conn, app.settings, app.config, candidate_id)
+        app.reload_config()
+        return {"ok": True, "decision": "approved"}
     if path in {"/api/mail/auth", "/api/mail/check"}:
         _keys(body, {"confirm", "days"} if path.endswith("check") else {"confirm"})
         _confirm(body); _external(app)
@@ -194,14 +168,6 @@ def post(app, conn, path, body):
                 own.commit()
                 return result.stats() | {"error": "Mail check did not complete; review authorization or connection." if result.error else None}
         return _task(app, "mail", check)
-    match = re.fullmatch(r"/api/mail/proposals/([1-9][0-9]*)/(confirm|reject)", path)
-    if match:
-        _keys(body, {"confirm"}); _confirm(body)
-        event_id = int(match[1])
-        if get_pending(conn, event_id) is None:
-            raise APIError(409, "Proposal is missing or already decided")
-        (applications.confirm_proposal if match[2] == "confirm" else applications.reject_proposal)(conn, event_id)
-        return {"ok": True}
     if path == "/api/triage/estimate":
         _keys(body, {"track", "limit"})
         track = _track(app, body.get("track"))
@@ -336,33 +302,3 @@ def post(app, conn, path, body):
         return _task(app, "posting-refresh", refresh_postings)
     return None
 
-
-def download(app, conn, path, query):
-    from kitty.web_server import APIError
-    if path != "/api/reports/export":
-        return None
-    _keys(query, {"format", "dataset"})
-    fmt, dataset = query.get("format", "json"), query.get("dataset", "all")
-    if fmt not in {"json", "csv"} or dataset not in {"all", *export.QUERIES}:
-        raise APIError(400, "Unknown export format or dataset")
-    tables = list(export.QUERIES) if dataset == "all" else [dataset]
-    if fmt == "json":
-        document = {"exported_at": now_iso()}
-        for table in tables:
-            columns, rows = export.table_rows(conn, table)
-            document[table] = [dict(zip(columns, row)) for row in rows]
-        return json.dumps(document, ensure_ascii=False, indent=2).encode(), "application/json", f"kitty-{dataset}.json"
-    def csv_bytes(table):
-        columns, rows = export.table_rows(conn, table)
-        stream = io.StringIO(newline="")
-        writer = csv.writer(stream)
-        writer.writerow(columns)
-        writer.writerows([export.escape_cell(value) for value in row] for row in rows)
-        return stream.getvalue().encode("utf-8")
-    if dataset != "all":
-        return csv_bytes(dataset), "text/csv; charset=utf-8", f"{dataset}.csv"
-    stream = io.BytesIO()
-    with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as archive:
-        for table in tables:
-            archive.writestr(f"{table}.csv", csv_bytes(table))
-    return stream.getvalue(), "application/zip", "kitty-all-csv.zip"

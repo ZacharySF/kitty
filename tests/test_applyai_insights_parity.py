@@ -18,8 +18,6 @@ import shutil
 import zipfile
 from contextlib import closing
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal
-from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import quote, urlencode
 
@@ -27,7 +25,15 @@ import pytest
 from terminal_support import RIKA_SERVER, front_site
 
 from kitty import web_ai, web_auth
-from kitty.core import applications, export, jobs, questions, record_events, sources, stats
+from kitty.core import (
+    applications,
+    export,
+    jobs,
+    questions,
+    record_events,
+    sources,
+    stats,
+)
 from kitty.core import keys as keystore
 from kitty.core.apply import health
 from kitty.core.builds import project
@@ -427,7 +433,7 @@ def scenario(call, seeded, base, modules):
     do("/api/mail", expect=400, x="1")
     (call.root / "data" / "gmail_token.json").write_text("synthetic-token-secret")
     do("/api/mail")
-    first, second, third, fourth = seeded["proposals"]
+    first, second, third, _fourth = seeded["proposals"]
     for bad in ({}, {"confirm": 1}, {"confirm": "true"}, {"confirm": True, "x": 1}, {"x": 1}):
         do(f"/api/mail/proposals/{first}/confirm", bad, 400)
     do(f"/api/mail/proposals/{first}/confirm", {"confirm": True}, 400, x="1")
@@ -447,7 +453,7 @@ def scenario(call, seeded, base, modules):
     do("/api/mail")
 
     # Finder rejections (approval writes the watchlist and stays on the worker).
-    pending, other, decided = seeded["candidates"]
+    pending, _other, decided = seeded["candidates"]
     for bad in ({}, {"confirm": False}, {"confirm": True, "x": 1}):
         do(f"/api/finder/{pending}/reject", bad, 400)
     do(f"/api/finder/{decided}/reject", {"confirm": True}, 409)

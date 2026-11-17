@@ -151,6 +151,11 @@ impl Decimal {
         let text = format!("{}{}.{:08}", if self.coefficient < 0 { "-" } else { "" }, scaled / 100_000_000, scaled % 100_000_000);
         text.parse().ok()
     }
+
+    /// `float(self)`: the value correctly rounded (Settings → AI's spend today).
+    pub fn to_f64(self) -> Option<f64> {
+        format!("{}e{}", self.coefficient, self.exponent).parse().ok()
+    }
 }
 
 #[cfg(test)]

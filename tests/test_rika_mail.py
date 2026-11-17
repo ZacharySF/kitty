@@ -19,7 +19,9 @@ import httpx
 import pytest
 
 from kitty import web_ai
-from kitty.core.gmail import auth, check as gmail_check
+from kitty.core import keys
+from kitty.core.gmail import auth
+from kitty.core.gmail import check as gmail_check
 from kitty.core.rika import llm, mail, store, tools
 from kitty.core.rika.loop import Hub
 from kitty.core.rika.tools import Context, validate
@@ -233,7 +235,7 @@ def _sse(*parts: str) -> bytes:
 
 @pytest.fixture
 def openrouter(workspace, monkeypatch):
-    web_ai._write_key(SimpleNamespace(settings=workspace.settings), "synthetic-openrouter-test-key")
+    keys.for_settings(workspace.settings).set("OPENROUTER", "synthetic-openrouter-test-key")
     for name in ("fast", "standard", "deep"):
         workspace.conn.execute("INSERT INTO ai_models VALUES(?,?,?,?,?,?)", (f"synthetic/{name}", name, "0.000001",
                                "0.000002", 200_000, web_ai._now().isoformat()))

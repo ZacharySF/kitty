@@ -10,7 +10,7 @@ import pytest
 from terminal_support import front_site
 
 from kitty import web_ai
-from kitty.core import effects
+from kitty.core import effects, keys
 from kitty.core.math import mastery, problems
 from kitty.core.math import topics as graph
 
@@ -175,7 +175,7 @@ def test_sprints_generate_zetamac_problems_and_record_results(website):
 
 @pytest.fixture
 def ai(website, workspace):
-    web_ai._write_key(website.app, "synthetic-openrouter-test-key")
+    keys.for_settings(website.app.settings).set("OPENROUTER", "synthetic-openrouter-test-key")
     workspace.conn.execute("INSERT INTO ai_models VALUES(?,?,?,?,?,?)",
                            ("synthetic/text", "Synthetic", "0.000001", "0.000002", 100000, web_ai._now().isoformat()))
     workspace.conn.execute("UPDATE ai_settings SET model='synthetic/text', daily_budget_usd='0.05' WHERE id=1")

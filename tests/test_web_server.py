@@ -10,6 +10,7 @@ from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
+from terminal_support import front_site
 
 from kitty import web_auth
 from kitty.core import applications, jobs, reminders, resumes
@@ -231,11 +232,21 @@ def test_non_pdf_registration_cannot_expose_other_files(website, workspace, post
     assert website.request("/api/resumes?path=/etc/passwd")[0] == 400
 
 
-def test_export_reuses_formula_escaping(website, workspace):
+def test_export_reuses_formula_escaping(workspace):
     jobs.upsert_job(workspace.conn, company="=Synthetic Formula", title="+Synthetic Title",
                     url="https://example.invalid/formula", source="manual", source_job_id="formula")
-    status, data, headers = website.request("/api/reports/export?format=csv&dataset=jobs")
-    assert status == 200 and "attachment" in headers["Content-Disposition"]
+    workspace.conn.commit()
+    # The export is rika-server's (server/src/insights).
+    with front_site(workspace.settings) as site:
+        client = http.client.HTTPConnection("127.0.0.1", site.port, timeout=10)
+        try:
+            client.request("GET", "/api/reports/export?format=csv&dataset=jobs",
+                           headers={"Origin": site.server.origin, web_auth.HEADER: site.secret})
+            response = client.getresponse()
+            status, disposition, data = response.status, response.getheader("Content-Disposition"), response.read()
+        finally:
+            client.close()
+    assert status == 200 and "attachment" in disposition
     row = next(csv.DictReader(io.StringIO(data.decode())))
     assert row["company"] == "'=Synthetic Formula"
     assert row["title"] == "'+Synthetic Title"
@@ -348,7 +359,7 @@ def test_learnharness_unavailable_is_not_a_kitty_failure(website, learnharness_p
     assert website.request("/api/extensions/learnharness")[:2] == (
         200, {"url": "http://127.0.0.1:3210", "available": False},
     )
-    assert website.request("/api/ai/status")[0] == 200
+    assert website.request("/api/usage")[0] == 200
 
 
 def test_study_start_reports_missing_packaged_runtime_not_unknown_route(website, learnharness_pack):
