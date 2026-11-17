@@ -2161,7 +2161,7 @@ and TypeScript. Backend verification uses isolated synthetic workspaces:
 ```bash
 uv run pytest -q tests/test_web_server.py tests/test_web_jobs.py tests/test_web_tasks.py \
   tests/test_web_automation.py tests/test_web_resumes.py tests/test_web_profile.py \
-  tests/test_web_insights.py
+  tests/test_web_insights.py tests/test_jobs_parity.py
 ```
 
 For browser smoke checks, use the disposable demo, not real application records.
