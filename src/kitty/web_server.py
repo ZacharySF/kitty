@@ -854,10 +854,12 @@ def readiness(server: LocalHTTPServer, settings: Settings, modules: tuple[str, .
     database, this process's frozen module snapshot, the version a new build file records,
     with ApplyAI the digest settings its config validated (server/src/bootstrap.rs), the
     packs it has and lacks (kitty.packs; server/src/packs.rs lists a built-in one as such),
-    and its framed external-module ports, which the front's Content-Security-Policy allows
-    (kitty.web_external_modules; fixed at start-up).
+    its framed external-module ports, which the front's Content-Security-Policy allows
+    (kitty.web_external_modules; fixed at start-up), and the folder of the math textbook's
+    exercises (GNU FDL data the front reads where this process would, server/src/math/).
     """
     from kitty import __version__
+    from kitty.core.math import textbook
 
     apply = server.app.config.apply if "applyai" in modules else None
     return json.dumps({"origin": server.origin, "secret": server.ui_auth.secret,
@@ -866,7 +868,8 @@ def readiness(server: LocalHTTPServer, settings: Settings, modules: tuple[str, .
                        "digest": {"deadline_window_days": apply.deadline_window_days,
                                   "archive_after_days": apply.archive_after_days} if apply else None,
                        "packs": {"built_in": packs.built_in(), "missing": packs.missing(modules)},
-                       "frame_ports": list(server.app.frame_ports())})
+                       "frame_ports": list(server.app.frame_ports()),
+                       "math_textbook": str(textbook.directory())})
 
 
 def _serve(settings: Settings, static_dir: Path, *, safe: bool, front: tuple[str, str, str]) -> None:

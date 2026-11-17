@@ -1103,7 +1103,7 @@ schedules.
   grades. It is offered for generated problems only, never for textbook exercises
   (the book's text is never sent to AI) or own-book problems. Demo mode has no AI.
 
-API (`workspace` module): `GET /api/math/topics`, `GET /api/math/next`,
+API (`math` module): `GET /api/math/topics`, `GET /api/math/next`,
 `GET /api/math/mixed`, `POST /api/math/problems {topic_id, seed?}`,
 `POST /api/math/answers {problem_id, answer, elapsed_ms}`,
 `GET /api/math/lessons/<topic_id>`, `POST /api/math/sprints {mode: zetamac|mc,
@@ -1116,8 +1116,11 @@ textbook: `GET /api/math/textbook?topic_id=`, `GET /api/math/textbook/<id>`,
 rating}`; own books: `GET /api/math/books`, `POST /api/math/books {book, problem,
 confidence, section?, answer?, topic_id?}`, `POST /api/math/books/<id>` (edit),
 `POST /api/math/books/<id>/ratings {rating, answer?}` and
-`POST /api/math/books/<id>/delete`. The graph is authored in
-`kitty.core.math.topics`, synced into `math_topics`/`math_prereqs` (a trigger
+`POST /api/math/books/<id>/delete`. rika-server answers all of them but explain, which
+the Python worker answers behind it, as it answers SymPy's checks of expression answers
+(docs/rust-core-design.md, *Built (math)*). The graph is authored in
+`src/kitty/core/math/topics.json` (read by `kitty.core.math.topics` and compiled into
+rika-server), synced into `math_topics`/`math_prereqs` (a trigger
 rejects any prerequisite cycle), and practice lives in `math_mastery`,
 `math_attempts` and `math_sprints` (migration 044) and in `math_textbook_cards`,
 `math_textbook_attempts` and `math_book_problems` (migration 050).

@@ -87,7 +87,7 @@ pub async fn serve<S: AsyncRead + AsyncWrite + Unpin>(hub: Arc<Hub>, mut window:
 }
 
 /// `web_live._handle`: one text message from the window.
-async fn handle<S: AsyncWrite + Unpin>(hub: &Hub, window: &Window, pages: &mut Option<HashSet<String>>, io: &mut S, payload: &[u8]) -> Result<(), End> {
+async fn handle<S: AsyncWrite + Unpin>(hub: &Arc<Hub>, window: &Window, pages: &mut Option<HashSet<String>>, io: &mut S, payload: &[u8]) -> Result<(), End> {
     let message: Value = serde_json::from_slice(payload).map_err(|_| End::Close(1007))?;
     match message.get("type").and_then(Value::as_str) {
         Some("txn") => send(io, &transact(hub, message).await.to_string()).await?,
@@ -109,15 +109,22 @@ async fn handle<S: AsyncWrite + Unpin>(hub: &Hub, window: &Window, pages: &mut O
 }
 
 /// `Live.transact`: the front's block engine applies the transaction on the workspace
-/// connection the ported routes share and answers the ack or reject; every window then gets
-/// the committed change.
-async fn transact(hub: &Hub, message: Value) -> Value {
-    let (db, modules) = (hub.db_path.clone(), hub.modules.clone());
+/// connection the ported routes share and answers the ack or reject. The committed change is
+/// fanned out before the ack (Python's worker answered over HTTP while the poller caught up),
+/// so a window opened after the ack starts from this transaction.
+async fn transact(hub: &Arc<Hub>, message: Value) -> Value {
+    let (db, modules, hub) = (hub.db_path.clone(), hub.modules.clone(), hub.clone());
     let applied = tokio::task::spawn_blocking(move || {
-        let answer = crate::ported::db::with(&db, |conn| Ok(crate::blocks::live::transact(conn, &modules, &message)));
+        let answer = crate::ported::db::with(&db, |conn| {
+            let answer = crate::blocks::live::transact(conn, &modules, &message);
+            if answer.get("type").and_then(Value::as_str) == Some("ack") {
+                // A failed read leaves the change to the poller.
+                let _ = hub.advance(conn);
+            }
+            Ok(answer)
+        });
         answer.unwrap_or_else(|_| crate::blocks::live::busy(&message))
     }).await;
-    hub.nudge();
     applied.unwrap_or_else(|_| json!({ "type": "reject", "txn_id": Value::Null, "status": 503, "error": crate::blocks::live::BUSY }))
 }
 

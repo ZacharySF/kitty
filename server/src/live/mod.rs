@@ -94,6 +94,8 @@ pub struct Hub {
     backend: Backend,
     /// The worker's active modules: block transactions need the workspace module.
     modules: Vec<String>,
+    /// One fan-out at a time (the poller's, or a window transaction's before its ack).
+    advancing: Mutex<()>,
     tokens: Mutex<HashMap<String, Instant>>,
     state: Mutex<State>,
     wake: (Mutex<bool>, Condvar),
@@ -112,6 +114,7 @@ pub fn start(front: &Front, db_path: PathBuf) {
         db_path,
         backend: front.backend.clone(),
         modules: front.workspace.active.clone(),
+        advancing: Mutex::new(()),
         tokens: Mutex::new(HashMap::new()),
         state: Mutex::new(State { seq: 0, device_id: String::new(), started: false, next: 0, windows: HashMap::new() }),
         wake: (Mutex::new(false), Condvar::new()),
@@ -213,28 +216,38 @@ impl Hub {
                 conn = open(&self.db_path).ok();
             }
             let Some(db) = conn.as_ref() else { continue };
-            let mut after = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).seq;
-            loop {
-                let batch = match changes::read(db, after, None, BATCH) {
-                    Ok(batch) => batch,
-                    // Busy or locked: the next poll retries (a broken connection is reopened).
-                    Err(_) => {
-                        conn = None;
-                        break;
-                    }
-                };
-                let Some(last) = batch.last().map(|change| change.seq) else { break };
-                let full = batch.len() == BATCH;
-                let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-                state.seq = last;
-                for change in batch.into_iter().map(Arc::new) {
-                    state.windows.retain(|_, window| window.send(Push::Change(change.clone())).is_ok());
-                }
-                drop(state);
-                after = last;
-                if !full {
-                    break;
-                }
+            // Busy or locked: the next poll retries (a broken connection is reopened).
+            if self.advance(db).is_err() {
+                conn = None;
+            }
+        }
+    }
+
+    /// Push every change committed after the last one pushed, and move the place a new
+    /// window's hello reports. The poller does this; a window's own transaction does it before
+    /// its ack, so a window that connects after the ack is never told an older sequence.
+    fn advance(&self, db: &Connection) -> rusqlite::Result<()> {
+        let _one = self.advancing.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut after = {
+            let state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            if !state.started {
+                return Ok(());
+            }
+            state.seq
+        };
+        loop {
+            let batch = changes::read(db, after, None, BATCH)?;
+            let Some(last) = batch.last().map(|change| change.seq) else { return Ok(()) };
+            let full = batch.len() == BATCH;
+            let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            state.seq = last;
+            for change in batch.into_iter().map(Arc::new) {
+                state.windows.retain(|_, window| window.send(Push::Change(change.clone())).is_ok());
+            }
+            drop(state);
+            after = last;
+            if !full {
+                return Ok(());
             }
         }
     }

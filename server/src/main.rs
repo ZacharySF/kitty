@@ -27,6 +27,7 @@ mod flashcards;
 mod front;
 mod keys;
 mod live;
+mod math;
 mod migrations;
 mod modules;
 mod packs;
@@ -169,6 +170,7 @@ async fn run(options: Options) -> Result<(), String> {
     });
     keys::start(database.paths.root.clone(), database.demo.is_some());
     effects::start(database.paths.db_path.clone(), worker.ui_session.clone());
+    math::start(worker.math_textbook.take());
 
     live::start(&front, database.paths.db_path.clone());
     builds::service::start(front.clone(), database.paths.db_path.clone(), database.paths.root.clone(), options.safe || options.launch.args.iter().any(|arg| arg == "--safe"));
@@ -245,6 +247,10 @@ async fn main() {
     // Hidden and test-only: the block engine's text rules on stdin, for tests/test_blocks_text.py.
     if std::env::args().nth(1).as_deref() == Some("blocks-text") {
         std::process::exit(blocks::text::text_command());
+    }
+    // Hidden and test-only: math generation and checks on stdin, for tests/test_math_parity.py.
+    if std::env::args().nth(1).as_deref() == Some("math") {
+        std::process::exit(math::test_command());
     }
     let options = match options() {
         Ok(options) => options,

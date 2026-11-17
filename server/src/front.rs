@@ -493,6 +493,7 @@ impl Front {
         if let Some(response) = crate::effects::route(self, &target, &forward_target, &mut request, mutation, upgrade).await { return Ok(response); }
         if let Some(response) = crate::live::route(self, &target, &forward_target, &mut request, mutation, upgrade).await { return Ok(response); }
         if let Some(response) = crate::builds::route(self, &target, &forward_target, &mut request, mutation, upgrade).await { return Ok(response); }
+        if let Some(answer) = crate::math::route(self, &target, &forward_target, &mut request, mutation, upgrade).await { return answer; }
         if !mutation && !upgrade && crate::search::owns(&target.path) {
             return Ok(send_json(StatusCode::OK, &crate::search::answer(self.bootstrap.db_path(), &self.workspace, &forward_target).await?, method == Method::HEAD));
         }
