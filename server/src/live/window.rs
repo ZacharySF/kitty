@@ -1,6 +1,6 @@
 //! One window's socket (`web_live._serve` and `_handle` in Python): its hello, every push
-//! while it is open, and what it sends: block transactions (applied by the worker), resume
-//! after a reconnect and its page subscription.
+//! while it is open, and what it sends: block transactions (applied by the front's block
+//! engine), resume after a reconnect and its page subscription.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -13,8 +13,6 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use super::changes::{self, BATCH};
 use super::socket::{self, Closed, Reader};
 use super::{Hub, Push};
-
-pub const TXN_PATH: &str = "/api/internal/live/txn";
 
 /// What ends a window's stream: a close frame to answer with, or a connection already gone.
 enum End {
@@ -89,7 +87,7 @@ pub async fn serve<S: AsyncRead + AsyncWrite + Unpin>(hub: Arc<Hub>, mut window:
 }
 
 /// `web_live._handle`: one text message from the window.
-async fn handle<S: AsyncWrite + Unpin>(hub: &Hub, window: &Window, pages: &mut Option<HashSet<String>>, io: &mut S, payload: &[u8]) -> Result<(), End> {
+async fn handle<S: AsyncWrite + Unpin>(hub: &Arc<Hub>, window: &Window, pages: &mut Option<HashSet<String>>, io: &mut S, payload: &[u8]) -> Result<(), End> {
     let message: Value = serde_json::from_slice(payload).map_err(|_| End::Close(1007))?;
     match message.get("type").and_then(Value::as_str) {
         Some("txn") => send(io, &transact(hub, message).await.to_string()).await?,
@@ -110,18 +108,24 @@ async fn handle<S: AsyncWrite + Unpin>(hub: &Hub, window: &Window, pages: &mut O
     Ok(())
 }
 
-/// `Live.transact`, which needs Python's block store: the worker applies the transaction
-/// and answers the ack or reject; the front pushes the committed change to every window.
-async fn transact(hub: &Hub, message: Value) -> Value {
-    let answer = match super::worker::post(&hub.backend, TXN_PATH, &message).await {
-        Ok((200, answer)) if answer.is_object() => answer,
-        _ => {
-            let txn_id = message.get("txn_id").filter(|id| id.is_string()).cloned().unwrap_or(Value::Null);
-            json!({ "type": "reject", "txn_id": txn_id, "status": 503, "error": "Local workspace is busy; send the transaction again" })
-        }
-    };
-    hub.nudge();
-    answer
+/// `Live.transact`: the front's block engine applies the transaction on the workspace
+/// connection the ported routes share and answers the ack or reject. The committed change is
+/// fanned out before the ack (Python's worker answered over HTTP while the poller caught up),
+/// so a window opened after the ack starts from this transaction.
+async fn transact(hub: &Arc<Hub>, message: Value) -> Value {
+    let (db, modules, hub) = (hub.db_path.clone(), hub.modules.clone(), hub.clone());
+    let applied = tokio::task::spawn_blocking(move || {
+        let answer = crate::ported::db::with(&db, |conn| {
+            let answer = crate::blocks::live::transact(conn, &modules, &message);
+            if answer.get("type").and_then(Value::as_str) == Some("ack") {
+                // A failed read leaves the change to the poller.
+                let _ = hub.advance(conn);
+            }
+            Ok(answer)
+        });
+        answer.unwrap_or_else(|_| crate::blocks::live::busy(&message))
+    }).await;
+    applied.unwrap_or_else(|_| json!({ "type": "reject", "txn_id": Value::Null, "status": 503, "error": crate::blocks::live::BUSY }))
 }
 
 /// `Live.resume`: the changes a reconnecting window missed, up to its hello, or a reset when

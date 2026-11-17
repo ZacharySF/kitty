@@ -13,6 +13,7 @@
 
 mod auth;
 mod backlinks;
+mod blocks;
 mod bootstrap;
 mod builds;
 mod calendar;
@@ -242,6 +243,10 @@ async fn main() {
     // Hidden and test-only: the backlinks' text rules on stdin, for tests/test_backlinks_parity.py.
     if std::env::args().nth(1).as_deref() == Some("backlinks-text") {
         std::process::exit(backlinks::text_command());
+    }
+    // Hidden and test-only: the block engine's text rules on stdin, for tests/test_blocks_text.py.
+    if std::env::args().nth(1).as_deref() == Some("blocks-text") {
+        std::process::exit(blocks::text::text_command());
     }
     // Hidden and test-only: math generation and checks on stdin, for tests/test_math_parity.py.
     if std::env::args().nth(1).as_deref() == Some("math") {

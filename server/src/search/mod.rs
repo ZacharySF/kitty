@@ -12,7 +12,7 @@
 
 pub mod docs;
 pub mod query;
-mod tables;
+pub(crate) mod tables;
 pub mod text;
 pub mod web;
 

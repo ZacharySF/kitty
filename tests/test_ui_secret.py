@@ -84,7 +84,7 @@ def test_a_wrong_repeated_or_reshaped_secret_is_refused_alike(running):
 
 def test_the_right_secret_works_and_the_page_itself_needs_none(running):
     assert running.request("/api/ai/status")[0] == 200
-    assert running.request("/api/quick-notes/create", {"body": "with the secret"})[0] == 200
+    assert running.request("/api/notes/notebooks", {"title": "with the secret"})[0] == 200
     assert running.request("/", headers={web_auth.HEADER: None})[0] == 200
     # The browser-mode link's code is the page's to read; the server does not check it there.
     assert running.request("/?code=abc", headers={web_auth.HEADER: None})[0] == 200
