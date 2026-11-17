@@ -48,6 +48,22 @@ def page(workspace):
     return notes.create_page(workspace.conn, notebook["id"], "Cell energy")
 
 
+@pytest.fixture
+def front(workspace):
+    """rika-server, which answers the Notes routes (tests/test_notes_parity.py compares it with this
+    core): a call returns the answer and raises APIError for any other status."""
+    from terminal_support import front_site
+
+    workspace.conn.commit()
+    with front_site(workspace.settings) as site:
+        def call(path, body=None):
+            status, answer = site.request(path, body)
+            if status != 200:
+                raise APIError(status, answer["error"] if isinstance(answer, dict) else "")
+            return answer
+        yield call
+
+
 def test_reload_preserves_pressure_layers_groups_text_and_geometry(workspace, page):
     conn = workspace.conn
     doc = document(element(group="group1"), element("sticky", "sticky", group="group1"), element("arrow", "arrow"), element("rect", "rect"), element("ellipse", "ellipse"), element("connector", "connection", **{"from": "sticky", "to": "rect"}))
@@ -123,7 +139,7 @@ def test_plain_text_search_and_literal_wildcards(workspace, page):
     assert notes.listing(workspace.conn)["preferences"]["allow_ai"] is False
 
 
-def test_registered_rasters_strip_metadata_and_never_expose_paths(workspace):
+def test_registered_rasters_strip_metadata_and_never_expose_paths(workspace, front):
     registered = notes.register(workspace.conn, workspace.settings.data_dir, image_data(), "Reference.png")
     assert len(registered) == 1
     assert "filepath" not in registered[0]
@@ -131,10 +147,10 @@ def test_registered_rasters_strip_metadata_and_never_expose_paths(workspace):
     with Image.open(io.BytesIO(data)) as image:
         assert image.size == (40, 20)
         assert "private" not in image.info
-    app = SimpleNamespace(settings=workspace.settings)
-    result = web_notes.download(app, workspace.conn, registered[0]["url"], {})
-    assert result == (data, "image/png", None)
-    assert web_notes.download(app, workspace.conn, "/api/notes/attachments/../../secret", {}) is None
+    assert front(registered[0]["url"]) == data
+    with pytest.raises(APIError) as outside:
+        front("/api/notes/attachments/../../secret")
+    assert outside.value.status in {400, 404}
 
 
 def test_pdf_is_rasterized_without_serving_scripts_or_original_bytes(workspace):
@@ -228,8 +244,8 @@ def test_api_errors_and_background_import_are_real(workspace, page):
     try:
         assert web_notes.get(app, workspace.conn, "/api/other", {}) is None
         assert web_notes.post(app, workspace.conn, "/api/other", {}) is None
-        with pytest.raises(APIError) as invalid:
-            web_notes.post(app, workspace.conn, f"/api/notes/pages/{page['id']}", {"revision": 1, "title": "Bad", "document": document(element(x=float("nan")))})
+        with pytest.raises(notes.NotesError) as invalid:
+            notes.save_page(workspace.conn, page["id"], 1, document(element(x=float("nan"))), "Bad")
         assert invalid.value.status == 400
         started = web_notes.post(app, workspace.conn, "/api/notes/attachments", {"name": "Safe local reference", "data": image_data()})
         assert "task" in started
@@ -242,13 +258,12 @@ def test_api_errors_and_background_import_are_real(workspace, page):
         runner.close()
 
 
-def test_folder_api_hierarchy_moves_survive_reload_without_changing_pages(workspace, page):
+def test_folder_api_hierarchy_moves_survive_reload_without_changing_pages(workspace, page, front):
     from kitty.db import connect
     from contextlib import closing
 
     conn = workspace.conn
-    app = SimpleNamespace(settings=workspace.settings)
-    post = lambda path, body: web_notes.post(app, conn, path, body)
+    post = front
     root = post("/api/notes/folders", {"title": "Studies"})
     child = post("/api/notes/folders", {"title": "Biology", "parent_id": root["id"]})
     notebook = notes.listing(conn)["notebooks"][0]
@@ -263,7 +278,7 @@ def test_folder_api_hierarchy_moves_survive_reload_without_changing_pages(worksp
     renamed = post(f"/api/notes/folders/{child['id']}", {"revision": child["revision"], "title": "Life sciences", "parent_id": None})
     assert renamed["revision"] == child["revision"] + 1
     with closing(connect(workspace.settings.db_path)) as reloaded:
-        listing = web_notes.get(app, reloaded, "/api/notes", {})
+        listing = front("/api/notes")
         folders = {folder["id"]: folder for folder in listing["folders"]}
         assert folders[child["id"]]["parent_id"] is None
         assert folders[child["id"]]["title"] == "Life sciences"
@@ -275,10 +290,9 @@ def test_folder_api_hierarchy_moves_survive_reload_without_changing_pages(worksp
     assert post(f"/api/notes/folders/{child['id']}/delete", {"revision": renamed["revision"], "confirm": True}) == {"ok": True}
 
 
-def test_folder_api_rejects_cycles_missing_parents_nonempty_and_stale_edits(workspace):
-    app = SimpleNamespace(settings=workspace.settings)
+def test_folder_api_rejects_cycles_missing_parents_nonempty_and_stale_edits(workspace, front):
     conn = workspace.conn
-    post = lambda path, body: web_notes.post(app, conn, path, body)
+    post = front
     root = post("/api/notes/folders", {"title": "Root"})
     child = post("/api/notes/folders", {"title": "Child", "parent_id": root["id"]})
     for parent in (root["id"], child["id"]):
