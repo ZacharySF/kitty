@@ -1,9 +1,9 @@
 """record_events: the append-only history of browser mutations through WebApplication.mutate.
 
-The calendar's, study's, the opportunities' and the mind maps' mutations (linking backlinks
-included) are answered and recorded by rika-server (tests/test_calendar.py,
+The calendar's, study's, the opportunities', the mind maps' (linking backlinks included) and
+the Notes' mutations are answered and recorded by rika-server (tests/test_calendar.py,
 tests/test_study_parity.py, tests/test_opportunities_parity.py, tests/test_schema_parity.py,
-tests/test_backlinks_parity.py)."""
+tests/test_backlinks_parity.py, tests/test_notes_parity.py)."""
 from __future__ import annotations
 
 import logging
@@ -11,7 +11,7 @@ import sqlite3
 
 import pytest
 
-from kitty.core import quick_notes, record_events
+from kitty.core import notes, quick_notes, record_events
 from kitty.web_server import ROUTE_MODULES, APIError, WebApplication
 
 
@@ -43,11 +43,6 @@ def test_migration_creates_an_append_only_table(workspace):
     assert events(conn) == [("notes", "page", "1", "save", "/api/notes/pages/1")]
 
 
-def _notes(app, conn):
-    notebook = app.mutate(conn, "/api/notes/notebooks", {"title": "Physics"})
-    return ("notes", "notebook", str(notebook["id"]), "create", "/api/notes/notebooks")
-
-
 def _jobs(app, conn):
     job = app.mutate(conn, "/api/jobs/add", {"company": "Acme", "title": "Intern",
                                              "url": "https://example.invalid/acme"})
@@ -61,7 +56,7 @@ def _reminders(app, conn):
     return ("reminders", "reminder", str(reminder["id"]), "create", "/api/reminders")
 
 
-@pytest.mark.parametrize("case", [_notes, _jobs, _reminders], ids=lambda case: case.__name__[1:])
+@pytest.mark.parametrize("case", [_jobs, _reminders], ids=lambda case: case.__name__[1:])
 def test_one_real_route_per_section_is_captured(app, workspace, case):
     conn = workspace.conn
     expected = case(app, conn)
@@ -71,28 +66,24 @@ def test_one_real_route_per_section_is_captured(app, workspace, case):
 
 
 def test_block_backed_writes_are_left_to_op_log(app, workspace):
-    """Notes pages, documents and quick notes are block transactions: op_log is their history,
-    so the Brain counts each of them once; the notebook (a plain table) is still captured.
-    (Quick-note writes are answered by rika-server, which leaves them to op_log as well:
-    tests/test_blocks_parity.py; here the core writes the note.)"""
+    """Documents and quick notes are block transactions: op_log is their history, so the Brain
+    counts each of them once. (Notes and quick-note writes are answered by rika-server, which
+    leaves them to op_log as well and still captures a notebook, a plain table:
+    tests/test_notes_parity.py, tests/test_blocks_parity.py; here the core writes them.)"""
     conn = workspace.conn
     before = conn.execute("SELECT COUNT(*) FROM op_log").fetchone()[0]
-    notebook = app.mutate(conn, "/api/notes/notebooks", {"title": "Physics"})
-    page = app.mutate(conn, "/api/notes/pages", {"notebook_id": notebook["id"], "title": "Waves"})
-    app.mutate(conn, f"/api/notes/pages/{page['id']}", {"revision": page["revision"], "title": "Standing waves",
-                                                        "document": page["document"]})
+    notebook = notes.create_notebook(conn, "Physics")
     app.mutate(conn, "/api/documents", {"title": "Paper", "content": "Body", "format": "text", "notebook_id": notebook["id"]})
     note = quick_notes.create(conn, "Buy milk")
     quick_notes.delete(conn, note["id"], note["revision"])
-    assert events(conn) == [("notes", "notebook", str(notebook["id"]), "create", "/api/notes/notebooks")]
-    assert conn.execute("SELECT COUNT(*) FROM op_log").fetchone()[0] - before >= 5
+    assert events(conn) == []
+    assert conn.execute("SELECT COUNT(*) FROM op_log").fetchone()[0] - before >= 3
 
 
 def test_edits_and_deletes_resolve_the_entity_from_path_result_or_body(app, workspace):
-    conn = workspace.conn
-    note = app.mutate(conn, "/api/notes/notebooks", {"title": "Words"})
-    assert events(conn) == [("notes", "notebook", str(note["id"]), "create", "/api/notes/notebooks")]
     # Routes rika-server answers and records (the parity tests): their rules are still the reference.
+    assert record_events.classify("/api/notes/notebooks", {"title": "Words"}, {"id": 3, "title": "Words"}) == ("notes", "notebook", "3", "create")
+    assert record_events.classify("/api/notes/reorder", {"kind": "folders", "ids": [2]}, {"ok": True}) == ("notes", "folder", None, "reorder")
     assert record_events.classify("/api/study/subjects", {"id": 4, "revision": 1, "action": "delete"}, {"deleted": 4}) == ("study", "subject", "4", "delete")
     assert record_events.classify("/api/opportunities", {"title": "Hackathon"}, {"id": 7, "title": "Hackathon"}) == ("opportunities", "opportunity", "7", "create")
     assert record_events.classify("/api/opportunities/7/items", {"revision": 1, "title": "Task"}, {"id": 7}) == ("opportunities", "opportunity", "7", "items")
@@ -106,7 +97,7 @@ def test_non_content_and_failed_mutations_are_not_captured(app, workspace):
     with pytest.raises(APIError):
         app.mutate(conn, "/api/quick-notes/save", {"id": 999, "revision": 1, "body": "missing"})
     with pytest.raises(APIError):
-        app.mutate(conn, "/api/notes/pages", {"notebook_id": 999})
+        app.mutate(conn, "/api/notes/attachments", {"name": "missing data"})
     assert events(conn) == []
 
 

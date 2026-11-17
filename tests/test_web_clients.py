@@ -169,8 +169,8 @@ def test_revoking_a_client_ends_its_token(running):
 
 def test_the_browser_origin_guard_is_unchanged_for_normal_routes(running):
     assert running.request("/api/clients")[0] == 200
-    assert running.request("/api/notes/notebooks", {"title": "page"})[0] == 200
-    assert running.request("/api/notes/notebooks", {"title": "x"}, headers={"X-Kitty-Request": None})[0] == 403
+    assert running.request("/api/notes/attachments", {"data": "", "name": "page"})[0] == 200
+    assert running.request("/api/notes/attachments", {"data": "", "name": "x"}, headers={"X-Kitty-Request": None})[0] == 403
     assert running.request("/api/clients", headers={"Origin": "https://attacker.example"})[0] == 403
     assert running.request("/api/clients", headers={"Origin": EXTENSION})[0] == 403
     assert call(running, "OPTIONS", "/api/clients", origin=EXTENSION,

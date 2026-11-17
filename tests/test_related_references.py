@@ -7,7 +7,6 @@ import sqlite3
 import pytest
 from terminal_support import front_site
 
-from kitty import web_notes
 from kitty.core import backlinks, notes, search
 
 
@@ -88,7 +87,7 @@ def test_daily_resolve_templates_tags_favorites_and_order(workspace):
     assert organized['favorite'] and organized['last_opened']
     notes.reorder(conn, 'pages', [other['id'], daily['id']])
     assert notes.listing(conn)['pages'][0]['id'] == other['id']
-    assert web_notes.post(None, conn, '/api/notes/daily', {'date': '2026-01-02'})['id'] == daily['id']
+    assert notes.daily_page(conn, '2026-01-02')['id'] == daily['id']
     with pytest.raises(notes.NotesError):
         notes.daily_page(conn, '2026-02-30')
     with pytest.raises(notes.NotesError):

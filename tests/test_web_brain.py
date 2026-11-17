@@ -52,6 +52,22 @@ def study_mutation(conn, path, body):
     return result
 
 
+def notes_mutation(conn, path, body):
+    """A Notes write as rika-server makes it (server/src/notes/, tests/test_notes_parity.py): the
+    same core function, and the `record_events` row the front appends (none when op_log has it)."""
+    from kitty.core import notes
+
+    before = record_events.op_log_mark(conn)
+    if path == "/api/notes/notebooks":
+        result = notes.create_notebook(conn, body["title"])
+    elif path == "/api/notes/pages":
+        result = notes.create_page(conn, body["notebook_id"], body["title"])
+    else:
+        result = notes.save_page(conn, int(path.rsplit("/", 1)[1]), body["revision"], body["document"], body["title"])
+    record_events.capture(conn, path, body, result, op_log_before=before)
+    return result
+
+
 def assert_contract(result):
     assert set(result) == {"generated_at", "sections", "nodes", "total", "truncated"}
     assert result["generated_at"].endswith(("Z", "+00:00"))
@@ -73,9 +89,9 @@ def assert_contract(result):
 
 
 def seed(app, conn):
-    notebook = app.mutate(conn, "/api/notes/notebooks", {"title": "Physics"})
-    page = app.mutate(conn, "/api/notes/pages", {"notebook_id": notebook["id"], "title": "Waves"})
-    app.mutate(conn, f"/api/notes/pages/{page['id']}", {
+    notebook = notes_mutation(conn, "/api/notes/notebooks", {"title": "Physics"})
+    page = notes_mutation(conn, "/api/notes/pages", {"notebook_id": notebook["id"], "title": "Waves"})
+    notes_mutation(conn, f"/api/notes/pages/{page['id']}", {
         "revision": page["revision"], "title": "Standing waves", "document": page["document"]})
     note = quick_notes.create(conn, "Private scratch body")
     event = calendar_event(conn, "Lab session")
@@ -225,8 +241,8 @@ def test_rejects_invalid_queries(app, workspace, query):
 
 def test_block_backend_pages_blocks_op_log_and_compacted_days(app, workspace):
     conn = workspace.conn
-    notebook = app.mutate(conn, "/api/notes/notebooks", {"title": "Physics"})
-    page = app.mutate(conn, "/api/notes/pages", {"notebook_id": notebook["id"], "title": "Optics"})
+    notebook = notes_mutation(conn, "/api/notes/notebooks", {"title": "Physics"})
+    page = notes_mutation(conn, "/api/notes/pages", {"notebook_id": notebook["id"], "title": "Optics"})
     root = conn.execute("SELECT block_id FROM note_page_index WHERE id=?", (page["id"],)).fetchone()[0]
     child, nested, gone = (str(uuid.uuid4()) for _ in range(3))
     # The editor's live transactions never pass through WebApplication.mutate: op_log has them.
@@ -311,8 +327,8 @@ def test_records_created_after_the_block_migration_come_from_blocks(app, workspa
     conn = workspace.conn
     legacy = {table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
               for table in ("note_pages", "note_blocks", "quick_notes", "documents")}
-    notebook = app.mutate(conn, "/api/notes/notebooks", {"title": "Chemistry"})
-    page = app.mutate(conn, "/api/notes/pages", {"notebook_id": notebook["id"], "title": "Acids"})
+    notebook = notes_mutation(conn, "/api/notes/notebooks", {"title": "Chemistry"})
+    page = notes_mutation(conn, "/api/notes/pages", {"notebook_id": notebook["id"], "title": "Acids"})
     root = conn.execute("SELECT block_id FROM note_page_index WHERE id=?", (page["id"],)).fetchone()[0]
     item = str(uuid.uuid4())
     blocks.transact(conn, [{"op": "insert", "id": item, "type": "text", "parent": root, "text": "pH"}])
