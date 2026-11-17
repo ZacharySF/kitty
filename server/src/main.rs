@@ -45,6 +45,7 @@ mod agents;
 mod worker;
 mod account;
 mod rika;
+mod jobs;
 
 use std::path::PathBuf;
 use std::sync::Arc;

@@ -1,4 +1,9 @@
-"""Local resume registration and immutable, explicitly reviewed candidate workflow."""
+"""Local resume registration and immutable, explicitly reviewed candidate workflow.
+
+rika-server answers the library's reads itself (``GET /api/resumes``, ``/api/resumes/workflow``
+and ``/api/resumes/versions/<id>``, server/src/jobs/resumes.rs). The coach (pypdf),
+registration, generation, decisions and the downloads stay here.
+"""
 from __future__ import annotations
 
 import base64
@@ -59,29 +64,11 @@ def _version(conn, settings, version_id):
 
 
 def get(app, conn, path, query):
-    from kitty.web_server import _pdf_available
-    if path == "/api/resumes/workflow":
-        _keys(query, ())
-        defaults = {name: resume_versions.default_resume(conn, app.config, name)
-                    for name in app.config.track_names}
-        return {"tracks": app.config.track_names,
-                "defaults": {name: item.label if item else None for name, item in defaults.items()},
-                "resumes": [{"id": item.id, "label": item.label, "description": item.description,
-                             "available": _pdf_available(app.settings, item),
-                             "default_tracks": [name for name, selected in defaults.items()
-                                                if selected and selected.id == item.id]}
-                            for item in resumes.list_resumes(conn)],
-                "versions": [dict(row) for row in conn.execute(
-                    "SELECT id,track,status,created_at FROM resume_versions ORDER BY created_at DESC,rowid DESC")]}
     if path == "/api/resumes/coach":
         _keys(query, ("track",))
         track = _track(app, query) if query.get("track") else None
         return {"reports": [asdict(report) for report in resume_coach.coach(
             conn, app.config, app.settings, track=track)]}
-    match = re.fullmatch(r"/api/resumes/versions/" + _VERSION, path)
-    if match:
-        _keys(query, ())
-        return {"version": _version(conn, app.settings, match[1])}
     return None
 
 

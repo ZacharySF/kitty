@@ -18,7 +18,6 @@ rika-server adds their state to ``/api/modules`` from ``GET /api/external-module
 from __future__ import annotations
 
 import argparse
-import dataclasses
 import hashlib
 import hmac
 import importlib
@@ -43,7 +42,6 @@ from kitty.core.builds.project import startup_modules
 from kitty.core.builds.store import BuildStoreError
 from kitty.core.workspace import open_workspace
 from kitty.db import connect, migrate
-from kitty.db.connection import transaction
 from kitty.models import Job, Resume
 from kitty.modules import BUILD_FILE, MODULE_IDS, MODULE_PACKS, ModuleDisabledError, modules_state
 from kitty.settings import Settings, find_project_root
@@ -51,7 +49,6 @@ from kitty.web_tasks import TaskRunner
 
 MAX_BODY = 20 * 1024 * 1024  # Bounded canvas JSON + base64 raster import.
 MAX_FILE = 32 * 1024 * 1024
-LATER_STATUSES = frozenset({"oa", "interview", "offer", "rejected", "ghosted", "withdrawn"})
 # Deliberately an allowlist: adding a future paid adapter cannot enable it here.
 FREE_SOURCES = frozenset({
     "simplify2027", "nuft2027", "vansh2027", "speedyapply2027", "derec4", "greenhouse",
@@ -319,54 +316,7 @@ class WebApplication:
             result = extension.get(self, conn, path, query)
             if result is not None:
                 return result
-        if "applyai" in self.modules:
-            result = self._applyai_get(conn, path, query)
-            if result is not None:
-                return result
         raise APIError(404, "API route not found")
-
-    def _applyai_get(self, conn: sqlite3.Connection, path: str, query: dict[str, str]) -> dict | None:
-        from kitty.core import applications, resume_versions, resumes
-        from kitty.core.apply.filler import choose_resume
-
-        match = re.fullmatch(r"/api/jobs/([1-9][0-9]{0,17})", path)
-        if match:
-            self._no_query(query)
-            job = self._job(conn, int(match[1]))
-            application = applications.get_application_for_job(conn, job.id)
-            chosen = (resumes.get_resume(conn, application.resume_id)
-                      if application and application.resume_id is not None
-                      else choose_resume(conn, self.config, job) if not application else None)
-            result = _job_json(job)
-            result.update({
-                "description": job.jd_text, "my_notes": job.my_notes,
-                "tier_reason": job.tier_reason, "fill_blocker": job.fill_blocker,
-                "resume": {"id": chosen.id, "label": chosen.label} if chosen else None,
-                "application": {
-                    **dataclasses.asdict(application),
-                    "history": [dataclasses.asdict(event)
-                                for event in applications.history(conn, application.id)],
-                } if application else None,
-            })
-            return result
-        if path == "/api/resumes":
-            self._no_query(query)
-            defaults: dict[int, list[str]] = {}
-            for track in self.config.tracks.tracks:
-                selected = resume_versions.default_resume(conn, self.config, track.name)
-                if selected:
-                    defaults.setdefault(selected.id, []).append(track.name)
-            return {
-                "resumes": [{"id": resume.id, "label": resume.label,
-                             "track": next(iter(defaults.get(resume.id, resume.default_tracks)), None),
-                             "available": _pdf_available(self.settings, resume),
-                             "is_default": resume.id in defaults}
-                            for resume in resumes.list_resumes(conn)],
-                "versions": [{key: version[key] for key in
-                              ("id", "track", "status", "is_default", "created_at")}
-                             for version in resume_versions.list_versions(conn, self.settings)],
-            }
-        return None
 
     @staticmethod
     def _no_query(query: dict) -> None:
@@ -399,94 +349,7 @@ class WebApplication:
             result = extension.post(self, conn, path, body)
             if result is not None:
                 return result
-        return self._mutate_job(conn, path, body)
-
-    def _mutate_job(self, conn: sqlite3.Connection, path: str, body: dict) -> dict:
-        match = re.fullmatch(r"/api/jobs/([1-9][0-9]{0,17})", path)
-        if match is None:
-            raise APIError(404, "API route not found")
-        from kitty.core import applications, favorites, followups, jobs, resumes
-        from kitty.core.apply.filler import choose_resume
-        from kitty.dates import parse_user_date
-
-        if set(body) - {"action", "value", "when", "note"} or not isinstance(body.get("action"), str):
-            raise APIError(400, "Expected an action and optional value")
-        action, value = body["action"], body.get("value")
-        occurred_at = None
-        note = None
-        if {"when", "note"} & body.keys():
-            if action not in {"status", "applied"}:
-                raise APIError(400, "Date and evidence are only valid for application records")
-            when = body.get("when", "")
-            note = body.get("note", "")
-            if not isinstance(when, str) or len(when) > 100 or not isinstance(note, str) or len(note) > 20000:
-                raise APIError(400, "Invalid application date or evidence")
-            occurred_at = parse_user_date(when) if when.strip() else None
-            if when.strip() and occurred_at is None:
-                raise APIError(400, "Use a valid application date")
-        if action in {"queue", "skip", "restore"}:
-            if "value" in body:
-                raise APIError(400, "Queue actions do not accept a value")
-        elif action == "favorite":
-            if type(value) is not bool:
-                raise APIError(400, "Favorite value must be a boolean")
-        elif action == "notes":
-            if not isinstance(value, str) or len(value) > 20000 or "\x00" in value:
-                raise APIError(400, "Notes must be text of at most 20000 characters without NUL")
-            try:
-                value.encode("utf-8")
-            except UnicodeError:
-                raise APIError(400, "Notes must contain valid Unicode text") from None
-        elif action == "applied":
-            if value is not True:
-                raise APIError(400, "Explicit confirmation that you submitted is required")
-        elif action == "status":
-            if not isinstance(value, str) or value not in LATER_STATUSES:
-                raise APIError(400, "Choose a later application status")
-        elif action == "track":
-            if value is not None and (not isinstance(value, str) or value not in self.config.track_names):
-                raise APIError(400, "Choose a configured track or null for none")
-        elif action == "resume":
-            if value is not None and (type(value) is not int or not 1 <= value <= 2**63 - 1):
-                raise APIError(400, "Resume value must be a registered resume ID or null for the track default")
-        else:
-            raise APIError(400, "Unknown action")
-        job = self._job(conn, int(match[1]))
-        if action == "favorite":
-            (favorites.favorite if value else favorites.unfavorite)(conn, [job.id])
-        elif action in {"queue", "skip", "restore"}:
-            if job.application_id is not None:
-                raise APIError(409, "An applied job cannot change queue state")
-            favorites.set_state(conn, [job.id], {"queue": "queued", "skip": "skipped", "restore": "new"}[action])
-        else:
-            with transaction(conn):
-                if action == "notes":
-                    jobs.set_notes(conn, job.id, value)
-                elif action in {"status", "track"} and job.application_id is None:
-                    raise APIError(409, "Record your submission before changing application status")
-                elif action == "status":
-                    applications.set_status(conn, job.application_id, value, source="manual",
-                                            occurred_at=occurred_at, evidence=note)
-                elif action == "track":
-                    applications.set_track(conn, job.application_id, value)
-                elif action == "resume":
-                    if job.application_id is not None:
-                        raise APIError(409, "Historical application resume is pinned")
-                    if value is not None:
-                        resume = resumes.get_resume(conn, value)
-                        if resume is None or not resume.active:
-                            raise APIError(400, "Choose an active registered resume")
-                        _pdf_bytes(self.settings, resume)
-                    jobs.set_resume(conn, job.id, value)
-                elif action == "applied":
-                    chosen = choose_resume(conn, self.config, job)
-                    followups.mark_applied(
-                        conn, self.config, job.id, resume_id=chosen.id if chosen else None,
-                        track=job.tracks[0] if job.tracks else None,
-                        applied_at=occurred_at, evidence=note,
-                    )
-        return {"ok": True}
-
+        raise APIError(404, "API route not found")
 
 
 class LocalHTTPServer(ThreadingHTTPServer):
