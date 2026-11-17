@@ -18,7 +18,7 @@ import pytest
 
 from kitty import web_socket
 from kitty.web_server import LocalHTTPServer
-from terminal_support import FakeHerdr, FrameReader, Site, make_root, send_frame, site
+from terminal_support import FakeHerdr, FrameReader, Site, front_site, make_root, send_frame, site
 
 SESSION = "kitty-test"
 STOP = ["--session", SESSION, "session", "stop", SESSION]
@@ -252,7 +252,7 @@ def test_unaddressable_socket_path_is_reported_before_launch(tmp_path, herdr, mo
 
 def test_handshake_must_be_a_websocket_upgrade(tmp_path, herdr):
     settings = make_root(tmp_path, ("terminal",))
-    with site(settings) as running:
+    with front_site(settings) as running:  # the 426 is the front's (server/src/terminal.rs)
         assert running.request("/api/terminal/socket")[0] == 426
         status, _headers, connection, _rest = running.connect(running.token(), headers={"Sec-WebSocket-Version": "8"})
         connection.close()
