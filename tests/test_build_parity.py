@@ -371,7 +371,11 @@ class Through:
         self.hello = window.hello["build"]
 
     def tick(self, now):
-        self.clock.write_text(now.isoformat(), encoding="utf-8")
+        # Renamed into place: a fetch task finishing while the clock moves must never read a
+        # truncated file (the front falls back to the real clock).
+        moving = self.clock.with_name(self.clock.name + ".next")
+        moving.write_text(now.isoformat(), encoding="utf-8")
+        os.replace(moving, self.clock)
 
     def __call__(self, path, body, now, query, download=False):
         self.tick(now)
