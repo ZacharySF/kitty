@@ -92,7 +92,8 @@ def test_a_demo_request_streams_tier_action_and_reply_and_undo_reverts_it(demo, 
     assert status == 200 and body["action"]["status"] == "undone"
     assert stream.until(lambda event: event["type"] == "action")[-1]["action"]["status"] == "undone"
     assert demo.request(f"/api/rika/actions/{action['action']['id']}/undo", {})[0] == 409
-    assert demo.request("/api/notes")[1]["pages"] == []
+    with closing(connect(demo.app.settings.db_path)) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM note_page_index").fetchone()[0] == 0
 
 
 def test_open_view_is_a_navigate_event(demo, stream):

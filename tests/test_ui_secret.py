@@ -84,7 +84,8 @@ def test_a_wrong_repeated_or_reshaped_secret_is_refused_alike(running):
 
 def test_the_right_secret_works_and_the_page_itself_needs_none(running):
     assert running.request("/api/ai/status")[0] == 200
-    assert running.request("/api/notes/notebooks", {"title": "with the secret"})[0] == 200
+    # A write the worker answers in both set-ups (registering a reference starts its task).
+    assert running.request("/api/notes/attachments", {"data": "", "name": "with the secret"})[0] == 200
     assert running.request("/", headers={web_auth.HEADER: None})[0] == 200
     # The browser-mode link's code is the page's to read; the server does not check it there.
     assert running.request("/?code=abc", headers={web_auth.HEADER: None})[0] == 200
@@ -168,12 +169,12 @@ def test_the_bootstrap_code_is_single_use_and_short_lived(python_running):
 
 def test_a_link_ticket_opens_one_exact_get_once(running):
     page = {web_auth.HEADER: None}
-    # A read the worker answers in both set-ups (the front answers quick notes' reads itself).
-    status, body = running.request(web_auth.LINK_PATH, {"path": "/api/notes"})
-    assert status == 200 and body["url"].startswith("/api/notes?ticket=")
+    # A read the worker answers in both set-ups (the front answers notes' and quick notes' reads itself).
+    status, body = running.request(web_auth.LINK_PATH, {"path": "/api/clients"})
+    assert status == 200 and body["url"].startswith("/api/clients?ticket=")
     assert running.secret not in body["url"]
     status, listed = running.request(body["url"], headers=page)
-    assert status == 200 and "notebooks" in listed
+    assert status == 200 and "clients" in listed
     assert refused(running.request(body["url"], headers=page)), "single use"
     # Bound to the exact path and query.
     url = running.request(web_auth.LINK_PATH, {"path": "/api/build/export"})[1]["url"]

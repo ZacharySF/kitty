@@ -145,7 +145,7 @@ fn casefold_char(c: char) -> Vec<char> {
 pub struct Vocabulary {
     pub tags: IndexMap<String, Tag>,
     terms: Vec<(Vec<char>, Vec<String>)>,
-    names: std::collections::HashMap<String, Vec<String>>,
+    pub names: std::collections::HashMap<String, Vec<String>>,
     automaton: Automaton,
 }
 
@@ -267,7 +267,7 @@ fn settings(conn: &Connection) -> Done<Option<(String, i64, String)>> {
 }
 
 /// `tagging.tag_record`.
-fn tag_record(id: String, text: String, properties: &str) -> Done<Tag> {
+pub fn tag_record(id: String, text: String, properties: &str) -> Done<Tag> {
     let Value::Object(props) = serde_json::from_str(properties).map_err(|_| internal())? else { return Err(internal()) };
     let strings = |key: &str| -> Vec<String> {
         match props.get(key) {
@@ -279,7 +279,7 @@ fn tag_record(id: String, text: String, properties: &str) -> Done<Tag> {
     Ok(Tag { id, name: text, terms: strings("keywords"), aliases: strings("aliases"), mode, short: props.get("short") == Some(&Value::Bool(true)) })
 }
 
-fn load_vocabulary(conn: &Connection) -> Done<Vocabulary> {
+pub fn load_vocabulary(conn: &Connection) -> Done<Vocabulary> {
     let mut statement = conn.prepare("SELECT id, text, properties FROM blocks WHERE type='tag' AND parent_id IS NULL AND deleted_at IS NULL")?;
     let rows: Vec<(String, String, String)> = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?.collect::<rusqlite::Result<_>>()?;
     let tags = rows.into_iter().map(|(id, name, props): (String, String, String)| tag_record(id, name, &props)).collect::<Done<Vec<Tag>>>()?;
