@@ -16,7 +16,7 @@
 
 mod related;
 mod scan;
-mod text;
+pub(crate) mod text;
 
 use serde_json::Value;
 

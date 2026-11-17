@@ -94,6 +94,7 @@ static GROUPS: &[&Group] = &[
     &crate::backlinks::GROUP,
     &crate::agents::GROUP,
     &crate::blocks::routes::GROUP,
+    &crate::documents::GROUP,
     &crate::notes::GROUP,
     &crate::tags::GROUP,
 ];

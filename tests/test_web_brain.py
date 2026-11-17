@@ -9,7 +9,7 @@ import uuid
 import pytest
 
 from kitty import web_brain
-from kitty.core import blocks, calendar, flashcards, quick_notes, record_events
+from kitty.core import blocks, calendar, documents, flashcards, quick_notes, record_events
 from kitty.web_server import APIError, WebApplication
 
 NODE_KEYS = {"id", "kind", "section", "type", "label", "at", "parent"}
@@ -334,8 +334,8 @@ def test_records_created_after_the_block_migration_come_from_blocks(app, workspa
     blocks.transact(conn, [{"op": "insert", "id": item, "type": "text", "parent": root, "text": "pH"}])
     blocks.transact(conn, [{"op": "text", "id": item, "text": "pH scale"}])
     quick = quick_notes.create(conn, "later")
-    document = app.mutate(conn, "/api/documents", {"title": "Lab report", "content": "Body", "format": "text",
-                                                   "notebook_id": notebook["id"]})
+    document = documents.save(conn, {"title": "Lab report", "content": "Body", "format": "text",
+                                     "notebook_id": notebook["id"]})
     # The frozen legacy tables never see them: only the block backend does.
     assert legacy == {table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in legacy}
     result = brain(app, conn)

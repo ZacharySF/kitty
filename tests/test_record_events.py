@@ -11,7 +11,7 @@ import sqlite3
 
 import pytest
 
-from kitty.core import notes, quick_notes, record_events
+from kitty.core import documents, notes, quick_notes, record_events
 from kitty.web_server import ROUTE_MODULES, APIError, WebApplication
 
 
@@ -67,13 +67,14 @@ def test_one_real_route_per_section_is_captured(app, workspace, case):
 
 def test_block_backed_writes_are_left_to_op_log(app, workspace):
     """Documents and quick notes are block transactions: op_log is their history, so the Brain
-    counts each of them once. (Notes and quick-note writes are answered by rika-server, which
-    leaves them to op_log as well and still captures a notebook, a plain table:
-    tests/test_notes_parity.py, tests/test_blocks_parity.py; here the core writes them.)"""
+    counts each of them once. (Notes, document and quick-note writes are answered by rika-server,
+    which leaves them to op_log as well and still captures a notebook, a plain table:
+    tests/test_notes_parity.py, tests/test_documents_parity.py, tests/test_blocks_parity.py;
+    here the core writes them.)"""
     conn = workspace.conn
     before = conn.execute("SELECT COUNT(*) FROM op_log").fetchone()[0]
     notebook = notes.create_notebook(conn, "Physics")
-    app.mutate(conn, "/api/documents", {"title": "Paper", "content": "Body", "format": "text", "notebook_id": notebook["id"]})
+    documents.save(conn, {"title": "Paper", "content": "Body", "format": "text", "notebook_id": notebook["id"]})
     note = quick_notes.create(conn, "Buy milk")
     quick_notes.delete(conn, note["id"], note["revision"])
     assert events(conn) == []
