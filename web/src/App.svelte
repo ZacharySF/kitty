@@ -489,6 +489,18 @@
     window.addEventListener("keydown", tabKeys, { capture: true });
     return () => window.removeEventListener("keydown", tabKeys, { capture: true });
   });
+  /** The active item of a bar of buttons: a page's tabs or the top bar's groups. */
+  const ACTIVE_ITEM = '[aria-current="page"], [aria-pressed="true"], [aria-selected="true"]';
+  /** Focus inside one of these keeps the arrow keys for itself (lists, grids, sliders, canvases, menus, Track's cards). */
+  const ARROW_OWNERS = '[role="slider"], [role="radiogroup"], [role="listbox"], [role="grid"], [role="tree"], [role="menu"], [role="menubar"], [role="tablist"], [role="application"], [role="spinbutton"], canvas, svg, select, [contenteditable], [data-pipeline]';
+  /** Clicks the button after (or before) the active one in `bar`, wrapping; false when there is nothing to step. */
+  function stepBar(bar: Element | null | undefined, direction: number) {
+    const buttons = [...(bar?.querySelectorAll<HTMLButtonElement>("button") ?? [])].filter(button => !button.disabled && button.getClientRects().length);
+    if (buttons.length < 2) return false;
+    const at = buttons.findIndex(button => button.matches(ACTIVE_ITEM));
+    buttons[at < 0 ? (direction > 0 ? 0 : buttons.length - 1) : (at + direction + buttons.length) % buttons.length].click();
+    return true;
+  }
   async function keyboard(event: KeyboardEvent) {
     planChord = false;
     if (event.defaultPrevented || document.querySelector('dialog[open], [role="dialog"][aria-modal="true"]')) return;
@@ -525,10 +537,21 @@
       await activeTab.pane?.handleKey(event);
       return;
     }
+    // Ctrl + ← / →: the top bar's groups, in its order (in a text field they stay word jumps).
+    if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && (event.key === "ArrowLeft" || event.key === "ArrowRight") && !typing) {
+      if (stepBar(document.querySelector("nav.workspace-groups"), event.key === "ArrowRight" ? 1 : -1)) event.preventDefault();
+      return;
+    }
     if (event.ctrlKey || event.metaKey || event.altKey) return;
     if (event.key === "Escape" && typing) { target?.blur(); event.preventDefault(); return; }
     if (typing) return;
     if (event.key === "?") { event.preventDefault(); help = true; return; }
+    // ← / →: the page's own tabs (its [data-page-tabs] bar), when nothing focused or open wants the arrows.
+    if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && !event.shiftKey && !target?.closest(ARROW_OWNERS) &&
+      !document.querySelector('[role="dialog"], :popover-open')) {
+      const bar = [...document.querySelectorAll("#main-content [data-page-tabs]")].find(node => node.getClientRects().length);
+      if (stepBar(bar, event.key === "ArrowRight" ? 1 : -1)) { event.preventDefault(); return; }
+    }
     const control = target?.closest('button,a,summary,input[type="checkbox"],input[type="radio"],input[type="button"],input[type="submit"]');
     if (control && !control.matches(".job-row,[data-pipeline]") && ["Enter", " "].includes(event.key)) return;
     if (fills && event.key === "/") { event.preventDefault(); activeTab.pane?.focusSearch(); return; }
