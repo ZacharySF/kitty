@@ -43,6 +43,8 @@ mod target;
 mod terminal;
 mod agents;
 mod worker;
+mod account;
+mod rika;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -177,6 +179,7 @@ async fn run(options: Options) -> Result<(), String> {
     effects::start(database.paths.db_path.clone(), worker.ui_session.clone());
     math::start(worker.math_textbook.take());
     terminal::start(worker.terminal.take());
+    account::start(worker.google_configured);
 
     live::start(&front, database.paths.db_path.clone());
     builds::service::start(front.clone(), database.paths.db_path.clone(), database.paths.root.clone(), options.safe || options.launch.args.iter().any(|arg| arg == "--safe"));

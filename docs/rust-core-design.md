@@ -138,7 +138,7 @@ selection: base only.
    | Themes | no route: the theme list and `theme.base` live in the build (`document.theme_ids`, already in Rust) | build file | as build | moves with the build routes |
    | Keys `/api/keys/*` | ~~`web_keys.py`~~, `core/keys.py` | OS keyring (Secret Service over D-Bus) or owner-only file | `test_keys.py` | **Ported** (below); Python's AI providers keep reading the same store until they move |
    | Effects `/api/effects/*` | ~~`web_effects.py`~~, `web_effects_worker.py`, `core/effects.py`, `effect_kinds` | effect tables in SQLite | `test_effects.py` | **Ported** (below); executors and `submit_application`'s preconditions stay on the worker's internal routes |
-   | Rika text chat `/api/rika/*` | `web_rika.py`, `core/rika/*` | conversations, plans, memory in SQLite; AI provider calls | `test_web_rika*.py`, `test_rika_*.py` | AI client and streaming WebSocket; Rika's tools reach every module's Python core |
+   | Rika text chat `/api/rika/*` | `web_rika.py`, ~~`web_rika_memory.py`~~, `core/rika/*` | conversations, plans, memory in SQLite; AI provider calls | `test_web_rika*.py`, `test_rika_*.py`, `test_rika_data_parity.py` | history, routing memory, memory index and preferences **ported** (below); AI client and streaming WebSocket; Rika's tools reach every module's Python core |
    | Migration runner | `kitty.db.migrations` (kept for the CLI, TUI, MCP, demo reset and tests) | the SQLite schema (55 SQL files) | `test_migration_parity.py`, `test_front_migrations.py`, `test_migrations.py`, `test_migration_numbers.py` | **Ported** (below) |
 
    *Built (first slice):* `/api/modules` is answered by rika-server (`server/src/modules.rs`)
@@ -1114,6 +1114,123 @@ selection: base only.
    route (`/api/calendar/google/status`) took 2.8 to 3.7 ms in both. The release binary grew
    from 16.35 to 16.46 MB (16,347,088 to 16,458,192 bytes). Start-up and memory were not
    measured.
+
+   *Built (Rika's local state and the account's local half):* rika-server answers `GET
+   /api/rika/history` (`server/src/rika/history.rs`), the routing memory (`GET /api/rika/routes`,
+   `POST /api/rika/routes/forget`, `routes.rs`), the memory index and preferences (`GET
+   /api/rika/memory[?q=]`, `POST /api/rika/{preferences, preferences/<id>,
+   preferences/<id>/delete, memory/rebuild}`, `memory.rs`) and `GET /api/account` with `POST
+   /api/account/onboarding` (`server/src/account.rs`), with the deleted handlers' refusals and
+   order of checks and the answers and rows of `kitty.core.rika.store`, `routes`, `memory` and
+   `mail.draft_shape`. History reads each of the five tables' newest 51 rows older than
+   `before`, sorts them stably (a tie keeps messages, actions, approvals, plans, drafts, reversed
+   on the way out) and shapes every row it read, as Python did. A plan's items are
+   `dumps.public_items` (a choice indexed as Python indexes, negative included, and its 500s for
+   malformed items) with the five `outward` tools of `tools.registry()` listed in Rust; the
+   scenario's plans call every registered tool, so a tool that turns outward in Python fails it.
+   The routing readout does `decimal.Decimal`'s arithmetic (`decimal.rs`: sums and the quotient
+   by long division rounded to 28 significant digits, then `quantize`d to eight places, both
+   half to even, then `float()`) and counts the fourteen days in the personal calendar's zone on
+   the test clock (a naive stamp in the computer's zone, as `astimezone` reads it). The index
+   runs `memory.SOURCES`' SQL verbatim (signatures, rows fetched before the inserts, `x or ""`,
+   `str(ref)`, `off` for a source whose module is off), so `rika_index` and
+   `rika_index_sources` get the same rows and rowids; a search's terms are the `\w+` runs of
+   `str.lower()` (the interpreter's `isalnum` and lower-case tables, final sigma included) as
+   FTS5 prefix terms ranked by bm25. Preferences keep `_text` and `_room`'s limits (40, 4,000
+   characters in all, 500 each, in code points) inside the same `BEGIN IMMEDIATE`, and a
+   preference number is `\d{1,18}` in any script, as `int()` reads it. `configured` is the
+   worker's `GoogleConnection.configured`, sent in its readiness line (`google_configured`):
+   the worker read the client ID and secret after the workspace's `.env`. `web_rika_memory.py`
+   is deleted, `web_rika.py` loses its history branch and `web_account.py` its GET and the
+   onboarding write.
+
+   Stay on Python, forwarded, each for a reason that is not the route's shape:
+   - Rika's conversation: `POST /api/rika/{messages, dumps, plans/<id>, approvals/<id>,
+     actions/<id>/undo}` and the `/api/rika/stream` socket all go through Rika's loop in the
+     worker: the AI providers and their streaming, the tools that reach every module's Python
+     core, the job queue, the approvals waiting in memory and the hub that pushes every token,
+     action, plan and voice event.
+   - Voice and speech, `GET|POST /api/rika/voice`, `POST /api/rika/voice/model`, `GET
+     /api/rika/speech/<id>`: the voice pack's Whisper engine and speech, and a model download
+     running in the worker with its progress in memory.
+   - The agent roster, `GET /api/rika/agents`, `POST /api/rika/agents/<id>/{open, skill}`: the
+     roster the worker polls from herdr and Tern, Tern's window opener and agent skills. The
+     brief (`/api/rika/brief*`, `/alerts`, above) and Rika's Gmail (`/api/rika/mail*`, Gmail's
+     API and the held-send dispatcher) stay too.
+   - Usage, `GET /api/usage`, `/api/usage/session`, `POST /api/usage/settings`
+     (`web_usage.py`): the answers are the worker's `Usage` object as much as the tables. Its
+     per-kind opt-in is loaded once and held in memory, and the terminal activity cards
+     (`web_terminal`) and Rika's roster (`rika/agents`) read it and its paced log reading
+     (`agent_usage.sync`, the Claude Code, Codex and omp JSON-lines readers with their cursors,
+     every five seconds at most) in that process. A front that wrote `usage.json` would leave
+     the worker's cards on the old opt-in, and a second reader would sync the same logs into
+     the same cursors. Usage moves with the roster and the launch path, as agent skills do.
+   - Google sign-in, `POST /api/account/google/{start, poll, cancel, disconnect}`: the attempt
+     (state, PKCE verifier, nonce, ticket) lives in the worker's `GoogleConnection` with the
+     loopback callback server it starts, the identity token is verified with google-auth, and
+     disconnect also ends a pending attempt.
+   - Connected apps, `GET /api/clients`, `POST /api/clients/{approve, deny, revoke}`
+     (`web_clients.py`): the waiting pairing requests exist only in the worker's
+     `clients.Pairing`, beside the client ingress that pairs and authenticates the browser
+     extension and the Tern plugin, and a revoke also drops that client's live mirrors.
+   - The page mirror, `GET /api/mirror`, `GET /api/mirror/<id>/image` (`web_mirror.py`):
+     frames are kept only in the worker's memory, arrive through that ingress and are pushed
+     over the live channel as they come.
+   - The phone, `GET /api/phone`, `POST /api/phone/{network, devices, devices/remove}`
+     (`web_phone.py`): the answer reports the second HTTP listener the worker runs for
+     `/phone/v1/*` (whether it listens, its address, why it could not open), choosing a network
+     restarts it, and adding a phone issues a five-minute setup code held in its memory.
+
+   `kitty.core.rika` stays whole. Rika's loop records and recalls routes and shortcuts
+   (`routes.record`, `recall`, `shortcut`, `undone`) and refreshes the index and retrieves from
+   it before a model request, and its memory tools (`memory_tools`) call `memory.refresh`,
+   `search`, `add_preference` and `delete_preference`, so both processes write `rika_index`,
+   with the same SQL. `store.history`, `routes.listing`, `summary` and `forget` and
+   `memory.index`, `rebuild` and `update_preference` remain the parity test's reference
+   (`routes.seed_demo` seeds the demo's routes); `web_account.state` stays for poll and
+   disconnect.
+
+   `tests/test_rika_data_parity.py` runs one scenario (119 requests, 51 of them refused: a
+   query on the account, routes or a write, onboarding bodies that are empty, carry another
+   key or a non-boolean, `before` values that are short, long, full-width or carry `;`,
+   another parameter, forget bodies without a string signature or past 2,000 characters,
+   unknown and already-forgotten signatures, a search past 300 characters or with NUL,
+   preferences that are blank, NUL, 501 characters, the forty-first and the edit past 4,000
+   characters, numbers that are unknown, zero or eighteen nines, nineteen digits and letters,
+   which the worker's 404 answers, and a second delete) over a seeded workspace: forty
+   exchanges with every cost, route and source shape, actions, approvals, plans and drafts
+   tied at one instant, plans of every kind with a note page, a missing page and items asking
+   with a positive and a negative choice, routes with exact, repeating, exponent and 27-digit
+   costs, active and inactive shortcuts, replies on both sides of a Los Angeles midnight and
+   the window's edge, and a row in every indexed source. It runs through the front (with and
+   without `KITTY_GOOGLE_CLIENT_*`) and through the Python core on two copies of the workspace
+   at the same clock readings (`KITTY_TEST_CLOCK`), comparing every answer and the preference,
+   index (rowids included), route, shape, shortcut, onboarding, message, action, approval,
+   plan, draft and `record_events` rows; again without Workspace (the notes, calendar and task
+   sources `off`); and the worker answers none of the moved routes while chat, plans, the
+   roster, usage and Google sign-in still answer behind the front. Against `main`'s binary the
+   scenario fails: with the Python handlers in place at the routing summary (the worker's real
+   clock), and with them gone at the first request (404). `tests/test_web_rika_memory.py` and
+   `tests/test_google_connection.py`'s local half run through the front; `test_web_rika.py`,
+   `test_rika_agents.py` and `test_web_rika_mail.py`, whose demo sites are the worker alone
+   with in-process stand-ins, read history with `store.history`.
+
+   Known differences: a stored cost that Python's `Decimal` or `float` takes but is no finite
+   decimal here (`NaN`, `Infinity`, grouping underscores) is a 500 at the front, as is a JSON
+   integer past 64 bits in a route or plan, which the front's reader takes as a float.
+
+   Measured on one synthetic workspace (the scenario's seed: 90 messages, 12 actions, 8
+   approvals, four plans of 64 items, three drafts, six routes and the indexed sources; median
+   of 300 fresh-connection requests; `main` at `5590fc1` with its Python handlers against this
+   branch, release builds run alternately twice, at load 4.6 to 7.4): `GET /api/rika/history`
+   went from 4.02 / 4.39 ms (forwarded to Python) to 2.75 / 2.77 ms (parsing and shaping the
+   plans' 256 items is 1.2 ms of it), `GET /api/rika/routes` from 3.65 / 3.35 ms to 0.64 / 0.62
+   ms, `GET /api/rika/memory` from 3.78 / 3.40 ms to 0.22 / 0.25 ms, a search on a current index
+   (`?q=enzyme`) from 3.86 / 4.15 ms to 0.93 / 1.34 ms, a `POST /api/rika/preferences/<id>` edit
+   from 4.25 / 4.52 ms to 0.32 / 0.40 ms and `GET /api/account` from 2.95 / 2.90 ms to 0.11 /
+   0.27 ms, while a still-forwarded route (`/api/calendar/google/status`) took 2.9 to 3.7 ms in
+   both. The release binary grew from 22.04 to 22.24 MB (22,044,240 to 22,242,256 bytes).
+   Start-up and memory were not measured.
 
 ## Rules for every step
 

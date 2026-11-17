@@ -167,7 +167,7 @@ EXTENSIONS: tuple[tuple[str | None, str], ...] = (
     ("learnharness", "web_learnharness"), ("workspace", "web_blocks"),
     ("workspace", "web_mirror"), (None, "web_desktop"), (None, "web_clients"), (None, "web_agents"),
     (None, "web_devices"), (None, "web_reposync"), (None, "web_phone"), (None, "web_connect"), (None, "web_search"), (None, "web_effects_worker"),
-    (None, "web_account"), (None, "web_rika"), (None, "web_goals"), (None, "web_rika_mail"), (None, "web_rika_memory"),
+    (None, "web_account"), (None, "web_rika"), (None, "web_goals"), (None, "web_rika_mail"),
     ("terminal", "web_agent_skills"), ("terminal", "web_terminal"), ("terminal", "web_tern"),
     (None, "web_external_modules"),
 )
@@ -857,7 +857,8 @@ def readiness(server: LocalHTTPServer, settings: Settings, modules: tuple[str, .
     its framed external-module ports, which the front's Content-Security-Policy allows
     (kitty.web_external_modules; fixed at start-up), the folder of the math textbook's
     exercises (GNU FDL data the front reads where this process would, server/src/math/),
-    and with Terminal the herdr binary and session its runtime resolved (server/src/terminal.rs).
+    and with Terminal the herdr binary and session its runtime resolved (server/src/terminal.rs),
+    and whether Google sign-in has its client ID and secret (server/src/account.rs).
     """
     from kitty import __version__
     from kitty.core.math import textbook
@@ -873,7 +874,8 @@ def readiness(server: LocalHTTPServer, settings: Settings, modules: tuple[str, .
                        "frame_ports": list(server.app.frame_ports()),
                        "math_textbook": str(textbook.directory()),
                        "terminal": {"binary": terminal.runtime.binary, "session": terminal.runtime.session,
-                                    "cwd": str(settings.root)} if terminal else None})
+                                    "cwd": str(settings.root)} if terminal else None,
+                       "google_configured": server.app.google_connection.configured})
 
 
 def _serve(settings: Settings, static_dir: Path, *, safe: bool, front: tuple[str, str, str]) -> None:
