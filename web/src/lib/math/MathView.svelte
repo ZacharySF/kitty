@@ -273,7 +273,7 @@
 <section class="math" aria-label="Math workspace">
   <header class="section-header">
     <h2>Math</h2>
-    <nav class="tabs" aria-label="Math modes">
+    <nav class="tabs" aria-label="Math modes" data-page-tabs>
       {#each MODES as item (item.id)}
         <Button size="sm" aria-pressed={mode === item.id} onclick={() => (item.id === "lessons" && !lessonTopic ? void openNextLesson() : setMode(item.id))}>{item.label}</Button>
       {/each}

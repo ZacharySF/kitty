@@ -59,7 +59,7 @@
   <header>
     <h2 id={`${pane.id}-rika-title`}><span class="module-icon"><Icon name="actor-rika" size={24} /></span>Rika</h2>
     {#if waiting}<span class="waiting">{waiting} waiting</span>{/if}
-    <div class="tabs">
+    <div class="tabs" data-page-tabs>
       <Select label="Rika's page" kind="segments" value={tab} onchange={(next) => (tab = next as Tab)}
         options={[
           { value: "chat", label: "Chat" },
