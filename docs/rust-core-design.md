@@ -897,6 +897,95 @@ selection: base only.
    passes with the front. Measured (median of 300 fresh-connection `GET /api/devices`, one
    synthetic workspace, load about 5): 4.32 ms from Python directly, 5.25 ms through the front.
 
+   *Built (terminal: Settings → Agents and the local terminal routes):* Settings → Agents is
+   answered by rika-server (`server/src/agents/`): `GET /api/agents` (the host guarantee, the
+   newest hundred sessions, the policy in force, its versions, the retention floor, the
+   purposes and the mediated tools), `GET /api/agents/session?id=[&before=]` (one session, a
+   page of 200 journal rows newest first, its hold and the planted files changed since its
+   launch) and `POST /api/agents/sessions/{hold, end}`, with `kitty.web_agents`' refusals and
+   `kitty.core.agent_sessions`, `agent_policy`, `agent_access` and `blocks.retention`'s rows and
+   order. The host guarantee is probed as `kitty.core.confine` probes it (the Landlock ABI from
+   `landlock_create_ruleset(NULL, 0, VERSION)`, `uname`, the TIOCSTI filter only for the
+   machines it is written for, `closures` and the routes still open, `confine.py`); planted
+   files are hashed with SHA-256 at the paths pathlib spells for each project folder (empty
+   and `.` parts dropped, a leading `//` kept) and a folder's first 200 names in code-point
+   order (`sessions.rs`); the floor counts the replay window, one pinned citation per
+   distinct `((block@seq))` in live block text and the live user holds, and past the size cap
+   (200,000 op_log rows) reports the oldest reasons as released without releasing them
+   (`retention.rs`). A hold and an end are one `BEGIN IMMEDIATE` transaction with whole-second
+   stamps; an end revokes the session's token and ends a pending, confined or unconfined
+   session. `GET /api/terminal/agents` and a socket GET without an upgrade (426) are answered
+   by `server/src/terminal.rs` behind the Terminal module and the herdr pack's 409, from the
+   herdr binary, session and workspace folder the worker's readiness line names (`terminal`):
+   the worker resolves `$KITTY_HERDR` after the installed packs and the workspace's `.env`,
+   so the front does not guess them. `web_agents.py` loses its page reads and the hold and
+   end handlers, `web_terminal.py` those two GETs.
+
+   Stay on Python, forwarded, each for a reason that is not the route's shape:
+   - `POST /api/agents/policy/{simulate, apply}`: a policy is YAML read by PyYAML's
+     `safe_load` (YAML 1.1: `on` and `yes` are booleans, `1:20` is an integer, dates are
+     dates), and PyYAML's own error text, with its line and column, is part of the answer's
+     `problems`; apply answers with the overview, so `web_agents._overview` stays for it.
+   - The agent ingress, `/api/ingress/agent/{launch, exchange, session, call}`, unchanged and
+     forwarded as before: launch and exchange consume the pending launches only the worker
+     holds (the nonce lives nowhere else) and verify the launcher from `/proc` against the
+     connection ports the front reports; `call` runs the mediated tools over the Python block
+     engine and journals in the same transaction; `session` shares their token check, which
+     ends a session whose process exited. Approvals stay bound to the window session and the
+     worker still answers only requests with the front's private secret.
+   - The rest of the Terminal module is process supervision inside the worker, not state the
+     front could read: `POST /api/terminal/session` issues single-use tokens kept in the
+     worker's memory for the WebSocket upgrade it serves (a herdr client on a pty it relays);
+     `GET /api/terminal/activity` and `POST /api/terminal/focus` run herdr's CLI on each
+     request; `POST /api/terminal/agents` registers a mediated launch among those pending
+     launches, writes the per-launch hook and starts the herdr tab. Every
+     `/api/terminal/tern` route goes through `TernRuntime`, the Tern daemon the worker starts
+     and stops (status asks its socket, the plugin routes run `tern plugin`, settings change
+     the override the runtime holds, a capture is a quick note through the block engine).
+   - Agent skills (`/api/terminal/agent-skills`, `/settings`, `/open`): the per-kind opt-in
+     and the five-second catalogue cache are the worker's `AgentSkills`, which the Agent-tab
+     launch (hooks and the skill checklist), Rika's roster and the dock's `now` read in memory,
+     and in the demo the opt-in exists only there (nothing is written); `/open` needs the
+     desktop opener the worker holds. They move with the launch path and the roster.
+
+   `kitty.core` stays whole: `_overview` for apply uses `agent_sessions.listing` and
+   `host_guarantee`, `agent_policy.active`, `source` and `versions` and `retention.status`;
+   `Launches.prepare` calls `host_guarantee`, the terminal launch and token check
+   `agent_sessions.end`, the demo seed `retention.hold`; `agent_sessions.detail` and
+   `planted_changes` remain the parity test's reference, and `retention.release` that and a
+   core test's (`tests/test_agent_mediation.py`).
+
+   `tests/test_agents_parity.py` runs one scenario (49 requests, 23 of them refused: a query on
+   the overview, `before` out of range, empty, negative, eleven digits or an Arabic-Indic
+   digit, a missing or extra parameter, unknown sessions, bodies without or with extra keys or
+   a non-boolean hold) over the demo's five sessions plus a confined session with a live
+   token, a pending one, an old one with a journal outside the History window, pinned
+   citations (repeated, deleted, malformed) and a project spelled with `//./` whose planted
+   files were created, changed, removed or made unreadable, through the front and through the
+   Python core on two copies of the workspace at the same clock reading (one with
+   microseconds), and compares every answer and the sessions, clients, holds, journal, policy
+   and event rows left; the same overview past the size cap and on a fresh workspace (the
+   built-in policy); `GET /api/terminal/agents` with the session name from the workspace's
+   `.env`, the 426, and the module's 403 and the pack's 409 on both routes. Against `main`'s
+   binary four of its six tests fail (the routes are 404 once the handlers are gone; the
+   guard tests pass because the guard was the same). The page-route tests of
+   `tests/test_agent_mediation.py`, the herdr instructions of `tests/test_terminal_agents.py`
+   and the handshake test of `tests/test_web_terminal.py` run through the front.
+
+   Known differences: a session's stored `report` or `baseline` holding `NaN` or `Infinity`
+   (Python's JSON reader takes them, the front's does not) and a planted folder holding a
+   file name that is no UTF-8 (Python's surrogate escapes) are a 500 at the front.
+
+   Measured on one synthetic workspace (the demo's five sessions, 256 journal rows, a hold
+   and a planted file; median of 300 fresh-connection GETs; `main` at `2599464` against this
+   branch, release builds run alternately twice, at load 6.5 to 7.9): `GET /api/agents` went
+   from 3.43 / 3.30 ms (forwarded to Python) to 0.53 / 0.75 ms, `GET /api/agents/session?id=`
+   (200 journal rows and the planted scan) from 3.72 / 3.80 ms to 1.23 / 1.60 ms and
+   `GET /api/terminal/agents` from 2.63 / 2.91 ms to 0.21 / 0.14 ms, while a still-forwarded
+   route (`/api/calendar/google/status`) took 2.8 to 3.7 ms in both. The release binary grew
+   from 16.35 to 16.46 MB (16,347,088 to 16,458,192 bytes). Start-up and memory were not
+   measured.
+
 ## Rules for every step
 
 - The Python suite and the browser suites pass against whatever mix serves the

@@ -10,7 +10,7 @@ from contextlib import closing
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from terminal_support import make_root, site
+from terminal_support import front_site, make_root, site
 from test_web_clients import call as ingress_call
 from test_web_clients import pair
 
@@ -358,7 +358,7 @@ def _agent_token(running, conn, *, kind="omp"):
 
 def test_agent_routes_take_only_programs_and_agent_tokens(tmp_path):
     settings = make_root(tmp_path, ("workspace",))
-    with site(settings) as running:
+    with front_site(settings) as running:  # Settings → Agents is the front's (server/src/agents)
         with closing(connect(settings.db_path)) as conn:
             made = _page(conn)
             session, token = _agent_token(running, conn)
@@ -396,7 +396,7 @@ def test_an_exited_agents_token_ends_with_it(tmp_path):
 
 def test_settings_simulates_applies_holds_and_ends(tmp_path):
     settings = make_root(tmp_path, ("workspace",))
-    with site(settings) as running:
+    with front_site(settings) as running:
         with closing(connect(settings.db_path)) as conn:
             made = _page(conn)
             session, token = _agent_token(running, conn)
@@ -424,7 +424,7 @@ def test_the_demo_seed_covers_every_guarantee_with_a_paged_journal_a_hold_and_a_
     from kitty.core import agent_demo
 
     settings = make_root(tmp_path, ("workspace",))
-    with site(settings) as running:
+    with front_site(settings) as running:
         with closing(connect(settings.db_path)) as conn:
             agent_demo.seed_demo(conn, settings.root)
             agent_demo.seed_demo(conn, settings.root)  # once
