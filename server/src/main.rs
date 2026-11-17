@@ -17,6 +17,7 @@ mod blocks;
 mod bootstrap;
 mod builds;
 mod calendar;
+mod documents;
 mod goals;
 mod quick_notes;
 mod study;

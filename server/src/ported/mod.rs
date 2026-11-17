@@ -93,6 +93,7 @@ static GROUPS: &[&Group] = &[
     &crate::schema::JOBS,
     &crate::backlinks::GROUP,
     &crate::blocks::routes::GROUP,
+    &crate::documents::GROUP,
 ];
 
 fn groups() -> impl Iterator<Item = &'static Group> {

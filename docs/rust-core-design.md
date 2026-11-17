@@ -897,6 +897,47 @@ selection: base only.
    passes with the front. Measured (median of 300 fresh-connection `GET /api/devices`, one
    synthetic workspace, load about 5): 4.32 ms from Python directly, 5.25 ms through the front.
 
+   *Built (documents):* the saved-document routes are answered by rika-server
+   (`server/src/documents/`): `GET /api/documents` (the list), `GET /api/documents/<id>`,
+   `GET /api/documents/originals?page_id=|document_id=` (retained source metadata), `GET
+   /api/documents/originals/<hash>` (the private original as an attachment, with its symlink,
+   size and 12 MiB checks), `POST /api/documents` (create), `POST /api/documents/<id>`
+   (revision-checked save) and `POST /api/documents/topics`, with `kitty.core.documents`'
+   answers, refusals (its `notes.keys`/`text`/`integer` messages included), order of checks
+   and the module guard. A save goes through the block engine as Python's did: `convert.rs`
+   is `split_document` (`str.splitlines`, fences, the heading, code, quote, divider and list
+   kinds, the 2,000-chunk cap), `document_specs` (chunk IDs kept through `difflib`'s opcodes),
+   `sync_tree` for a document's chunks (the longest already-ordered run keeps its keys,
+   `keys_between`, restores, moves, `set` diffs keeping `tag_*` states, sorted deletes) and
+   `insert_ops`, so `op_log` (Loro bytes included) and the chunk rows are Python's. Topics use
+   the backlinks' tokens, phrases, stop words and redacted snippets (`backlinks/text.rs`, now
+   crate-visible) and `notes.page_texts` (an ink stroke is an empty line before the outline).
+
+   Stay on Python: `POST /api/documents/{prepare, import}` and `POST /api/documents/<id>/note`
+   (pymupdf's PDF text extraction, the worker's task runner, and note-page creation through
+   `note_blocks`, which moves with the Notes routes) and `GET /api/documents/<id>/pdf`
+   (pymupdf's Story export). `web_documents.py` keeps only those; `kitty.core.documents`
+   stays whole for them (they call `prepare`, `import_notes`, `document` and `pdf`), for
+   `tests/test_documents.py` and as the parity reference.
+
+   `tests/test_documents_parity.py` runs one scenario (79 requests: every read, refusal, a
+   Markdown document with fences, CRLF, `\u2028` and vertical tabs, saves that keep, reorder,
+   retype and drop chunks, stale and malformed revisions, topic scopes over folders, notebooks
+   and a canvas page, downloads of good, missing and tampered originals) through the front and
+   the Python core on two copies of a seeded workspace with `KITTY_TEST_CLOCK` and
+   `KITTY_TEST_UUIDS`, comparing every answer (downloads by bytes, type and disposition) and
+   the blocks, `op_log`, `page_crdt`, tag, search and `record_events` rows; again without the
+   workspace module (every route 403); and the worker answers none of the moved routes while
+   PDF export and prepare still answer behind the front. Against `main`'s binary the scenario
+   fails (the worker's real clock and IDs differ from the first create on).
+
+   Measured on one synthetic workspace (40 note pages, 20 documents; median of 300
+   fresh-connection requests; `main`'s binary at `aa05445` against this branch, run once each
+   at load about 5): `GET /api/documents` went from 3.40 ms (forwarded to Python) to 0.44 ms,
+   `GET /api/documents/<id>` from 2.53 to 0.49 ms, `POST /api/documents/topics` from 11.13 to
+   4.89 ms and a revision-checked `POST /api/documents/<id>` save from 4.49 to 1.99 ms. The
+   release binary grew from 21.23 to 21.42 MB. Start-up and memory were not measured.
+
 ## Rules for every step
 
 - The Python suite and the browser suites pass against whatever mix serves the
