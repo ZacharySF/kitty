@@ -67,7 +67,7 @@ def test_module_off_has_no_route_process_or_socket(tmp_path, herdr):
 def test_enabled_terminal_starts_nothing_until_a_page_attaches(tmp_path, herdr):
     settings = make_root(tmp_path, ("terminal",))
     with site(settings) as running:
-        assert running.request("/api/ai/status")[0] == 200 and running.app.modules == ("terminal",)
+        assert running.request("/api/usage")[0] == 200 and running.app.modules == ("terminal",)
         running.token()
     # Issuing a token is not an attach; closing must not run herdr or create its socket.
     assert herdr.invocations() == []

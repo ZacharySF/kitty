@@ -677,7 +677,7 @@ def test_openrouter_triage_and_ai_read_through_keys(workspace, clean_env, monkey
     monkeypatch.setattr(keys, "keyring", lambda: fake)
     assert openrouter._key(workspace.settings) == VALUE
     assert web_ai._key(NS(settings=workspace.settings)) == VALUE
-    web_ai._write_key(NS(settings=workspace.settings), "synthetic-replaced-key")
+    keys.for_settings(workspace.settings).set("OPENROUTER", "synthetic-replaced-key")
     assert fake.items["OPENROUTER"] == "synthetic-replaced-key"
     fake.items.clear()
     with pytest.raises(openrouter.TriageError, match="kitty keys set OPENROUTER"):

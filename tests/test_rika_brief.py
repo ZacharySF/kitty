@@ -18,7 +18,7 @@ import httpx
 import pytest
 
 from kitty import web_ai
-from kitty.core import calendar, goals
+from kitty.core import calendar, goals, keys
 from kitty.core import jobs as jobs_core
 from kitty.core.rika import brief, llm, store
 from kitty.core.rika.loop import Hub
@@ -70,7 +70,7 @@ def make_app(workspace, mail, no_network):
 
 @pytest.fixture
 def openrouter(workspace, monkeypatch):
-    web_ai._write_key(SimpleNamespace(settings=workspace.settings), "synthetic-openrouter-test-key")
+    keys.for_settings(workspace.settings).set("OPENROUTER", "synthetic-openrouter-test-key")
     for name in ("fast", "standard", "deep"):
         workspace.conn.execute("INSERT INTO ai_models VALUES(?,?,?,?,?,?)", (f"synthetic/{name}", name, "0.000001",
                                "0.000002", 200_000, web_ai._now().isoformat()))

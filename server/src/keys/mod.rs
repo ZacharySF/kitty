@@ -95,6 +95,32 @@ impl From<Error> for Refusal {
     }
 }
 
+/// The other routes' use of the store (Settings → AI's OpenRouter key, crate::insights): the
+/// same `for_settings` store and mutation lock; refusals are (status, message).
+fn other<T>(work: impl FnOnce(&mut Keys<'_>) -> Result<T, Error>) -> Result<T, (u16, String)> {
+    let state = STATE.get().ok_or_else(|| (500, "Local operation failed; inspect CLI diagnostics".to_owned()))?;
+    let _held = MUTATIONS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    work(&mut for_settings(state)).map_err(|error| match error {
+        Error::Keys(status, message) => (status, message.to_owned()),
+        Error::Internal => (500, "Local operation failed; inspect CLI diagnostics".to_owned()),
+    })
+}
+
+/// `keys.read(settings, name)`: the value, or "" when unset.
+pub fn read(name: &str) -> Result<String, (u16, String)> {
+    other(|keys| keys.read(name))
+}
+
+/// `Keys.set(name, value)`.
+pub fn set(name: &str, value: &str) -> Result<(), (u16, String)> {
+    other(|keys| keys.set(&Value::String(name.to_owned()), &Value::String(value.to_owned())))
+}
+
+/// `Keys.remove(name)`.
+pub fn remove(name: &str) -> Result<(), (u16, String)> {
+    other(|keys| keys.remove(&Value::String(name.to_owned())).map(|_| ()))
+}
+
 /// The front's route for `/api/keys` and `/api/keys/*`; None for every other request.
 pub async fn route(_front: &Front, target: &Target, forward_target: &str, request: &mut Request<Incoming>, mutation: bool, upgrade: bool) -> Option<Response<Body>> {
     if upgrade || !(target.path == PATH || target.path.starts_with(ACTIONS)) {
