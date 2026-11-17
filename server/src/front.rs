@@ -129,7 +129,7 @@ fn empty() -> Body {
 }
 
 /// `RequestHandler._send`: the same security headers on everything the front answers.
-fn send(status: StatusCode, data: Vec<u8>, content_type: &str, head: bool) -> Response<Body> {
+pub(crate) fn send(status: StatusCode, data: Vec<u8>, content_type: &str, head: bool) -> Response<Body> {
     let length = data.len();
     let mut response = Response::new(if head { empty() } else { full(data) });
     *response.status_mut() = status;
@@ -494,9 +494,17 @@ impl Front {
         if let Some(response) = crate::live::route(self, &target, &forward_target, &mut request, mutation, upgrade).await { return Ok(response); }
         if let Some(response) = crate::builds::route(self, &target, &forward_target, &mut request, mutation, upgrade).await { return Ok(response); }
         if let Some(answer) = crate::math::route(self, &target, &forward_target, &mut request, mutation, upgrade).await { return answer; }
+        if let Some(answer) = crate::notes::route(self, &target, &forward_target, &request, mutation, upgrade).await { return answer; }
         if let Some(answer) = crate::terminal::route(self, &target, &request, mutation, upgrade) { return answer; }
         if !mutation && !upgrade && crate::search::owns(&target.path) {
             return Ok(send_json(StatusCode::OK, &crate::search::answer(self.bootstrap.db_path(), &self.workspace, &forward_target).await?, method == Method::HEAD));
+        }
+        if !mutation && !upgrade && crate::documents::original_id(&target.path).is_some() {
+            let target = parse_target(&forward_target)?;
+            let (data, name) = tokio::task::block_in_place(|| crate::documents::download(&self.workspace, &self.bootstrap, &target))?;
+            let mut response = send(StatusCode::OK, data, "application/octet-stream", method == Method::HEAD);
+            response.headers_mut().insert("content-disposition", HeaderValue::from_str(&format!("attachment; filename=\"{name}\"")).expect("ASCII download name"));
+            return Ok(response);
         }
         // The module routes ported to Rust over the workspace database (crate::ported).
         if !upgrade && crate::ported::owns(&target.path, mutation) {

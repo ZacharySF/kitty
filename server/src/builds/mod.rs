@@ -22,6 +22,25 @@ pub use routes::route;
 
 use std::io::{Read, Write};
 
+/// `project.editing` for a module's own setting kept in the build file (Notes privacy, the tag
+/// mode): on the build service's connection, `check` runs inside the `BEGIN IMMEDIATE` (a stale
+/// revision refuses), then `values` are set in the section at `path`; the file is written and
+/// projected before the commit. Refusals are (status, message).
+pub fn edit_settings(path: &[&str], values: Vec<(&str, value::Value)>,
+                     check: impl FnOnce(&rusqlite::Connection) -> Result<(), (u16, String)>) -> Result<(), (u16, String)> {
+    let Some(service) = service::get() else { return Err((503, failure::Failure::busy().message)) };
+    let mut inner = service.lock();
+    let conn = inner.conn(service).map_err(|failed| (failed.status, failed.message))?;
+    project::editing(conn, &service.store, |build, tx| {
+        check(tx).map_err(|(status, message)| failure::Failure::new(status, message))?;
+        let section = store::section(build, path);
+        for (key, value) in values {
+            section.insert(value::text(key), value);
+        }
+        Ok(())
+    }).map_err(|failed| (failed.status, failed.message))
+}
+
 /// `rika-server check-build`: test-only. Reads a build file's text on stdin (UTF-8; lone
 /// surrogates allowed, as Python's `surrogatepass` writes them) and prints what the reader
 /// makes of it: `{"ok", "build", "problems"}`, or `{"raises"}` where Python's `check` raises.

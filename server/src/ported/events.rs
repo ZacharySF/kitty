@@ -55,12 +55,27 @@ struct Route {
     own_history_when_new: bool,
     /// The id is the body's field of this name, whatever the path and the result say.
     ident_field: Option<&'static str>,
+    /// `/api/notes/reorder`: the entity is the body's `kind` (notebooks, folders), else a page.
+    entity_from_kind: bool,
 }
 
 /// The `ROUTES` of the sections whose mutations the front answers.
 static ROUTES: LazyLock<Vec<Route>> = LazyLock::new(|| {
-    let route = |pattern: &str, entity, action, undone| Route { pattern: compile(pattern), entity, action, undone, grouped: false, own_history_when_new: false, ident_field: None };
+    let route = |pattern: &str, entity, action, undone| Route { pattern: compile(pattern), entity, action, undone, grouped: false, own_history_when_new: false, ident_field: None, entity_from_kind: false };
     vec![
+        route(&format!(r"/api/notes/pages/{ID}/blocks"), "page", Name::Fixed("outline"), false),
+        route(&format!(r"/api/notes/pages/{ID}/organize"), "page", Name::Fixed("organize"), false),
+        route(&format!(r"/api/notes/pages/{ID}/delete"), "page", Name::Fixed("delete"), false),
+        route(&format!(r"/api/notes/pages/{ID}"), "page", Name::Fixed("save"), false),
+        route(r"/api/notes/pages", "page", Name::Fixed("create"), false),
+        route(r"/api/notes/import", "page", Name::Fixed("import"), false),
+        route(r"/api/notes/attachments", "attachment", Name::Fixed("upload"), false),
+        Route { entity_from_kind: true, ..route(r"/api/notes/reorder", "page", Name::Fixed("reorder"), false) },
+        route(&format!(r"/api/notes/notebooks/{ID}"), "notebook", Name::Fixed("save"), false),
+        route(r"/api/notes/notebooks", "notebook", Name::Fixed("create"), false),
+        route(&format!(r"/api/notes/folders/{ID}/delete"), "folder", Name::Fixed("delete"), false),
+        route(&format!(r"/api/notes/folders/{ID}"), "folder", Name::Fixed("save"), false),
+        route(r"/api/notes/folders", "folder", Name::Fixed("create"), false),
         Route { grouped: true, ..route(r"/api/flashcards/(deck|type|note)", "", Name::Fixed("save"), false) },
         route(r"/api/flashcards/action", "card", Name::Flashcard, false),
         Route { ident_field: Some("deck_id"), ..route(r"/api/flashcards/import", "deck", Name::Fixed("import"), false) },
@@ -159,6 +174,13 @@ fn classify(conn: &Connection, path: &str, body: &Map<String, Value>, result: &V
             };
             let path_id = found.name("id").map(|m| m.as_str().to_owned());
             let mut entity = if route.grouped { found.get(1).map(|m| singular(m.as_str()).to_owned()).unwrap_or_default() } else { route.entity.to_owned() };
+            if route.entity_from_kind {
+                entity = match body.get("kind").and_then(Value::as_str) {
+                    Some("notebooks") => "notebook".into(),
+                    Some("folders") => "folder".into(),
+                    _ => route.entity.to_owned(),
+                };
+            }
             if matches!(route.action, Name::Flashcard) && matches!(body.get("action").and_then(Value::as_str), Some("delete" | "archive")) {
                 entity = "note".into();
             }

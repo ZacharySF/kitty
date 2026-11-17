@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use std::io::{self, BufRead, Write};
 use std::sync::LazyLock;
 
-static REF: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\(\(([0-9a-fA-F-]{36})(?:@[0-9]{1,18})?\)\)|\{\{embed:([0-9a-fA-F-]{36})\}\}").unwrap());
+pub static REF: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\(\(([0-9a-fA-F-]{36})(?:@[0-9]{1,18})?\)\)|\{\{embed:([0-9a-fA-F-]{36})\}\}").unwrap());
 static WIKI: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[\[([^\[\]\n|]{1,200})(?:\|[^\[\]\n]{0,200})?\]\]").unwrap());
 
 fn captures(pattern: &Regex, text: &str) -> Vec<(usize, usize, String)> {

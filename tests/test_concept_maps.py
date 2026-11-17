@@ -10,12 +10,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from kitty import web_notes
 from kitty.core import blocks, concept_maps, notes, schema_maps
 from kitty.core.workspace import open_workspace
 from kitty.db import connect, migrate
 from kitty.db.migrations import available_migrations
-from kitty.web_server import APIError
 
 LONG = "Energy " + "x" * 250
 
@@ -312,29 +310,31 @@ def test_page_map_is_created_once_follows_trash_and_goes_with_a_purge(workspace)
     assert untitled["title"] == "Untitled page" and untitled["graph"]["nodes"][0]["label"] == "Untitled page"
 
 
-def test_page_map_routes(workspace, monkeypatch):
+def test_page_map_routes(workspace):
+    """Through rika-server, which answers the routes (tests/test_notes_parity.py compares them with this core)."""
+    from terminal_support import front_site
+
     conn = workspace.conn
-    app = SimpleNamespace(settings=workspace.settings)
     page = make_page(conn, "Routes")
-    path = f"/api/notes/pages/{page['id']}/map"
-    assert web_notes.get(app, conn, path, {}) == {"map_id": None}
-    created = web_notes.post(app, conn, path, {})
-    assert isinstance(created["map_id"], int)
-    assert web_notes.post(app, conn, path, {}) == created
-    assert web_notes.get(app, conn, path, {}) == created
-    for call in (lambda: web_notes.get(app, conn, path, {"x": "1"}), lambda: web_notes.post(app, conn, path, {"x": 1})):
-        with pytest.raises(APIError) as invalid:
-            call()
-        assert invalid.value.status == 400
-    for call in (web_notes.get, web_notes.post):
-        with pytest.raises(APIError) as missing:
-            call(app, conn, "/api/notes/pages/999999/map", {})
-        assert missing.value.status == 404
-    monkeypatch.setattr(schema_maps, "MAX_MAPS", 1)
     other = make_page(conn, "Full")
-    with pytest.raises(APIError) as full:
-        web_notes.post(app, conn, f"/api/notes/pages/{other['id']}/map", {})
-    assert full.value.status == 400 and "At most 1 maps" in str(full.value)
+    conn.commit()
+    path = f"/api/notes/pages/{page['id']}/map"
+    with front_site(workspace.settings) as site:
+        assert site.request(path) == (200, {"map_id": None})
+        status, created = site.request(path, {})
+        assert status == 200 and isinstance(created["map_id"], int)
+        assert site.request(path, {}) == (200, created)
+        assert site.request(path) == (200, created)
+        assert site.request(path + "?x=1")[0] == 400
+        assert site.request(path, {"x": 1})[0] == 400
+        for body in (None, {}):
+            assert site.request("/api/notes/pages/999999/map", body)[0] == 404
+        count = conn.execute("SELECT count(*) FROM schema_maps").fetchone()[0]
+        conn.executemany("INSERT INTO schema_maps(title,mode,graph_json,viewport_json,updated_at) VALUES('x','study','{}','{}','now')",
+                         [()] * (schema_maps.MAX_MAPS - count))
+        conn.commit()
+        status, full = site.request(f"/api/notes/pages/{other['id']}/map", {})
+        assert status == 400 and f"At most {schema_maps.MAX_MAPS} maps" in full["error"]
 
 
 def test_opening_a_workspace_at_mains_schema_converts_pages_then_moves_their_maps_once(legacy):

@@ -40,7 +40,7 @@ APPLYAI_POSTS = ("/api/jobs/add", "/api/automation/start", "/api/resumes/registe
                  "/api/profile/basics", "/api/reminders")
 # The calendar's local routes are rika-server's (tests/test_calendar.py); these two are Python's.
 WORKSPACE_GETS = ("/api/calendar/google/status", "/api/notes", "/api/schema", "/api/study", "/api/flashcards",
-                  "/api/opportunities", "/api/documents", "/api/atlas/sections/notes")
+                  "/api/opportunities", "/api/atlas/sections/notes")
 WORKSPACE_POSTS = ("/api/notes/pages", "/api/calendar/import/preview", "/api/schema/create",
                    "/api/ai/preview", "/api/ai/mind-map/preview", "/api/ai/run",
                    "/api/opportunities", "/api/documents/prepare")
@@ -167,6 +167,18 @@ def test_disabled_routes_cannot_run_and_enabled_routes_are_reachable(tmp_path, m
             for path in posts:
                 status, body = request(path, {})
                 assert refused(status, body) == (module not in modules), path
+
+
+@pytest.mark.parametrize("modules", COMBINATIONS)
+def test_document_listing_is_gated_by_the_front(tmp_path, modules):
+    settings = make_root(tmp_path, modules)
+    with front(settings) as request:
+        status, body = request("/api/documents")
+        if "workspace" in modules:
+            assert status == 200
+            assert body == {"documents": []}
+        else:
+            assert refused(status, body)
 
 
 @pytest.mark.parametrize("modules", COMBINATIONS)

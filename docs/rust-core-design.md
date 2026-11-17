@@ -897,6 +897,135 @@ selection: base only.
    passes with the front. Measured (median of 300 fresh-connection `GET /api/devices`, one
    synthetic workspace, load about 5): 4.32 ms from Python directly, 5.25 ms through the front.
 
+   *Built (notes and tags):* the Notes and tag routes are answered by rika-server on the block
+   engine (`server/src/notes/`, `server/src/tags/`): `GET /api/notes` (folders, notebooks, up to
+   500 pages and the privacy preferences; a search through crate::search's `page_matches`),
+   `/api/notes/tags`, `/api/notes/pages/<n>` (the canvas document read back from the canvas
+   blocks), `/pages/<n>/export` (the portable copy with its references in base64), `/blocks` (the
+   outline with live references, expanded under Python's budgets and cut at the same UTF-8
+   byte, and citation counts), `/mentions`, `/map`, `/api/notes/blocks/<id>/contexts`,
+   `/api/notes/topics` and `/api/notes/attachments/<id>` (the registered PNG, `image/png` with
+   the front's headers, `files.rs`); `POST /api/notes/{daily, resolve, reorder, folders,
+   folders/<n>[/delete], notebooks, notebooks/<n>, pages, pages/<n>[/viewport | /delete |
+   /organize | /map], preferences, cleanup}`; and every `/api/tags` route (list, page, find,
+   settings, create, update, delete, link-all, attach, remove). Each page or tag write is one
+   block transaction as the person at this device. A canvas save is `notes.normalize`
+   (`canvas.rs`: its refusals in Python's order and message, numbers stored as the floats
+   `float()` makes) turned into blocks as `kitty.core.blocks.convert` turns it: element and ink
+   block IDs by `uuid5`, runs of strokes cut at 64 strokes or 20,000 points, then `sync_tree`
+   (the longest increasing run of order keys kept, `keys_between`, `props_diff` with Python's
+   `==`, so `1`, `1.0` and `True` are one value and a stored integer coordinate is no change).
+   A daily date is read as the expression's `\d` and then `strptime`'s own patterns read it
+   (other scripts' digits in the year and in a day's second digit); without one it is today in
+   the computer's zone (jiff's system zone, as libc's `localtime`) on the test clock. A clashing
+   tag name is quoted as `repr` quotes it (crate::builds' `repr_str`). A tag page's unlinked
+   mentions keep Python's `LIKE` filter in SQL while every term is ASCII; with another term the
+   front reads the candidate blocks in the same order and applies the `LIKE` (ASCII case
+   folding) and `instr(casefold(text))` conditions itself, as the bundled SQLite has no user
+   function. Notes privacy and the tag mode live in the build file: their two routes edit
+   `settings.notes` and `settings.tags` through the front's build service
+   (`builds::edit_settings`, `project::editing`: the projected revision is checked inside the
+   `BEGIN IMMEDIATE`, then the file is written and projected before the commit), as
+   `project.editing` did. Content events are recorded by the front: the Notes rules of
+   `record_events.ROUTES` are now in `ported/events.rs` (a reorder's entity from its `kind`).
+   `web_tags.py` is deleted and `web_notes.py` keeps only the two writes below.
+
+   Stay on Python, forwarded: `POST /api/notes/attachments` and `POST /api/notes/import`. They
+   decode untrusted images and PDFs with Pillow and PyMuPDF (re-encoded pixels, rasterized PDF
+   pages, the decompression-bomb and pixel limits) and run as tasks on the worker's runner,
+   whose `/api/tasks/<id>` the page polls; the rasters are those libraries' bytes, which a Rust
+   decoder would not reproduce. `kitty.core.notes`, `note_blocks`, `concept_maps` and
+   `blocks.tags` stay for their other callers: Rika's tools and the MCP server
+   (`rika/workspace_tools`, `rika/dumps`, `rika/memory`, `rika/outward`, `block_api`'s tag
+   tools), captures (`ingress`), the Documents routes (`web_documents`, `documents`), the
+   atlas' page connections (`backlinks`), the demo workspace, `workspace` opening, the Brain,
+   the pre-block conversions 033 (`blocks.legacy`) and 039 (`tags.backfill`), and the parity
+   and core tests (`tests/test_notes.py`, `test_note_blocks.py`, `test_concept_maps.py`,
+   `test_related_references.py`).
+
+   `tests/test_notes_parity.py` runs one scenario over every moved route (371 requests, 253 of
+   them refused: every canvas refusal, stale revisions of pages, viewports, folders, notebooks,
+   preferences and the tag mode, folder cycles, missing pages and parents, path numbers past
+   `2**53`, offsets, block IDs that parse but are not canonical, tag-name clashes and the 500 of
+   a tag created without a name; saves that reorder, change and trash canvas elements and put
+   them back, daily pages, resolving, a page's map, link-all with an ASCII and a non-ASCII term,
+   the cleanup at 0 days' retention) through the front and through the Python core on two copies
+   of a seeded workspace (registered references on disk, orphaned rasters, the build file) at
+   the same clock readings (`KITTY_TEST_CLOCK`) and UUIDs (`KITTY_TEST_UUIDS`), and compares
+   every answer (the PNG bytes included), the rows of `blocks`, `op_log` (Loro bytes included),
+   `page_crdt`, `page_snapshots`, the reference and tag tables, `tag_settings`, `search_docs`,
+   the notebooks, folders, attachments, preferences and page maps, `schema_maps`,
+   `record_events` and `build_state`, the build file's text and the files left under
+   `data/notes-attachments`; again without the workspace module (every route 403); and the
+   worker answers none of the moved routes while the two forwarded writes still answer behind
+   the front. Against `main`'s binary the scenario fails (the routes are 404 once the handlers
+   are gone). The web tests of `tests/test_notes.py` and `tests/test_concept_maps.py` run
+   through the front, as `tests/test_web_tags.py` already did; `tests/test_record_events.py`,
+   `tests/test_web_brain.py` and
+   `tests/test_related_references.py` write Notes through the core (with the event the front
+   records), and `tests/test_ui_secret.py`, `tests/test_web_clients.py` and
+   `tests/test_web_rika.py` use routes the worker still answers. The scenario avoids what
+   Python's Loro mirror orders by string hash: two properties removed by one `set`, and a
+   branching subtree (a page with elements) trashed at once; the front orders those by
+   insertion or ID.
+
+   Known differences: an invalid build file's 409 from the preferences or the tag mode carries
+   no `problems` list (the front's module answers are `{"error"}`); a JSON integer past 64 bits
+   is a float to the front's reader, so such a canvas number is refused with the range message
+   where Python's `math.isfinite` raised `OverflowError` (500); a lone surrogate escape is
+   "Malformed JSON body" (400) as for every front-answered body.
+
+   Measured on one synthetic workspace (51 pages, one of 200 outline blocks, a canvas of 200
+   elements, 20 tags; median of 300 fresh-connection requests; `main` at `aa05445` with its
+   Python handlers against this branch, release builds run alternately twice, at load 14 to 15):
+   `GET /api/notes` went from 5.42 / 5.28 ms (forwarded to Python) to 1.16 / 1.19 ms, a page's
+   `/blocks` from 7.07 / 7.58 ms to 2.59 / 2.28 ms, the canvas page from 7.50 / 8.78 ms to
+   3.45 / 3.13 ms, `GET /api/tags` from 4.98 / 4.82 ms to 0.79 / 0.56 ms and `POST
+   .../viewport` from 11.23 / 9.51 ms to 4.33 / 3.45 ms, while a still-forwarded route
+   (`/api/calendar/google/status`) took 3.4 to 4.9 ms in both. The release binary grew from
+   21.23 to 21.75 MB. Start-up and memory were not measured.
+
+   *Built (documents):* the saved-document routes are answered by rika-server
+   (`server/src/documents/`): `GET /api/documents` (the list), `GET /api/documents/<id>`,
+   `GET /api/documents/originals?page_id=|document_id=` (retained source metadata), `GET
+   /api/documents/originals/<hash>` (the private original as an attachment, with its symlink,
+   size and 12 MiB checks), `POST /api/documents` (create), `POST /api/documents/<id>`
+   (revision-checked save) and `POST /api/documents/topics`, with `kitty.core.documents`'
+   answers, refusals (its `notes.keys`/`text`/`integer` messages included), order of checks
+   and the module guard. A save goes through the block engine as Python's did: `convert.rs`
+   is `split_document` (`str.splitlines`, fences, the heading, code, quote, divider and list
+   kinds, the 2,000-chunk cap), `document_specs` (chunk IDs kept through `difflib`'s opcodes),
+   `sync_tree` for a document's chunks (the longest already-ordered run keeps its keys,
+   `keys_between`, restores, moves, `set` diffs keeping `tag_*` states, sorted deletes) and
+   `insert_ops`, so `op_log` (Loro bytes included) and the chunk rows are Python's. Topics use
+   the backlinks' tokens, phrases, stop words and redacted snippets (`backlinks/text.rs`, now
+   crate-visible) and `notes.page_texts` (an ink stroke is an empty line before the outline).
+
+   Stay on Python: `POST /api/documents/{prepare, import}` and `POST /api/documents/<id>/note`
+   (pymupdf's PDF text extraction, the worker's task runner, and note-page creation through
+   `note_blocks`, which moves with the Notes routes) and `GET /api/documents/<id>/pdf`
+   (pymupdf's Story export). `web_documents.py` keeps only those; `kitty.core.documents`
+   stays whole for them (they call `prepare`, `import_notes`, `document` and `pdf`), for
+   `tests/test_documents.py` and as the parity reference.
+
+   `tests/test_documents_parity.py` runs one scenario (79 requests: every read, refusal, a
+   Markdown document with fences, CRLF, `\u2028` and vertical tabs, saves that keep, reorder,
+   retype and drop chunks, stale and malformed revisions, topic scopes over folders, notebooks
+   and a canvas page, downloads of good, missing and tampered originals) through the front and
+   the Python core on two copies of a seeded workspace with `KITTY_TEST_CLOCK` and
+   `KITTY_TEST_UUIDS`, comparing every answer (downloads by bytes, type and disposition) and
+   the blocks, `op_log`, `page_crdt`, tag, search and `record_events` rows; again without the
+   workspace module (every route 403); and the worker answers none of the moved routes while
+   PDF export and prepare still answer behind the front. Against `main`'s binary the scenario
+   fails (the worker's real clock and IDs differ from the first create on).
+
+   Measured on one synthetic workspace (40 note pages, 20 documents; median of 300
+   fresh-connection requests; `main`'s binary at `aa05445` against this branch, run once each
+   at load about 5): `GET /api/documents` went from 3.40 ms (forwarded to Python) to 0.44 ms,
+   `GET /api/documents/<id>` from 2.53 to 0.49 ms, `POST /api/documents/topics` from 11.13 to
+   4.89 ms and a revision-checked `POST /api/documents/<id>` save from 4.49 to 1.99 ms. The
+   release binary grew from 21.23 to 21.42 MB. Start-up and memory were not measured.
+
    *Built (terminal: Settings → Agents and the local terminal routes):* Settings → Agents is
    answered by rika-server (`server/src/agents/`): `GET /api/agents` (the host guarantee, the
    newest hundred sessions, the policy in force, its versions, the retention floor, the
