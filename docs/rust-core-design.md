@@ -1410,6 +1410,107 @@ selection: base only.
    to 4.3 ms in both. The release binary grew from 22.24 to 22.49 MB (22,242,256 to 22,490,064
    bytes). Start-up and memory were not measured.
 
+   *Built (ApplyAI's job lists, actions, pipeline, reminders and resume library):* rika-server
+   answers `GET /api/jobs` and `/api/jobs/selection` (every view, saved view, filter, order and
+   page), `GET /api/jobs/<id>`, `GET /api/job-options`, `GET /api/pipeline`, `GET
+   /api/reminders`, `GET /api/job-tools/<id>`, `POST /api/jobs/<id>` (favorite, queue, skip,
+   restore, notes, status, track, resume and the owner's own `applied` record), `POST
+   /api/jobs/bulk` (tier, state, not eligible, add track, favorite, delete), `POST
+   /api/job-tools/<id>` (deadline, next action, undo, tracks) and `POST /api/reminders`,
+   `/restore` and `/<id>[/complete|snooze|delete]` (`server/src/jobs/`), and the resume
+   library's reads, `GET /api/resumes`, `/api/resumes/workflow` and `/api/resumes/versions/<id>`
+   (`resumes.rs`), with the deleted handlers' refusals and order of checks and the answers and
+   rows of `kitty.core.jobs`, `favorites`, `applications`, `followups`, `reminders`, `pipeline`,
+   `today.due_reminders`, `resume_versions.get_version` and `web_server._pdf_bytes`. Job rows
+   are `_JOB_SELECT` with `_attach` and `Job.from_row` (`deadline_at or source_deadline_at`,
+   `_loads(...) or []`, `freshness` on the test clock); `JobFilter` is `_where`, `_ORDER_SQL`
+   and `_best_order` verbatim (`filter.rs`), with a saved view merged field by field as the
+   handler did; stamps are `kitty.dates` (`%Y` unpadded, `parse_user_date` with `str.isdigit`'s
+   digits, a superscript or a date past 9999 being Python's 500). A favorite, an unfavorite, a
+   skip or a hand "not eligible" reruns `likeness.rescore` (`likeness.rs`: the TF-IDF vectors in
+   dict order, `sum` with CPython 3.12's compensated summation, `round(score, 4)`), so
+   `like_score` and `like_terms` are the same floats and JSON. `record_events` gains the job
+   routes' rows (`_body_action`, the bulk's single id, `status`/`applied`/`undo` left to their
+   own history). The YAML config stays the worker's: the routes read the projection they need
+   (track names and preferred cities, the default resume labels, `open_to_remote`, the saved
+   views, `followup_days`) from `GET /api/internal/jobs/config`, kept until the next mutation
+   the front forwards (any of which may have reloaded it: `/api/reload`, a profile or source
+   edit, a finder approval), so an answer reads the config the worker holds, as `app.config`
+   was; bulk delete asks the browser controller's state (`GET /api/internal/jobs/automation`).
+   Pages never reach either. `web_jobs.py` keeps the dashboard, metadata and add branches and
+   the two internal routes, `web_server.py` loses `_applyai_get` and `_mutate_job` and
+   `web_resumes.py` its two reads. Recording a submission stays the owner's report (`value:
+   true`); nothing here submits or prepares an application.
+
+   Stay on Python, forwarded, each for a reason that is not the route's shape:
+   - `GET /api/dashboard`: it first refreshes the screening questions' answered flags against
+     `answers.yaml` (`questions.refresh_if_changed`, `Config.answer_for`'s normalized, phrase,
+     company/track-scoped and jurisdiction-gated matching), which the apply worker and Rika's
+     tools share.
+   - `POST /api/jobs/add`: `jobs.upsert_job` is the single write path discovery's adapters use
+     (the `normalize.dedupe_key` and `canonical_url` identity, `evidence.merge_facts`), so a
+     manual add and a scraped sighting cannot disagree on identity. `POST /api/jobs/metadata`
+     fetches a public page in the task runner.
+   - The profile (`web_profile.py`, whole): YAML editors validated by pydantic and written with
+     PyYAML (hidden authentication and source options preserved, aliases refused), the CSV
+     importer with its signed previews held in the worker's memory, the schedule renderers and
+     the notifier task; `GET /api/profile` also refreshes the screening questions. A save
+     reloads the worker's config, which the front then reads anew.
+   - The rest of the resume library: registration (upload decoding and the copy into the
+     library), generation (rendering in a task), the coach (pypdf), promotion, rejection and
+     rollback (they write the immutable version store generation writes) and the downloads
+     (`web_resumes.download`).
+   - Settings → Apply → Accounts (`web_apply_accounts.py`): not plain local state, the listing
+     reads each account's password location through `kitty.core.keys` (a Secret Service lookup
+     per origin, the keyring's lock probe, the owner-only file warnings) with
+     `apply.authentication`, and the grant answers with that listing.
+
+   `kitty.core` stays whole: the CLI, TUI, MCP server, discovery, the apply worker, Rika's tools
+   and insights call `jobs`, `favorites`, `likeness`, `applications`, `followups`,
+   `reminders`, `pipeline`, `today` and `resume_versions`, which remain the parity test's
+   reference.
+
+   `tests/test_jobs_parity.py` runs one scenario (328 requests: 194 answered, 100 refused with
+   400, 16 with 404, 14 with 409 and 4 with 500) over a seeded workspace: 22 postings with
+   every eligibility, tier, queue and verification state, multi-track and trackless jobs,
+   listing provenance, `like_score`s from three favorites and a skip, applications with
+   confirmed, proposed and withdrawn histories, due, overdue, done and future reminders, six
+   resumes (registered, edited after registration, missing, inactive, not a PDF, a relative
+   path), track defaults by override, by YAML label and by none, and three resume versions
+   (valid, a changed artifact, promoted and the track's default) plus a manifest changed and
+   restored mid-scenario; every view, saved view, filter, order and page and their refusals;
+   every action and bulk action with each refusal; reminders created from every date form,
+   edited, completed, snoozed, deleted and restored; tool-panel edits and undo; then a views
+   and profile edit with `/api/reload` and every read again. It runs through the front and
+   through the Python core on two copies of the workspace at the same clock readings
+   (`KITTY_TEST_CLOCK`), comparing every answer and the job, track, application, event,
+   reminder, question, resume, override, search-queue and `record_events` rows; again without
+   ApplyAI (every route 403); and the worker answers none of the moved routes while the
+   dashboard, adding a posting, metadata and the coach still answer behind the front. Against
+   `main`'s binary the scenario fails at its first request (404, the handlers are gone), and
+   `main`'s binary with `main`'s handlers fails there too (the worker's real clock). The
+   job, server, resume, module-gating, `record_events` and brain tests that called these
+   routes now reach them through the front.
+
+   Known differences: a stored JSON column (`edit_notes`, `like_terms`, `raw_json`) or resume
+   manifest holding `NaN` or `Infinity`, which Python's reader takes, reads as malformed here
+   (`[]`, no provenance, or the audit's 409/500), and a request body with a lone surrogate is
+   refused by the front's JSON reader rather than by the handler's own Unicode check (both
+   400).
+
+   Measured on one synthetic workspace (400 postings over seven tracks, 40 applications with
+   their follow-ups, 20 reminders, ten favorites; median of 300 fresh-connection requests;
+   `main` at `a3c6f96` with its Python handlers against this branch, release builds run
+   alternately twice, at load 4.6 to 9.5): `GET /api/jobs` went from 7.03 / 6.56 ms (forwarded
+   to Python) to 3.53 / 2.68 ms, `GET /api/jobs/<id>` from 5.04 / 4.87 ms to 0.78 / 0.66 ms,
+   `GET /api/job-tools/<id>` from 5.21 / 5.35 ms to 0.94 / 0.88 ms, `GET /api/pipeline` from
+   5.04 / 3.81 ms to 1.41 / 1.17 ms, `GET /api/reminders` (100 upcoming) from 9.08 / 8.54 ms to
+   1.36 / 1.91 ms, `GET /api/resumes/workflow` from 4.68 / 4.37 ms to 0.43 / 0.42 ms, a notes
+   edit from 5.02 / 6.39 ms to 0.88 / 0.80 ms and a favorite toggle (rescoring 400 jobs) from
+   11.38 / 10.56 ms to 6.49 / 6.23 ms, while a still-forwarded route (`/api/dashboard`) took
+   4.85 to 5.81 ms in both. The release binary grew from 22.24 to 22.71 MB (22,242,256 to
+   22,714,960 bytes). Start-up and memory were not measured.
+
 ## Rules for every step
 
 - The Python suite and the browser suites pass against whatever mix serves the

@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import base64
-from contextlib import closing
+from contextlib import ExitStack, closing
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import urlencode
 
 import pytest
 
@@ -14,12 +15,20 @@ from kitty.core import resume_editor, resumes, resume_versions
 from kitty.db import connect
 from kitty.db.connection import transaction
 from kitty.web_server import APIError
+from terminal_support import front_site
 from test_resume_versions import space  # noqa: F401 — isolated offline rendering fixture
 
 
 @pytest.fixture
 def app(workspace):
     return SimpleNamespace(settings=workspace.settings, config=workspace.config)
+
+
+def front_get(site, path, status=200):
+    """GET a route rika-server answers (the resume library and version review, server/src/jobs/)."""
+    answer, data = site.request(path)
+    assert answer == status, (path, data)
+    return data
 
 
 def test_registration_requires_confirmation_and_retains_identity(app, workspace):
@@ -30,7 +39,8 @@ def test_registration_requires_confirmation_and_retains_identity(app, workspace)
     stored = resumes.get_resume(workspace.conn, result["resume"]["id"])
     assert Path(stored.file_path).read_bytes() == b"%PDF-1.4\nsynthetic"
     assert resumes.file_hash(Path(stored.file_path)) == stored.file_hash
-    library = web_resumes.get(app, workspace.conn, "/api/resumes/workflow", {})
+    with front_site(workspace.settings) as site:
+        library = front_get(site, "/api/resumes/workflow")
     assert library["resumes"][0]["label"] == "Synthetic web resume"
     assert library["resumes"][0]["default_tracks"] == []
 
@@ -64,8 +74,8 @@ def test_local_registration_and_coach(app, workspace):
     assert [report["track"] for report in reports] == app.config.track_names
     with pytest.raises(APIError, match="Unknown"):
         web_resumes.get(app, workspace.conn, "/api/resumes/coach", {"track": "invalid"})
-    with pytest.raises(APIError):
-        web_resumes.get(app, workspace.conn, "/api/resumes/workflow", {"path": str(path)})
+    with front_site(workspace.settings) as site:
+        assert "error" in front_get(site, "/api/resumes/workflow?" + urlencode({"path": str(path)}), 400)
 
 
 def test_generation_requires_confirmation_and_valid_track(app, workspace):
@@ -80,6 +90,11 @@ def test_generation_requires_confirmation_and_valid_track(app, workspace):
 
 @pytest.mark.parametrize("change_default", [False, True])
 def test_generation_persists_frozen_evidence_after_render_boundary_write(space, monkeypatch, change_default):
+    with ExitStack() as stack:
+        _generation_persists_frozen_evidence(space, monkeypatch, change_default, stack)
+
+
+def _generation_persists_frozen_evidence(space, monkeypatch, change_default, stack):
     app = SimpleNamespace(settings=space.settings, config=space.config,
                           tasks=SimpleNamespace(start=lambda kind, work: {"kind": kind, "result": work()}))
     replacement = (resume_versions.create_candidate(space.conn, space.config, space.settings,
@@ -113,7 +128,8 @@ def test_generation_persists_frozen_evidence_after_render_boundary_write(space, 
     # The worker has closed its own connection; the independent reader must see
     # the committed candidate and the original, not newly recomputed, evidence.
     route = "/api/resumes/versions/" + result["task"]["result"]["version_id"]
-    stored = web_resumes.get(app, space.conn, route, {})["version"]
+    site = stack.enter_context(front_site(space.settings))
+    stored = front_get(site, route)["version"]
     assert stored["status"] == "candidate" and stored["resume_id"] is None
     assert stored["validation"]["valid"] and not stored["is_default"]
     assert stored["baseline"] == {"resume_id": space.baseline.id, "file_hash": space.baseline.file_hash,
@@ -133,7 +149,7 @@ def test_generation_persists_frozen_evidence_after_render_boundary_write(space, 
         assert resume_versions.default_resume(space.conn, space.config, space.track.name).id == current["resume_id"]
         with pytest.raises(APIError, match="default changed"):
             web_resumes.post(app, space.conn, route + "/promote", {"confirm": True})
-        assert web_resumes.get(app, space.conn, route, {})["version"]["status"] == "candidate"
+        assert front_get(site, route)["version"]["status"] == "candidate"
     else:
         assert resume_versions.default_resume(space.conn, space.config, space.track.name).id == space.baseline.id
         # Cohort changes do not invalidate an explicitly reviewed, frozen audit.
@@ -147,7 +163,8 @@ def test_exact_audit_download_decisions_and_rollback(space):
     item = resume_versions.create_candidate(space.conn, space.config, space.settings,
                                             space.track.name, space.source)
     route = "/api/resumes/versions/" + item["id"]
-    review = web_resumes.get(app, space.conn, route, {})["version"]
+    with front_site(space.settings) as site:
+        review = front_get(site, route)["version"]
     assert review["diff"] == item["diff"] and review["facts"] == item["facts"]
     assert review["patches"] == item["patches"] and review["warnings"] == item["warnings"]
     audit, content_type, filename = web_resumes.download(app, space.conn, route + "/audit", {})
@@ -178,7 +195,8 @@ def test_changed_candidate_pdf_cannot_be_previewed_or_promoted(space):
     path.chmod(0o600)
     path.write_bytes(b"%PDF-1.4\nchanged synthetic artifact")
     route = "/api/resumes/versions/" + item["id"]
-    assert not web_resumes.get(app, space.conn, route, {})["version"]["validation"]["valid"]
+    with front_site(space.settings) as site:
+        assert not front_get(site, route)["version"]["validation"]["valid"]
     with pytest.raises(APIError, match="identity"):
         web_resumes.download(app, space.conn, route + "/pdf", {})
     with pytest.raises(APIError, match="validation"):

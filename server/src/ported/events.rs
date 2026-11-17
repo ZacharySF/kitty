@@ -57,11 +57,15 @@ struct Route {
     ident_field: Option<&'static str>,
     /// `/api/notes/reorder`: the entity is the body's `kind` (notebooks, folders), else a page.
     entity_from_kind: bool,
+    /// `logged`: the core keeps its own history for these body actions; not captured.
+    logged_actions: &'static [&'static str],
+    /// `_single_id`: the id is the body's only `ids` entry.
+    single_id: bool,
 }
 
 /// The `ROUTES` of the sections whose mutations the front answers.
 static ROUTES: LazyLock<Vec<Route>> = LazyLock::new(|| {
-    let route = |pattern: &str, entity, action, undone| Route { pattern: compile(pattern), entity, action, undone, grouped: false, own_history_when_new: false, ident_field: None, entity_from_kind: false };
+    let route = |pattern: &str, entity, action, undone| Route { pattern: compile(pattern), entity, action, undone, grouped: false, own_history_when_new: false, ident_field: None, entity_from_kind: false, logged_actions: &[], single_id: false };
     vec![
         route(&format!(r"/api/notes/pages/{ID}/blocks"), "page", Name::Fixed("outline"), false),
         route(&format!(r"/api/notes/pages/{ID}/organize"), "page", Name::Fixed("organize"), false),
@@ -96,6 +100,9 @@ static ROUTES: LazyLock<Vec<Route>> = LazyLock::new(|| {
         route(r"/api/opportunities/import", "opportunity", Name::Fixed("import"), false),
         route(r"/api/opportunities/favorites", "opportunity", Name::Fixed("favorite"), false),
         route(&format!(r"/api/opportunities/{ID}(?:/(delete|project|items|project-details|calendar))?"), "opportunity", Name::Opportunity, false),
+        Route { single_id: true, ..route(r"/api/jobs/bulk", "job", Name::Body, false) },
+        Route { logged_actions: &["status", "applied"], ..route(&format!(r"/api/jobs/{ID}"), "job", Name::Body, false) },
+        Route { logged_actions: &["undo"], ..route(&format!(r"/api/job-tools/{ID}"), "job", Name::Body, false) },
         route(r"/api/reminders", "reminder", Name::Fixed("create"), false),
         route(&format!(r"/api/reminders/{ID}/complete"), "reminder", Name::Fixed("complete"), false),
     ]
@@ -166,6 +173,9 @@ fn classify(conn: &Connection, path: &str, body: &Map<String, Value>, result: &V
             if route.own_history_when_new && body.get("id").is_none_or(Value::is_null) {
                 return None;
             }
+            if body.get("action").and_then(Value::as_str).is_some_and(|action| route.logged_actions.contains(&action)) {
+                return None;
+            }
             let action = match &route.action {
                 Name::Body | Name::Flashcard => body.get("action").and_then(Value::as_str).map_or_else(|| "save".to_owned(), |action| word(action, "save")),
                 Name::Fixed(action) => (*action).to_owned(),
@@ -194,6 +204,11 @@ fn classify(conn: &Connection, path: &str, body: &Map<String, Value>, result: &V
                         token(Some(&Value::String(id)))
                     }
                     None => None,
+                }
+            } else if route.single_id {
+                match body.get("ids") {
+                    Some(Value::Array(ids)) if ids.len() == 1 => token(ids.first()),
+                    _ => None,
                 }
             } else if let Some(field) = route.ident_field {
                 token(body.get(field))

@@ -494,6 +494,7 @@ impl Front {
         if let Some(response) = crate::live::route(self, &target, &forward_target, &mut request, mutation, upgrade).await { return Ok(response); }
         if let Some(response) = crate::builds::route(self, &target, &forward_target, &mut request, mutation, upgrade).await { return Ok(response); }
         if let Some(answer) = crate::math::route(self, &target, &forward_target, &mut request, mutation, upgrade).await { return answer; }
+        if let Some(answer) = crate::jobs::route(self, &target, &forward_target, &mut request, mutation, upgrade).await { return answer; }
         if let Some(answer) = crate::notes::route(self, &target, &forward_target, &request, mutation, upgrade).await { return answer; }
         if let Some(answer) = crate::terminal::route(self, &target, &request, mutation, upgrade) { return answer; }
         if !mutation && !upgrade && crate::search::owns(&target.path) {
@@ -616,6 +617,10 @@ impl Front {
         }
         let mut sender = self.connect(false).await?;
         let response = sender.send_request(body).await.map_err(|_| refuse(503, "Local workspace is busy or unavailable; try again"))?;
+        if has_body {
+            // The worker may have reloaded its config (crate::jobs::config).
+            crate::jobs::config::forwarded_mutation();
+        }
         let (mut parts, incoming) = response.into_parts();
         for name in HOP_BY_HOP {
             parts.headers.remove(*name);
