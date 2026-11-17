@@ -12,12 +12,12 @@ a browser page::
 
 Page routes (UI secret, like every page route)::
 
-    GET  /api/agents                      {host, sessions, policy, versions, retention, purposes}
-    GET  /api/agents/session?id=&before=  {session, journal, next, held, planted}
     POST /api/agents/policy/simulate      {source, session?} -> flips under the draft
-    POST /api/agents/policy/apply         {source} -> {version, policy}
-    POST /api/agents/sessions/hold        {id, hold: bool} -> retention user hold on or off
-    POST /api/agents/sessions/end         {id} -> the token is revoked
+    POST /api/agents/policy/apply         {source} -> {version, policy} and the overview
+
+rika-server answers the rest of Settings → Agents itself (server/src/agents/): ``GET
+/api/agents``, ``GET /api/agents/session`` and ``POST /api/agents/sessions/{hold,end}``.
+A policy is YAML, which PyYAML parses here.
 """
 from __future__ import annotations
 
@@ -165,22 +165,7 @@ def _overview(app, conn: sqlite3.Connection) -> dict:
 
 
 def get(app, conn, path, query):
-    if path == PREFIX:
-        app._no_query(query)
-        return _overview(app, conn)
-    if path == PREFIX + "/session":
-        if set(query) - {"id", "before"} or "id" not in query:
-            raise _error(400, "Expected ?id= (and optionally before=)")
-        before = None
-        if "before" in query:
-            from kitty.web_server import _integer
-
-            before = _integer(query["before"], "before", 1, 2**62)
-        try:
-            return agent_sessions.detail(conn, query["id"], before=before)
-        except LookupError as exc:
-            raise _error(404, str(exc)) from None
-    return None
+    """The front answers the page reads; nothing reaches the worker."""
 
 
 def _source(body: dict, allowed: set[str]) -> str:
@@ -203,21 +188,6 @@ def post(app, conn, path, body):
             source = _source(body, {"source"})
             result = agent_policy.apply(conn, source)
             return {**result, **_overview(app, conn)}
-        if path in {PREFIX + "/sessions/hold", PREFIX + "/sessions/end"}:
-            session = body.get("id") if isinstance(body, dict) else None
-            if not isinstance(session, str):
-                raise _error(400, "Expected {\"id\"}")
-            if path.endswith("/hold"):
-                if set(body) != {"id", "hold"} or type(body["hold"]) is not bool:
-                    raise _error(400, "Expected {\"id\", \"hold\": true|false}")
-                retention.hold(conn, session) if body["hold"] else retention.release(conn, session)
-            else:
-                if set(body) != {"id"}:
-                    raise _error(400, "Expected {\"id\"}")
-                agent_sessions.end(conn, session, "Ended in Settings → Agents; its token was revoked")
-            return agent_sessions.detail(conn, session)
     except agent_policy.PolicyError as exc:
         raise _error(400, "The policy has problems", exc.problems) from None
-    except LookupError as exc:
-        raise _error(404, str(exc)) from None
     raise _error(404, "API route not found")

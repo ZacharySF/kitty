@@ -51,6 +51,9 @@ pub struct Worker {
     pub frame_ports: Vec<u16>,
     /// The folder of the math textbook's `exercises.json` (`kitty.core.math.textbook.directory()`).
     pub math_textbook: Option<std::path::PathBuf>,
+    /// The herdr runtime and workspace folder the Terminal module's routes answer with
+    /// (crate::terminal), while that module is on; the front takes it once.
+    pub terminal: Option<crate::terminal::Herdr>,
     child: Child,
     /// Held open for the worker's lifetime; closing it tells the worker to stop. Shared with
     /// the desktop owner-pipe relay, which writes the shell's lines into it.
@@ -74,6 +77,8 @@ struct Readiness {
     frame_ports: Vec<u16>,
     #[serde(default)]
     math_textbook: Option<String>,
+    #[serde(default)]
+    terminal: Option<crate::terminal::Herdr>,
 }
 
 /// The readiness line's `packs`: those built into the worker program, and those its active
@@ -168,6 +173,7 @@ impl Worker {
             packs: ready.packs,
             frame_ports: ready.frame_ports,
             math_textbook: ready.math_textbook.map(Into::into),
+            terminal: ready.terminal,
             child,
             stdin: Arc::new(Mutex::new(Some(stdin))),
             output: Some(stdout),

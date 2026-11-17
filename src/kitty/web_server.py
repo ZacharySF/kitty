@@ -855,13 +855,15 @@ def readiness(server: LocalHTTPServer, settings: Settings, modules: tuple[str, .
     with ApplyAI the digest settings its config validated (server/src/bootstrap.rs), the
     packs it has and lacks (kitty.packs; server/src/packs.rs lists a built-in one as such),
     its framed external-module ports, which the front's Content-Security-Policy allows
-    (kitty.web_external_modules; fixed at start-up), and the folder of the math textbook's
-    exercises (GNU FDL data the front reads where this process would, server/src/math/).
+    (kitty.web_external_modules; fixed at start-up), the folder of the math textbook's
+    exercises (GNU FDL data the front reads where this process would, server/src/math/),
+    and with Terminal the herdr binary and session its runtime resolved (server/src/terminal.rs).
     """
     from kitty import __version__
     from kitty.core.math import textbook
 
     apply = server.app.config.apply if "applyai" in modules else None
+    terminal = getattr(server.app, "terminal", None)
     return json.dumps({"origin": server.origin, "secret": server.ui_auth.secret,
                        "config_dir": str(settings.config_dir), "db_path": str(settings.db_path),
                        "modules": list(modules), "version": __version__,
@@ -869,7 +871,9 @@ def readiness(server: LocalHTTPServer, settings: Settings, modules: tuple[str, .
                                   "archive_after_days": apply.archive_after_days} if apply else None,
                        "packs": {"built_in": packs.built_in(), "missing": packs.missing(modules)},
                        "frame_ports": list(server.app.frame_ports()),
-                       "math_textbook": str(textbook.directory())})
+                       "math_textbook": str(textbook.directory()),
+                       "terminal": {"binary": terminal.runtime.binary, "session": terminal.runtime.session,
+                                    "cwd": str(settings.root)} if terminal else None})
 
 
 def _serve(settings: Settings, static_dir: Path, *, safe: bool, front: tuple[str, str, str]) -> None:

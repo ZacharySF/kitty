@@ -39,6 +39,8 @@ mod settings;
 mod startup;
 mod tags;
 mod target;
+mod terminal;
+mod agents;
 mod worker;
 
 use std::path::PathBuf;
@@ -173,6 +175,7 @@ async fn run(options: Options) -> Result<(), String> {
     keys::start(database.paths.root.clone(), database.demo.is_some());
     effects::start(database.paths.db_path.clone(), worker.ui_session.clone());
     math::start(worker.math_textbook.take());
+    terminal::start(worker.terminal.take());
 
     live::start(&front, database.paths.db_path.clone());
     builds::service::start(front.clone(), database.paths.db_path.clone(), database.paths.root.clone(), options.safe || options.launch.args.iter().any(|arg| arg == "--safe"));
