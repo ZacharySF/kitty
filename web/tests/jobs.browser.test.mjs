@@ -115,7 +115,7 @@ describe("Career", () => {
     const { page, problems, context } = await open("jobs");
     const steps = page.getByRole("navigation", { name: "Career" });
     await steps.waitFor();
-    assert.deepEqual(await steps.getByRole("button").allInnerTexts(), ["Find", "Saved", "Track", "More"]);
+    assert.deepEqual(await steps.getByRole("button").allInnerTexts(), ["Track", "Find", "Saved", "More"]);
     assert.equal(await steps.getByRole("button", { name: "Find", exact: true }).getAttribute("aria-current"), "page");
     // More is the bar's last item and sits at its far right, level with the page's right edge.
     const more = steps.getByRole("button", { name: "More", exact: true });
