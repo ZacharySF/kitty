@@ -161,7 +161,7 @@ fn quick_note_target(url: &Url, origin: &Url) -> Option<String> {
 fn set_autostart(app: &tauri::AppHandle, enabled: bool) {
     let state = app.state::<Desktop>();
     if let Some(dir) = &state.autostart_dir {
-        if let Some(program) = autostart::program(std::env::var_os("APPIMAGE"), std::env::current_exe()) {
+        if let Some(program) = autostart::program(std::env::var_os("KITTY_DESKTOP_LAUNCHER"), std::env::var_os("APPIMAGE"), std::env::current_exe()) {
             let _ = autostart::set(dir, &program, enabled);
         }
         state.autostart.store(autostart::enabled(dir), Ordering::SeqCst);

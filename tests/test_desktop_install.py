@@ -193,6 +193,44 @@ printf "%s\\n" "$LD_LIBRARY_PATH" "$@"
     assert launch.stdout.splitlines() == ["runner", "runner", "/working/runtime", "--workspace", str(tmp_path / "synthetic")]
 
 
+def test_appimage_launcher_names_itself_so_start_at_login_goes_through_the_runner(tmp_path):
+    # The app writes its login unit from KITTY_DESKTOP_LAUNCHER; under appimage-run (NixOS) the
+    # bare AppImage cannot start, so the unit must run this launcher. A v0.3.41 launcher
+    # (KITTY_DESKTOP_LAUNCHER=1) is still recognized and upgraded on reinstall.
+    data, bin_dir = tmp_path / "data", tmp_path / "bin"
+    application = data / "kitty/application"
+    application.mkdir(parents=True)
+    bin_dir.mkdir()
+    installed = application / "kitty.AppImage"
+    installed.write_text("#!/bin/sh\nexit 0\n")
+    runner = tmp_path / "appimage-run"
+    runner.write_text('#!/bin/sh\nimage="$1"; shift\nexec "$image" "$@"\n')
+    runner.chmod(0o755)
+    launcher = bin_dir / "kitty-workspace"
+    launcher.write_text("#!/bin/sh\nunset KITTY_HOME KITTY_DB\nexport APPIMAGE_EXTRACT_AND_RUN=1\n"
+                        "export KITTY_DESKTOP_LAUNCHER=1\nwhile :; do\n"
+                        f"  {shlex.quote(str(runner))} {shlex.quote(str(installed))} --workspace /synthetic \"$@\"\n"
+                        '  result=$?\n  [ "$result" -eq 42 ] || exit "$result"\ndone\n')
+    image = tmp_path / "download.AppImage"
+    image.write_text('#!/bin/sh\nprintf "%s\\n" "$KITTY_DESKTOP_LAUNCHER" "$@"\n')
+    image.chmod(0o755)
+    icon = tmp_path / "icon.png"
+    icon.write_bytes(b"icon")
+    env = os.environ | {"XDG_DATA_HOME": str(data), "XDG_BIN_HOME": str(bin_dir)}
+    install = subprocess.run([sys.executable, str(ROOT / "scripts/install-desktop.py"),
+                              "--appimage", str(image), "--icon", str(icon)],
+                             env=env, capture_output=True, text=True)
+    assert install.returncode == 0, install.stderr
+    launch = subprocess.run([str(launcher), "--background"], env=env, capture_output=True, text=True, timeout=10)
+    assert launch.returncode == 0, launch.stderr
+    assert launch.stdout.splitlines() == [str(launcher), "--workspace", "/synthetic", "--background"]
+    # A second reinstall reads the new form back.
+    again = subprocess.run([sys.executable, str(ROOT / "scripts/install-desktop.py"),
+                            "--appimage", str(image), "--icon", str(icon)],
+                           env=env, capture_output=True, text=True)
+    assert again.returncode == 0, again.stderr
+
+
 def test_legacy_appimage_launcher_is_upgraded_without_recapturing_runtime(tmp_path):
     data = tmp_path / "data"
     application = data / "kitty/application"
