@@ -1765,6 +1765,9 @@ it shows is the largest thing on it, and a gauge, dial or chart stands on its ri
 the content in a narrow tile). On the Black theme what a tile draws is in colour (the
 theme's `--tile-1` to `--tile-6`: blossom, sky, mint, violet, amber, coral), and the tile
 carries a wash of its own colour; other themes draw with their six data colours.
+**Clock**, **Focus** and **Flashcards** are small tiles: two of them next to each other in
+a column share a row as two squares, and one with no small neighbour (or on a board too
+narrow for half a column) takes its whole row.
 
 A widget that has a page (Goals, This week, Applications, Flashcards, Focus) opens it from
 its title, which ends in a chevron; on a tile, pressing anywhere that is not a control does
