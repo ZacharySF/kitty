@@ -1,7 +1,7 @@
 <script lang="ts" module>
   /** The short pages Settings opens beside its index, deep-linked as `#settings/<page>`. */
   export const SETTINGS_PAGES = [
-    "appearance", "desktop", "quiet-hours", "build", "account", "modules", "graphs", "tags", "connected-apps", "agents", "keys", "devices",
+    "appearance", "desktop", "quiet-hours", "build", "account", "modules", "graphs", "tags", "backup", "connected-apps", "agents", "keys", "devices",
     "apply-accounts", "rika-routing", "rika-email", "rika-memory",
   ] as const;
   export type SettingsPage = (typeof SETTINGS_PAGES)[number];
@@ -29,6 +29,7 @@
   import ExternalModules from "./ExternalModules.svelte";
   import ApplyAccounts from "./ApplyAccounts.svelte";
   import Devices from "./Devices.svelte";
+  import BackupSettings from "./BackupSettings.svelte";
   import TagSettings from "./TagSettings.svelte";
   import BuildSettings from "./BuildSettings.svelte";
   import { buildStore, setPreferences } from "./build.svelte";
@@ -68,6 +69,7 @@
       { page: "modules", label: "Modules", icon: "atlas", keywords: "applyai job search workspace study terminal brain atlas enable disable restart download pack add-on addon plugin github repository install update remove" },
       { page: "graphs", label: "Graphs", icon: "schema", keywords: "schemas default layout tree clusters sphere force physics repulsion spring damping" },
       ...(activeModules.enabled.includes("workspace") ? [{ page: "tags", label: "Tags", icon: "favorites", keywords: "auto tags keywords suggest always attach" } as Entry] : []),
+      { page: "backup", label: "Backup", icon: "download", keywords: "backup restore archive recover copy export github history sync lost laptop" },
     ] },
     { label: "Connections", items: [
       { page: "connected-apps", label: "Connected apps", icon: "external", keywords: "pairing tern plugin browser extension mirror token revoke approve" },
@@ -267,6 +269,8 @@
         <Keys />
       {:else if shown === "devices"}
         <Devices />
+      {:else if shown === "backup"}
+        <BackupSettings />
       {:else if shown === "apply-accounts"}
         <ApplyAccounts />
       {/if}

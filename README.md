@@ -254,9 +254,10 @@ lives apart from the application and stays put across updates.
 Linux x86_64 only for now (Ubuntu 22.04+, or glibc 2.35+ for the AppImage).
 There is no Windows, macOS or ARM build.
 
-Back your workspace up like any personal data. [Device sync](docs/GUIDE.md#device-sync)
+[Settings → Backup](docs/GUIDE.md#backup-and-restore) saves the whole workspace to one
+file and restores it into a new folder. [Device sync](docs/GUIDE.md#device-sync)
 carries notes only, not attachments, calendar, study, jobs or settings, and
-[GitHub backup](docs/GUIDE.md#github-backup) copies notes but has no restore yet.
+[GitHub backup](docs/GUIDE.md#github-backup) copies notes but has no restore.
 
 <p align="center">
   <img src="docs/screenshots/readme/welcome.jpg" width="62%" alt="The rika! welcome card: a glowing neural-network brain above the words 'Welcome to rika!', with Continue with Google and Start locally buttons">

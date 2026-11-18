@@ -31,6 +31,7 @@ _REGISTRATION_ORDER = (
     "interfaces",
     "modules",
     "keys",
+    "backup",
     "gmail",
     "questions",
     "index",

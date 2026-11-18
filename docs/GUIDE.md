@@ -500,11 +500,11 @@ Surfaces turn opaque under reduced transparency, and every theme's text,
 selected and pressed controls stay at WCAG AA contrast over its backdrop. Graph
 nodes and their edges use the active theme's graph palette.
 **Settings** is a left index of short pages, each one surface: **General**
-(Appearance, Desktop, Quiet hours), **Workspace** (Account, Modules, Graphs) and
+(Appearance, Desktop, Quiet hours), **Workspace** (Account, Modules, Graphs, Backup) and
 **Careers & AI** (Profile & saved answers, AI & privacy, which open their own
 views). **Find a setting** filters the index by name or keyword; Enter opens the
 first match. Every page has its own link, `#settings/<page>` (`appearance`,
-`desktop`, `quiet-hours`, `account`, `modules`, `graphs`), so Back returns to the
+`desktop`, `quiet-hours`, `account`, `modules`, `graphs`, `backup`), so Back returns to the
 previous page; plain `#settings` opens Appearance. Explanations of individual
 controls, such as the graph physics sliders, are tooltips on their ⓘ.
 **Settings → Appearance** sets the whole look in one panel beside a live
@@ -859,7 +859,7 @@ Design and limits: `docs/platform-design.md`, "Build step 3".
 
 ### GitHub backup
 
-**Settings → Devices → GitHub backup** keeps a copy of your notes in a private GitHub
+**Settings → Backup → GitHub backup** keeps a copy of your notes in a private GitHub
 repository you choose. It is off until you connect one. Unlike device sync, this copy
 leaves your devices: it is stored on GitHub, unencrypted, so GitHub can read it.
 
@@ -886,7 +886,8 @@ leaves your devices: it is stored on GitHub, unencrypted, so GitHub can read it.
   what is on GitHub.
 - If GitHub rejects a push (its branch has changes this device lacks), nothing is
   overwritten and the backup stops with that problem; **Sync now** tries again.
-  Restoring from the backup is not built yet.
+  Restoring from this GitHub copy is not built; to recover a whole workspace, use a backup
+  file ("Backup and restore" below).
 
 Rika can tell you how the backup is doing and start a run (`sync_status`, `sync_now`),
 and mentions it in the morning brief and as an alert only when something is wrong: the
@@ -895,6 +896,74 @@ while changes wait. Rika never connects a repository and never turns the backup 
 
 Routes (`src/kitty/web_reposync.py`): `GET /api/reposync`, `POST /api/reposync/repo`
 `{repo}`, `/now`, `/pause` `{paused}`, `/disconnect`.
+
+### Backup and restore
+
+Three different things keep your work safe, and none replaces another:
+
+- **History** brings back an earlier version of a page inside this workspace (History
+  and Trash in a page's More menu), within its retention. It does not help when the
+  workspace or the computer is lost.
+- **Backup** is a separate copy that can be restored: one archive file, described here.
+- **Sync** (Settings → Devices) copies changes to your paired devices, deletions and
+  mistakes included. It is not a backup.
+
+**Settings → Backup** (or `kitty backup create`) writes one archive,
+`rika-backup-<date>-<time>.zip` (owner-only), into a folder you choose, by default
+`~/rika-backups` outside the workspace. A copy on the same disk does not survive losing
+the computer: move the file to another drive or machine. The page shows the last backup.
+
+What the archive holds:
+
+- `workspace.db`: a consistent snapshot of the database taken through SQLite
+  (`VACUUM INTO`) while rika! keeps running, never a copy of the live file. It carries
+  notes with their history and Trash, quick notes, documents, calendar events and tasks,
+  study, flashcards with their review history, goals, opportunities, Career's jobs,
+  applications and resumes, and Rika's conversations.
+- The files rows point at: note attachments, document originals, resumes and resume
+  versions, approved resumes, concept-map exports, build history, add-on modules and
+  their data. A file registered from outside the workspace (a resume added in place) is
+  included too.
+- Settings: `config/build.json` and `config/*.yaml`.
+- `manifest.json`: format version, app and database versions, creation time, counts per
+  category, every file's size and SHA-256, files a row named that were already missing,
+  and everything left out.
+
+Left out, and listed in the manifest: API keys, account passwords and this device's sync
+key (they stay in the keyring or `.private/`), sign-in tokens (Google, Gmail, Microsoft,
+Slack), `.env`, `config/gmail_client.json` and any other file in `config/` that is not a
+settings file, caches, the form filler's browser profile, voice models and module packs.
+In the copy, paired devices are removed, paired programs' and phones' tokens are revoked,
+pending email-verification handoffs are dropped and the GitHub backup is disconnected.
+
+**Restore** never writes the open workspace. Enter the backup file and a new or empty
+folder, then **Preview**: it lists the counts, warnings (made by another rika! version,
+an older database that the restore upgrades, files already missing when the backup was
+made, what is not in it) and anything that stops a restore (a newer backup format or
+database than this rika! knows, a damaged or missing file, the open workspace or a
+folder that is not empty). **Restore** unpacks into a staging folder beside the target,
+checks every file's hash, moves file paths in the database to the new folder, upgrades
+and checks the database, then renames the folder into place; if any step fails nothing
+is left behind.
+
+Switching to the copy is your choice; rika! has no workspace switcher. Open it with
+`kitty-workspace --workspace /path/to/copy` (the desktop app; to make it the installed
+launcher's workspace, run `scripts/install-desktop.py` again with `--workspace`), or
+`KITTY_HOME=/path/to/copy kitty-web` and `KITTY_HOME=/path/to/copy kitty …` for the
+website and the CLI. Then add your keys again (Settings → Keys), sign in again and pair
+your devices again. The copy keeps this device's identity, so retire the old workspace
+rather than running both as two devices.
+
+```bash
+kitty backup create [--out FOLDER_OR_NEW_ZIP]     # default ~/rika-backups
+kitty backup preview BACKUP.zip [--into FOLDER]   # writes nothing; exit 1 if it cannot restore
+kitty backup restore BACKUP.zip --into FOLDER     # a new or empty folder, never this workspace
+```
+
+With `--demo` these back up the demo database. Routes (`src/kitty/web_backup.py`, on the
+Python worker behind rika-server; the core is `kitty.core.backup`, shared with the CLI):
+`GET /api/backup`, `POST /api/backup/create` `{folder}`, `/preview` `{archive, into}`
+(`into` may be null) and `/restore` `{archive, into}`.
 
 ### Microsoft (Outlook) and Slack
 

@@ -1,6 +1,6 @@
 """GitHub backup: an opt-in, push-only copy of the notes in a private GitHub repository.
 
-The owner pastes a repository in Settings → Devices; nothing here ever picks one. A run
+The owner pastes a repository in Settings → Backup; nothing here ever picks one. A run
 
 1. asks GitHub's API about the repository and stops unless it is not public (a public
    repository pauses the backup with a problem the owner sees);

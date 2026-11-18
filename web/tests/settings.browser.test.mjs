@@ -17,7 +17,7 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 const repository = fileURLToPath(new URL("../..", import.meta.url));
 const DEFAULT = { width: 1280, height: 850 };
 const GUIDE = "https://github.com/ZacharySF/kitty/blob/main/docs/GOOGLE_ONBOARDING.md";
-const PAGES = ["Appearance", "Desktop", "Quiet hours", "Build", "Account", "Modules", "Graphs", "Tags", "Connected apps", "Agents", "Keys", "Devices"];
+const PAGES = ["Appearance", "Desktop", "Quiet hours", "Build", "Account", "Modules", "Graphs", "Tags", "Backup", "Connected apps", "Agents", "Keys", "Devices"];
 const APPLY_PAGES = ["Accounts"];
 const RIKA_PAGES = ["Routing memory", "Email", "Memory"];
 /** The pages' own regions (their components keep their names; Build's is "Build settings"). */
@@ -145,7 +145,7 @@ describe("settings index", () => {
     const title = page.getByRole("heading", { level: 1, name: "Settings" });
     assert.equal(await title.evaluate((node) => getComputedStyle(node).fontFamily === getComputedStyle(document.body).fontFamily), true, "the title is not in the text face");
     const items = index(page).locator("a, button");
-    await page.waitForFunction(() => document.querySelectorAll('nav[aria-label="Settings pages"] :is(a, button)').length === 18);
+    await page.waitForFunction(() => document.querySelectorAll('nav[aria-label="Settings pages"] :is(a, button)').length === 19);
     assert.deepEqual(await items.allTextContents().then((texts) => texts.map((text) => text.trim())),
       [...PAGES, "Profile & saved answers", "AI & privacy", ...APPLY_PAGES, ...RIKA_PAGES]);
     for (const item of await items.all()) assert.equal(await item.locator("svg").count(), 1, "index item without its icon");
@@ -218,7 +218,7 @@ describe("settings index", () => {
     await region(page, "Account").waitFor();
     assert.equal(await page.evaluate(() => location.hash), "#settings/account");
     await find.fill("");
-    assert.equal((await names()).length, 18);
+    assert.equal((await names()).length, 19);
     assert.deepEqual(problems, []);
     await context.close();
   });
