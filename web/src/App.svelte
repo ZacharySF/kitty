@@ -23,6 +23,7 @@
   import { isCloseTabShortcut } from "./lib/tabShortcut";
   import Onboarding from "./lib/Onboarding.svelte";
   import ModuleDownload from "./lib/ModuleDownload.svelte";
+  import { moduleStore } from "./lib/modulePicker.svelte";
   import PairingPrompt from "./lib/PairingPrompt.svelte";
   import EffectsPrompt from "./lib/EffectsPrompt.svelte";
   import BuildEditor from "./lib/BuildEditor.svelte";
@@ -364,8 +365,14 @@
   let background = $state(savedAppearance().background);
   const appearanceChanged = (event: Event) => (background = (event as CustomEvent<Appearance>).detail.background);
   let panelFullscreen: PanelFullscreen | undefined;
+  // After an update the downloads the older version left are fetched again for this one, behind
+  // ModuleDownload's cover, then put to use: the desktop app restarts, a browser tab reloads.
+  async function renewPacks() {
+    if ((await moduleStore.renew()) && !(await moduleStore.restart())) location.reload();
+  }
   onMount(() => {
     readRoute();
+    void renewPacks();
     const fullscreen = installPanelFullscreen(window, document);
     panelFullscreen = fullscreen.panels;
     window.addEventListener("kitty-study-text", studyText);

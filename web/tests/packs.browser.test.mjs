@@ -47,6 +47,8 @@ let work;
 let dist;
 let listed;
 let index;
+/** The Brain's entry in the release's index (Animations and Themes are packs there too). */
+const brainEntry = () => index.packs.find((pack) => pack.id === "brain");
 let release;
 let releaseUrl;
 /** The download being held half way: `gate.open()` lets it finish; `hold()` arms the next. */
@@ -114,9 +116,10 @@ function start() {
 
 /**
  * rika! as the desktop window opens it: rika-server's own origin, the secret handed in.
- * `firstRun` leaves the workspace's own account state, so the welcome opens.
+ * `firstRun` leaves the workspace's own account state, so the welcome opens. `desktop` stands
+ * in for the desktop shell: it collects the commands the page sends (a restart, here).
  */
-async function open(hash = "", { firstRun = false } = {}) {
+async function open(hash = "", { firstRun = false, desktop = null } = {}) {
   const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: shots ? 2 : 1 });
   await kitty.authorize(context);
   if (!firstRun) await context.route("**/api/account", (route) =>
@@ -124,6 +127,13 @@ async function open(hash = "", { firstRun = false } = {}) {
       ? route.fulfill({ json: { configured: false, identity: null, onboarding: { welcome_completed: true, tutorial_completed: true } } })
       : route.continue(),
   );
+  if (desktop) {
+    await context.route("**/api/desktop", (route) => route.fulfill({ json: { available: true, keep_running: false, keep_running_available: true } }));
+    await context.route("**/api/desktop/command", (route) => {
+      desktop.push(route.request().postDataJSON().command);
+      return route.fulfill({ json: { ok: true } });
+    });
+  }
   const page = await context.newPage();
   const problems = [];
   page.on("pageerror", (error) => problems.push(error.message));
@@ -153,7 +163,7 @@ describe("module packs", () => {
     if (shots) await page.screenshot({ path: join(shots, "home-brain-not-installed.png") });
     for (const name of listed) assert.equal(await asset(page, name), 404, `${name} is still served`);
     await page.goto(`${kitty.origin}/#settings/modules`);
-    await brainRow(page).getByText(megabytes(index.packs[0].size), { exact: true }).waitFor();
+    await brainRow(page).getByText(megabytes(brainEntry().size), { exact: true }).waitFor();
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -166,7 +176,7 @@ describe("module packs", () => {
     assert.equal(await card.locator('[data-module="brain"]').count(), 0, "a download is on before anything was touched");
     await card.getByRole("button", { name: "Building with agents", exact: true }).click();
     const row = card.locator('[data-module="brain"]');
-    const size = megabytes(index.packs[0].size);
+    const size = megabytes(brainEntry().size);
     await row.getByText(size, { exact: true }).waitFor();
     assert.equal(await row.getByRole("switch", { name: "Brain" }).getAttribute("aria-checked"), "true");
     assert.match((await card.locator(".total").innerText()).trim(), new RegExp(` on, ${size.replace(".", "\\.")} to download$`));
@@ -201,7 +211,7 @@ describe("module packs", () => {
     const { page, context, problems } = await open("#settings/modules");
     const modules = modulesRegion(page);
     const row = brainRow(page);
-    const size = megabytes(index.packs[0].size);
+    const size = megabytes(brainEntry().size);
     await row.getByText(size, { exact: true }).waitFor();
     const toggle = row.getByRole("switch", { name: "Brain" });
     const save = modules.getByRole("button", { name: "Save", exact: true });
@@ -256,12 +266,57 @@ describe("module packs", () => {
     await context.close();
   });
 
+  test("after an update the Brain an older version left downloads again by itself behind the cover, then rika! restarts", async () => {
+    await kitty.stop();
+    // What an update leaves behind: the pack is recorded for the version before this one.
+    const record = join(work, "xdg/kitty/packs/installed.json");
+    const installed = JSON.parse(readFileSync(record, "utf8"));
+    installed.brain.version = "0.0.1";
+    writeFileSync(record, JSON.stringify(installed));
+    hold();
+    kitty = await start();
+    const brain = async () => (await kitty.request("/packs")).packs.find((pack) => pack.id === "brain");
+    assert.equal((await brain()).state, "outdated");
+    for (const name of listed) assert.equal((await fetch(`${kitty.origin}/${name}`)).status, 404, `${name} is served from the older version's pack`);
+
+    const commands = [];
+    const { page, context, problems } = await open("", { desktop: commands });
+    const cover = page.locator("dialog.module-download[open]");
+    await cover.getByText("Downloading Brain…", { exact: true }).waitFor();
+    const bar = cover.getByRole("progressbar", { name: "Total download progress" });
+    await page.waitForFunction(() => Number(document.querySelector("dialog.module-download [role='progressbar']")?.getAttribute("aria-valuenow")) > 0);
+    const done = Number(await bar.getAttribute("aria-valuenow"));
+    assert.ok(done > 0 && done < 100, `progress ${done}%`);
+    assert.deepEqual(commands, [], "rika! restarted before the download arrived");
+    await shot(page, "update-renewing-brain");
+
+    gate.open();
+    await page.waitForFunction(() => !document.querySelector("dialog.module-download[open]"));
+    for (let waited = 0; !commands.length && waited < 10_000; waited += 50) await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.deepEqual(commands, ["restart"]);
+    assert.deepEqual([(await brain()).state, (await brain()).installed_version], ["installed", index.version]);
+    assert.deepEqual(problems, []);
+    await context.close();
+
+    // The restart: the Brain is drawn from this version's pack and nothing downloads again.
+    await kitty.stop();
+    kitty = await start();
+    const after = await open("", { desktop: commands });
+    await after.page.getByRole("navigation", { name: "Workspace groups" }).getByRole("button", { name: "Brain" }).click();
+    await after.page.locator(".atlas .stage canvas >> visible=true").first().waitFor({ timeout: 30_000 });
+    assert.equal(await after.page.getByRole("heading", { name: "Brain isn't installed" }).count(), 0);
+    assert.equal(await after.page.locator("dialog.module-download[open]").count(), 0);
+    assert.deepEqual(commands, ["restart"], "rika! restarts again with nothing left to download");
+    assert.deepEqual(after.problems, []);
+    await after.context.close();
+  });
+
   test("with the Brain off its download can be removed", async () => {
     await kitty.request("/modules", { enabled: ["workspace"] });
     const { page, context, problems } = await open("#settings/modules");
     const row = brainRow(page);
     await row.getByRole("button", { name: "Remove Brain download" }).click();
-    await row.getByText(megabytes(index.packs[0].size), { exact: true }).waitFor();
+    await row.getByText(megabytes(brainEntry().size), { exact: true }).waitFor();
     for (const name of listed) assert.equal(await asset(page, name), 404);
     const packs = await kitty.request("/packs");
     assert.equal(packs.packs.find((pack) => pack.id === "brain").state, "available");

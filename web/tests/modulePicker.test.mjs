@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { transform } from 'esbuild';
 import { compileModule } from 'svelte/compiler';
 import {
-  megabytes, moduleObtainable, moduleReady, preselect, sameSelection, totalLine, totals, withoutDownload,
+  megabytes, moduleObtainable, moduleReady, preselect, renewals, sameSelection, totalLine, totals, withoutDownload,
 } from '../src/lib/modulePicker.ts';
 
 const registry = JSON.parse(readFileSync(new URL('../../src/kitty/modules.json', import.meta.url), 'utf8'));
@@ -63,6 +63,16 @@ test('ready means built in or installed; a download in flight is not ready yet',
     assert.equal(moduleReady(byId('brain'), listing({ brain: state })), ready, state);
 });
 
+test('after an update the packs an older version left are wanted again: the saved modules\' and those no module owns', () => {
+  const packs = listing({ math: 'outdated', voice: 'outdated', brain: 'outdated', themes: 'outdated', herdr: 'installed', animations: 'installed' });
+  const ids = (configured) => renewals(available, configured, packs).map((pack) => pack.id);
+  // Math is off: its old download waits until Math is turned on again.
+  assert.deepEqual(ids(['workspace', 'terminal', 'voice', 'brain']), ['voice', 'brain', 'themes']);
+  assert.deepEqual(ids(['workspace']), ['themes']);
+  assert.deepEqual(renewals(available, ['workspace', 'brain'], listing({ brain: 'available' })), [], 'a pack never downloaded is not fetched by itself');
+  assert.deepEqual(renewals(available, ['workspace', 'brain'], null), []);
+});
+
 test('the total counts each pack once and names what is unsized', () => {
   const packs = listing();
   const none = totals(available, ['workspace'], packs);
@@ -113,11 +123,11 @@ async function loadStore() {
   return import(pathToFileURL(`${scratch}store.mjs`).href);
 }
 
-function fakeServer({ configured = ['workspace'], states = {}, desktop = false, failing = '' } = {}) {
+function fakeServer({ configured = ['workspace'], states = {}, desktop = false, failing = '', offline = '' } = {}) {
   const state = { configured: [...configured], enabled: [...configured], calls: [], packs: { ...states }, polls: {} };
   const modules = () => ({ enabled: state.enabled, configured: state.configured, available, restart_required: !sameSelection(state.configured, state.enabled), missing: [] });
   const packs = () => {
-    const now = listing(state.packs);
+    const now = listing(state.packs, offline || undefined);
     for (const pack of now.packs) {
       if (pack.state !== 'downloading') continue;
       state.polls[pack.id] += 1;
@@ -234,5 +244,43 @@ test('the store', async (t) => {
     fresh();
     assert.equal(await store.restart(), false);
     assert.deepEqual([store.restarting, store.desktop, store.error], [false, false, '']);
+  });
+
+  await t.test('renew downloads again what an older version left, as one measure, and saves no selection', async () => {
+    fresh({ configured: ['workspace', 'voice', 'brain'], states: { math: 'outdated', voice: 'outdated', brain: 'outdated', herdr: 'installed' } });
+    const seen = [];
+    const watch = setInterval(() => { if (store.progress) seen.push({ ...store.progress, phase: store.phase }); }, 1);
+    assert.equal(await store.renew(), true);
+    clearInterval(watch);
+    assert.deepEqual(posts(), ['/packs/install {"id":"voice"}', '/packs/install {"id":"brain"}']);
+    assert.deepEqual([server.packs.voice, server.packs.brain, server.packs.math], ['installed', 'installed', 'outdated']);
+    assert.ok(seen.length && seen.every((step) => step.total === SIZES.voice + SIZES.brain && step.phase === 'downloading'));
+    assert.ok(seen.some((step) => step.label === 'Brain' && step.received >= SIZES.voice), 'the second pack starts where the first ended');
+    assert.deepEqual([store.phase, store.progress, store.packsError], ['', null, '']);
+  });
+
+  await t.test('renew with nothing left from an older version downloads nothing and never shows a download', async () => {
+    fresh({ configured: ['workspace', 'brain'], states: { brain: 'installed' } });
+    const phases = new Set();
+    const watch = setInterval(() => phases.add(store.phase), 1);
+    assert.equal(await store.renew(), false);
+    clearInterval(watch);
+    assert.deepEqual(posts(), []);
+    assert.deepEqual([...phases].filter(Boolean), []);
+  });
+
+  await t.test('renew tries nothing while this version\'s download list cannot be reached', async () => {
+    fresh({ configured: ['workspace', 'brain'], states: { brain: 'outdated' }, offline: 'rika! could not reach GitHub to check for downloads' });
+    assert.equal(await store.renew(), false);
+    assert.deepEqual(posts(), []);
+    assert.equal(store.phase, '');
+  });
+
+  await t.test('a renewal that fails says which pack, reports nothing to restart for and leaves the store usable', async () => {
+    fresh({ configured: ['workspace', 'voice', 'brain'], states: { voice: 'outdated', brain: 'outdated' }, failing: 'brain' });
+    assert.equal(await store.renew(), false);
+    assert.equal(store.packsError, 'Brain: The download was cut off');
+    assert.equal(server.packs.voice, 'installed', 'what already arrived stays');
+    assert.deepEqual([store.phase, store.progress], ['', null]);
   });
 });

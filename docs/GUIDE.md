@@ -151,8 +151,13 @@ per pack plus an index, `packs.json`, signed with the same key as the app's upda
 rika! downloads only the index of its own version, checks the signature against the key
 built into the app, then the archive's size and SHA-256 against that index, and installs
 it in one atomic step under `$XDG_DATA_HOME/kitty/packs/` (`~/.local/share/kitty/packs/`);
-a download that fails or does not match changes nothing. After an app update the old
-pack shows **Download** again: a pack is tied to the build it came with. Without the
+a download that fails or does not match changes nothing. A pack is tied to the build it
+came with, so the first start after an app update downloads again, behind a full-window
+cover with one progress bar, the packs of the modules that are on (and Themes and
+Animations if they were downloaded), then restarts once so they are used; a browser tab
+reloads instead. The pack of a module that is off shows its size again and downloads when
+the module is turned on. Offline, or if a download fails, nothing restarts: it is tried
+again at the next start, and Settings → Modules → **Save** downloads the same packs. Without the
 Brain module there is no Brain entry in the header and nothing else changes. A module that
 is on without its pack (a workspace from before packs, or `kitty modules enable`, which does
 not check) degrades the same way everywhere: the Brain view shows a "Brain isn't installed"
