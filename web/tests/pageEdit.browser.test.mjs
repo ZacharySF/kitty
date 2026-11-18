@@ -456,7 +456,7 @@ describe("Home layout editing", () => {
     await context.close();
   });
 
-  test("the dividers between the widget columns and before Rika's column set their widths, within limits, and keep them after a reload", async () => {
+  test("the dividers between the widget columns and beside Rika's column set their widths, within limits, and keep them after a reload", async () => {
     const { page, problems, context } = await open("today");
     const board = await editHome(page);
     const columns = board.locator(".column");
@@ -474,8 +474,8 @@ describe("Home layout editing", () => {
     await dragBy(page, grip, room.x + room.width * 0.6 - grip.x, 0);
     const [wider, narrower] = await widths();
     assert.ok(wider - left >= 60 && right - narrower >= 60 && wider < widest, `columns ${wider} | ${narrower}, from ${left} | ${right}`);
-    // Rika's column grows to the left.
-    await dragBy(page, center(await page.getByRole("separator", { name: "Width of Rika's column" }).boundingBox()), -100, 0);
+    // Rika's column, on the left, grows to the right.
+    await dragBy(page, center(await page.getByRole("separator", { name: "Width of Rika's column" }).boundingBox()), 100, 0);
     const [, , broader] = await widths();
     assert.ok(broader - panel >= 60, `Rika's column is ${broader}, from ${panel}`);
     const set = await widths();

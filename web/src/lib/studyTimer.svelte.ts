@@ -18,7 +18,7 @@ export type Timer = {
 export type TimerResult = {
   timer: Timer;
   server_now: string;
-  settings?: { sound: boolean; notifications: boolean };
+  settings?: { sound: boolean; notifications: boolean; focus_seconds?: number };
 };
 
 const CACHE = "kitty-study-focus-bar";

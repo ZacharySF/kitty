@@ -15,11 +15,10 @@
   });
 </script>
 
-<HomeWidget {id} title="Flashcards" icon="flashcards">
-  {#snippet tail()}{#if due}<button type="button" class="text-button" onclick={() => onview("flashcards")}>Review</button>{/if}{/snippet}
+<HomeWidget {id} title="Flashcards" icon="flashcards" hero tint="var(--tile-3)" opens="flashcards" onopen={() => onview("flashcards")}>
   {#if error}<p class="note" role="alert">{error}</p>
   {:else if due !== null}
-    <p class="big"><strong>{due}</strong><span>{due === 1 ? "card due" : "cards due"}</span></p>
+    <p class="big"><strong class="figure">{due}</strong><span>{due === 1 ? "card due" : "cards due"}</span></p>
   {/if}
 </HomeWidget>
 
@@ -28,15 +27,7 @@
     margin: 0;
   }
   .big {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-  }
-  .big strong {
-    color: var(--ink);
-    font: 600 34px/1.1 var(--font-ui);
-    letter-spacing: -0.02em;
-    font-variant-numeric: tabular-nums;
+    display: grid;
   }
   .big span,
   .note {
