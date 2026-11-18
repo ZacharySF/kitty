@@ -72,3 +72,4 @@
 - No "Open" links: a widget's title opens its page (a chevron marks it) and the whole tile presses it. Controls that act (Start, Find jobs) stay buttons.
 - Focus is no longer "a single line with a hairline bar"; the shared timer with Study stands.
 - Rika stands on the left of home by default and moves in edit mode (owner requests): its handle drags it to the middle (between the two widget columns), the right or back to the left, landing in the third of home it is held over; Left/Right on the handle does the same. `ui.home.rika_side` keeps it. Unless it is on the right Rika also comes first in the page, so Tab follows what is seen.
+- Small tiles (owner chose them over uniform tiles): Clock, Focus and Flashcards need half a column, so two next to each other in a column stand side by side as squares and a board of five widgets has no empty cell. A lone small tile fills its row, so no arrangement saved before changes.
