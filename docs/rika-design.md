@@ -166,6 +166,8 @@ Risk is mixed because a wrong auto-reply can't be unsent.
 
 B lost because it makes a consumer agent depend on a terminal tool. C lost because it duplicates auth and data access.
 
+**Later addition: omp as a model, not as the engine.** Each computer can choose omp instead of OpenRouter as the service the loop's model requests go to (Settings → AI → Rika's brain, `kitty.core.rika.brain`). The loop stays A: Rika's tools, approvals, readout and ledger record are unchanged. Only the Chat Completions request goes through `omp auth-gateway stdio` on omp's own sign-in (`kitty.core.rika.omp`), so a Claude subscription can stand in for an OpenRouter key. B stays rejected: no omp session runs Rika, and omp's own tools are never offered to the model.
+
 ## Routine choices
 
 - **Q2, where conversations show:** D. Replies appear as toasts above the bar, and the history drawer holds the full conversation. The bar never grows into a sheet.

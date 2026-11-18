@@ -1799,6 +1799,18 @@ text and never turn on search. Models with a per-request fee, built-in search
 **Rika** is rika!'s own agent (design: `docs/rika-design.md`). You type to it in
 its panel on home or its drawer (Ctrl+J), and it does the work through the app's own functions.
 
+- **Brain.** Rika thinks with OpenRouter (the key and models of **Settings → AI**)
+  or with omp, the coding agent, chosen per computer under
+  **Settings → AI → Rika's brain** and kept owner-only in `.private/rika/brain.json`
+  (OpenRouter until you choose). With omp, no OpenRouter key is needed. Each request
+  goes through `omp auth-gateway stdio` and uses whatever omp on this computer is
+  signed in with, such as a Claude subscription. The tools, approvals, readout and
+  `ai_reviews` record stay the same. The request leaves out OpenRouter's routing and
+  price fields, reserves nothing and is outside the daily limit, because omp's
+  sign-in bills it. Each tier has an omp model, Claude Haiku, Sonnet and Opus by
+  default; any omp `--model` selector works there. The reply arrives whole, not word
+  by word. If omp is not on `PATH`, Rika says so and sends nothing. The morning
+  brief's model check and drafted email replies use the same brain.
 - **Tiers.** Each request goes to the smallest tier that can do it:
   - **fast** for talk, simple edits, and everything you say aloud;
   - **standard** for planning ("plan my week") and a brain dump's plan;
@@ -1972,7 +1984,7 @@ its panel on home or its drawer (Ctrl+J), and it does the work through the app's
   cancelled draft. Connect Gmail with **Connect** there or `uv run kitty gmail auth
   --compose`: a separate token (`data/gmail_compose_token.json`, read + compose)
   from the read-only job-status token.
-- **Demo.** The demo never calls OpenRouter or Gmail, downloads no voice model and
+- **Demo.** The demo never calls OpenRouter, omp or Gmail, downloads no voice model and
   starts no speech engine. The simple phrases above work. Anything else gets a
   scripted reply. Holding Space "hears" the canned `Add a task Read chapter 3
   tomorrow`, and a brain dump hears a canned student's week with a scripted plan in

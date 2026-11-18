@@ -37,7 +37,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from kitty.core import goals, reposync
-from kitty.core.rika import followups, llm, router, store
+from kitty.core.rika import followups, llm, store
 from kitty.dates import parse as parse_instant
 from kitty.db import connect
 from kitty.db.connection import transaction
@@ -286,7 +286,7 @@ def _classify(app, conn, pairs: list[Pair]) -> tuple[dict[int, float] | None, De
     messages = [{"role": "system", "content": CLASSIFY_SYSTEM},
                 {"role": "user", "content": "Untrusted candidate data follows as JSON.\n" + json.dumps(payload, ensure_ascii=False)}]
     try:
-        call = llm.prepare(app, conn, router.models(conn)["fast"], messages, [])
+        call = llm.prepare(app, conn, llm.model_for(app, conn, "fast"), messages, [])
     except llm.ModelUnavailable as exc:
         return None, None, f"Skipped the model check of {count}: {exc}"
     if not llm.fits_budget(conn, call):

@@ -42,7 +42,7 @@ from typing import Any, Protocol
 import requests
 
 from kitty.core.gmail import auth, fetch
-from kitty.core.rika import llm, router, store
+from kitty.core.rika import llm, store
 from kitty.db.connection import transaction
 
 log = logging.getLogger(__name__)
@@ -499,7 +499,7 @@ def _parse_reply(text: str) -> tuple[str, str]:
 
 def _ask_model(app, conn: sqlite3.Connection, row) -> tuple[str, str]:
     """One standard-tier request; never over today's budget (no approval in the background)."""
-    call = llm.prepare(app, conn, router.models(conn)["standard"], _prompt(conn, row), [])
+    call = llm.prepare(app, conn, llm.model_for(app, conn, "standard"), _prompt(conn, row), [])
     if not llm.fits_budget(conn, call):
         raise _NoModel("drafting would go over today's AI budget (Settings → AI)")
     reservation = llm.reserve(conn, call)
