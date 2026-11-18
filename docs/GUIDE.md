@@ -5,7 +5,7 @@ database. The [README](../README.md) is the short overview.
 
 A local workspace with four optional built-in modules: **ApplyAI** for job discovery,
 application preparation and tracking, **Workspace** for notes, documents, study and
-planning, **Terminal** for rika!'s own bundled herdr terminal session, and **Brain**, the
+planning, **Terminal** for rika!'s own herdr terminal session (herdr is a download), and **Brain**, the
 3D brain and 2D map of the workspace, whose code is a separate download. The shell and settings work with any
 combination of modules, or none.
 
@@ -106,7 +106,10 @@ Existing workspaces with no module selection keep every module rika! had before 
 (all but the Brain); a pre-build `config/modules.yaml` is moved into `config/build.json` on
 the first open. Math and LearnHarness used to be part of Workspace and Voice part of the
 core: a saved selection from before keeps Workspace but has them off until you turn them
-on. Fresh CLI and desktop workspaces start core-only. The database still uses the existing global
+on. A fresh workspace (`kitty init`, or the desktop app's first open) is saved core-only.
+The desktop and website's first-run module question then starts with every module that
+needs no download switched on (in the installer that is Workspace) and saves what you
+keep. The database still uses the existing global
 migrations; disabling does not drop tables or run down-migrations.
 
 ### External modules
@@ -230,8 +233,8 @@ safe mode is on and switches it.
 
 ### Terminal module
 
-The desktop app bundles a pinned herdr (v0.9.5, Apache-2.0; its licence ships as
-`licenses/herdr/LICENSE`) and never uses a herdr found on `PATH`. rika! runs it as
+The Terminal module's pack carries a pinned herdr (v0.9.5, Apache-2.0; its licence ships in
+the pack as `licenses/herdr/LICENSE`); the installers carry none. rika! never uses a herdr found on `PATH`. rika! runs it as
 its own named session, `kitty` (never herdr's `default` session), so agents can
 reach it with `herdr --session kitty`. Its sockets live where herdr keeps named
 sessions, `~/.config/herdr/sessions/kitty/`: rika! creates that directory
@@ -269,14 +272,14 @@ The header-protected `POST /api/terminal/agents` accepts only the selected kind;
 herdr creates the tab and starts the agent in the exact returned pane. Failed or
 blocked startup keeps the tab and reports its IDs rather than retrying or killing it.
 
-The skill comes from the bundled binary's `--skill` output, saved owner-only in
+The skill comes from the pinned binary's `--skill` output, saved owner-only in
 `.private/herdr/SKILL.md`. omp and Claude receive it through their native appended
 system-instruction file option; Codex receives a developer instruction to read and
-follow that file. Only that tab's `PATH` gets a private `herdr` alias to the bundled
+follow that file. Only that tab's `PATH` gets a private `herdr` alias to the pinned
 binary, so the skill's commands work without a separate herdr installation. No
 global skill, agent configuration or existing project instruction file is changed.
 
-**Attach external agent** shows the actual bundled binary, named session and
+**Attach external agent** shows the actual pinned binary, named session and
 workspace directory (`GET /api/terminal/agents`; reading never starts herdr).
 External agents use herdr's own CLI/socket, not a rika!-specific control API:
 list workspaces, create a separately labelled tab with `tab create --workspace
@@ -289,7 +292,7 @@ line and how long it has been in that state; **Open window** focuses its Tern wi
 Local CLI/socket access grants full shell access as your user.
 
 **Tern (optional).** With the module on, the **Tern** node under Plan shows
-[Stencil Tern](https://stencil.so/tern) beside herdr. herdr stays the bundled
+[Stencil Tern](https://stencil.so/tern) beside herdr. herdr stays the pinned
 default; rika! never bundles Tern (closed-beta, proprietary) and only runs the
 `tern` you installed: the one on `PATH`, or the path saved in the view's **Tern
 executable** section (`.private/tern/settings.json`, owner-only). Without it the view
@@ -838,6 +841,21 @@ the Home Screen, the Lock Screen, Control Center and the Action button.
 **A "today" widget** with the free Scriptable app: a script that requests
 `/phone/v1/today` with the same header and lists `events` and `tasks` shows the day
 on the Home Screen (the phone needs the "also show today" choice).
+
+### Device sync
+
+**Settings → Devices** pairs two of your computers with a 6-character code and keeps
+their notes in step, encrypted between the two, over your network or Tailscale (port
+8770). Pause sync, Sync now and Unpair are there too. It covers less than the whole
+workspace:
+
+- **Synced:** block content, that is pages, documents, quick notes and tags.
+- **Not synced:** attachment files (an image block arrives without its image),
+  notebooks and folders themselves, jobs, applications, calendar, study, settings.
+- **Both devices must be on at the same time.** There is no relay or server in between.
+
+Sync is not a backup: a deletion travels like any other change.
+Design and limits: `docs/platform-design.md`, "Build step 3".
 
 ### GitHub backup
 
@@ -2244,8 +2262,8 @@ Demo restrictions intentionally prevent testing live employer, Gmail or paid cal
 ### Download, install, and launch
 
 Open the **[latest desktop release](https://github.com/ZacharySF/rika/releases/latest)**.
-Downloads are published in a separate public, releases-only repository; application
-source is not included. The supported downloadable platform is **Linux x86_64**,
+Downloads are published in a separate public, releases-only repository; the source is
+this repository, [ZacharySF/kitty](https://github.com/ZacharySF/kitty) (MIT). The supported downloadable platform is **Linux x86_64**,
 built on Ubuntu 22.04 (glibc 2.35); older distributions, ARM, Windows and macOS
 are not supported by these installers.
 
@@ -2438,12 +2456,12 @@ and native Rust tests before the official
 the `.deb`, `.AppImage`, their `.sig` files and `latest.json` to a **draft** in the
 public releases repository. A guard downloads the actual uploaded files and
 validates the version/tag, nonempty complete assets, signatures and installer-specific
-`linux-x86_64-deb` / `linux-x86_64-appimage` metadata, and that both installers
-carry the pinned herdr and the same unpacked backend (which must start), before
+`linux-x86_64-deb` / `linux-x86_64-appimage` metadata, that the herdr pack carries the
+pinned herdr and the installers none, and that both installers carry the same unpacked backend (which must start), before
 publishing as latest.
 A failed guard leaves a draft, not a new public updater feed.
 No rika! source archive, checkout, private workspace or applicant data is uploaded
-by the workflow. Bundles do include LearnHarness's public corresponding source and
+by the workflow. The LearnHarness pack includes LearnHarness's public corresponding source and
 licenses; GitHub's automatic source archives cover only the releases repository.
 
 The signed updater feed is

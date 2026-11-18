@@ -100,11 +100,11 @@ jobs:
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
         run: |
           cat > release-notes.md <<'NOTES'
-          Download the .deb for Ubuntu 22.04+ / compatible Debian-based desktops, or the AppImage for other compatible Linux desktops.
+          Download the .deb for Ubuntu 22.04+ / compatible Debian-based desktops, or the AppImage for other compatible Linux desktops. Linux x86_64 only: there is no Windows, macOS or ARM build.
           Install once, then launch rika! from your application menu. The native tray menu checks for signed updates.
           Application updates preserve the separate local workspace; do not delete that workspace when replacing the application.
           AppImage users: keep the file in a writable directory and enable its executable permission in your file manager.
-          Only installers, signatures, module packs and updater metadata are published here; rika! source remains private. The LearnHarness download includes its corresponding source and licenses.
+          Only installers, signatures, module packs and updater metadata are published here; rika!'s source is public at https://github.com/ZacharySF/kitty (MIT). The LearnHarness download includes its corresponding source and licenses.
           NOTES
           uv run --no-project python scripts/publish-desktop-release.py --tag "$RELEASE_TAG" \
             --notes release-notes.md --title "rika! $RELEASE_TAG (Linux x86_64)"
