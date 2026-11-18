@@ -33,6 +33,13 @@ The private checkpoint records progress, not new authorization.
   Redact contact details before sending resume text. Resume editing is a separate,
   local deterministic operation: no hosted AI or uploads.
 
+## UI changes
+
+- Before any UI change, use the `rika-ui-polish` skill (`.claude/skills/rika-ui-polish/`);
+  finish with its Verify section. Its rules and `docs/frontend-fidelity-design.md` beat any
+  generic design skill. Impeccable is installed for review only (`critique`, `audit` and its
+  detector hook); do not let it restyle screens or write PRODUCT.md/DESIGN.md.
+
 ## Architecture and invariants
 
 - Python core under `src/kitty/core/` has no Textual or Typer imports. CLI, TUI and
