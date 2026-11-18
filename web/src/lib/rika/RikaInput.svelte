@@ -1,7 +1,9 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { onDestroy, onMount } from "svelte";
+  import Select from "../ui/Select.svelte";
   import { SpaceHold } from "./hold";
   import { activeModules } from "../modules.svelte";
+  import { brain, THINKING_LABELS, type Thinking } from "./brain.svelte";
   import { downloadLabel, voiceEnabled } from "./rika";
   import RikaMark from "./RikaMark.svelte";
   import { rika } from "./session.svelte";
@@ -14,8 +16,19 @@
    * again; Brain dump beside the field starts one directly. Both are the voice module's:
    * without it Space types and there is no Brain dump. Escape drops what is being said.
    * While Rika listens or writes, the mark turns and the field's edge takes the accent;
-   * nothing else is drawn for it.
+   * nothing else is drawn for it. While Rika thinks with omp, the chip at the field's end
+   * sets how hard it thinks (kitty.core.rika.brain), as in Claude's own apps.
    */
+  onMount(() => { brain.load().catch(() => {}); });
+  const thinking = $derived(brain.current?.provider === "omp" ? brain.current : null);
+  const thinkingOptions = $derived((thinking?.thinking_levels ?? []).map((level) => ({ value: level, label: THINKING_LABELS[level] })));
+  async function setThinking(level: string) {
+    try {
+      await brain.save({ thinking: level as Thinking });
+    } catch (cause) {
+      rika.error = (cause as Error).message;
+    }
+  }
   let value = $state("");
   let input = $state<HTMLInputElement>();
   const listening = $derived(rika.listening);
@@ -95,11 +108,15 @@
 
 <svelte:window onkeyup={keyup} />
 <div class="rika-compose">
-  <label class="rika-field" class:working={rika.streaming || listening} data-streaming={String(rika.streaming)}
-    data-listening={listening ? rika.voice.mode : undefined}>
+  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+  <div class="rika-field" class:working={rika.streaming || listening} data-streaming={String(rika.streaming)}
+    data-listening={listening ? rika.voice.mode : undefined} onclick={(event) => { if (event.target === event.currentTarget) input?.focus(); }}>
     <RikaMark size={16} active={rika.streaming || listening} />
     <input bind:this={input} bind:value placeholder={heard} aria-label="Ask Rika" aria-busy={listening} spellcheck="false" autocomplete="off" onkeydown={keydown} />
-  </label>
+    {#if thinking}<span class="thinking" title="How hard Rika thinks before answering">
+      <Select kind="list" label="Thinking" value={thinking.thinking} options={thinkingOptions} onchange={setThinking} />
+    </span>{/if}
+  </div>
   {#if voiceOn}<button type="button" class="pill dump" disabled={rika.listening} title="Talk as long as you like; Rika plans it for you to approve"
     onclick={() => { rika.showDrawer("conversation"); void rika.listen("dump"); }}>Brain dump</button>{/if}
 </div>
@@ -122,12 +139,35 @@
     align-items: center;
     gap: 10px;
     min-width: 0;
-    height: 40px;
-    padding: 0 12px;
+    height: 44px;
+    padding: 0 6px 0 14px;
     border: 1px solid var(--hairline);
-    border-radius: var(--r-field);
+    border-radius: 14px;
     background: color-mix(in srgb, var(--solid-inset, #111) 45%, transparent);
     cursor: text;
+    transition: border-color 120ms ease;
+  }
+  /* The thinking chip: a quiet label at the field's end, a menu when pressed. */
+  .thinking {
+    flex: none;
+    display: flex;
+  }
+  .thinking :global(.select-trigger) {
+    min-width: 0;
+    height: 30px;
+    padding: 0 10px;
+    border-color: transparent;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--ink) 6%, transparent);
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .thinking :global(.select-trigger)::before {
+    content: "Thinking";
+    color: var(--subtle);
+  }
+  .thinking :global(.select-trigger:hover) {
+    color: var(--ink);
   }
   .rika-field:focus-within {
     border-color: var(--br-lineHot);

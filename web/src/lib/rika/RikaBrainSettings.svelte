@@ -1,33 +1,23 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api } from "../api";
+  import { brain as store, type Brain, type Tier } from "./brain.svelte";
 
   /**
    * Settings → AI → Rika's brain (kitty.core.rika.brain): what Rika thinks with on this
    * computer. omp uses the omp coding agent's own sign-in (a Claude subscription, for
    * example), so no OpenRouter key is needed; OpenRouter uses the key and models below.
+   * The thinking level is chosen beside Rika's field.
    */
-  type Tier = "fast" | "standard" | "deep";
-  type Brain = {
-    provider: "openrouter" | "omp";
-    models: Record<Tier, string>;
-    defaults: Record<Tier, string>;
-    omp_installed: boolean;
-  };
   const TIERS: [Tier, string][] = [["fast", "Fast tier"], ["standard", "Standard tier"], ["deep", "Deep tier"]];
-  let brain = $state<Brain | null>(null);
+  const brain = $derived(store.current);
   let models = $state<Record<Tier, string>>({ fast: "", standard: "", deep: "" });
   let error = $state("");
   let message = $state("");
   let busy = $state(false);
 
-  function show(next: Brain) {
-    brain = next;
-    models = { ...next.models };
-  }
   onMount(async () => {
     try {
-      show(await api<Brain>("/rika/brain"));
+      models = { ...(await store.load(true)).models };
     } catch (cause) {
       error = (cause as Error).message;
     }
@@ -37,7 +27,7 @@
     error = "";
     message = "";
     try {
-      show(await api<Brain>("/rika/brain", { provider, models }));
+      models = { ...(await store.save({ provider, models })).models };
       message = provider === "omp" ? "Rika now thinks with omp." : "Rika now thinks with OpenRouter.";
     } catch (cause) {
       error = (cause as Error).message;

@@ -103,8 +103,9 @@ def prepare(app, conn: sqlite3.Connection, model_id: str, messages: list[dict], 
     web_ai = _web_ai()
     if app.settings.demo:
         raise ModelUnavailable("The demo never calls a model")
-    if brain.load(app.settings).provider == "omp":
-        return _prepare_omp(conn, model_id, messages, tools)
+    chosen = brain.load(app.settings)
+    if chosen.provider == "omp":
+        return _prepare_omp(conn, model_id, messages, tools, chosen.thinking)
     try:
         key = web_ai._key(app)
     except APIError as exc:
@@ -138,13 +139,15 @@ def prepare(app, conn: sqlite3.Connection, model_id: str, messages: list[dict], 
     return Call(model_id, body, key, cost, web_ai._fingerprint(app, settings))
 
 
-def _prepare_omp(conn: sqlite3.Connection, model_id: str, messages: list[dict], tools: list[dict]) -> Call:
+def _prepare_omp(conn: sqlite3.Connection, model_id: str, messages: list[dict], tools: list[dict], thinking: str) -> Call:
     if omp.program() is None:
         raise ModelUnavailable("omp is not installed (not found on PATH); install it, or choose OpenRouter as "
                                "Rika's brain in Settings → AI")
     web_ai = _web_ai()
     settings = web_ai._settings(conn)
     body = {"model": model_id, "messages": messages, "max_tokens": settings["max_output_tokens"], "stream": False}
+    if thinking != "off":
+        body.update(reasoning_effort=thinking, max_tokens=max(settings["max_output_tokens"], brain.THINKING_MAX_TOKENS))
     if tools:
         body.update(tools=tools, tool_choice="auto")
     return Call(model_id, body, "", Decimal(0), web_ai._binding(settings, "omp"), provider="omp")

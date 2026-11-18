@@ -112,7 +112,7 @@ def build(workspace, no_network):  # noqa: F811 - the fixture imported above
 
 def test_the_brain_is_openrouter_until_omp_is_chosen_and_the_choice_is_private(workspace):
     settings = workspace.settings
-    assert brain.load(settings) == brain.Brain("openrouter", {"fast": "", "standard": "", "deep": ""})
+    assert brain.load(settings) == brain.Brain("openrouter", {"fast": "", "standard": "", "deep": ""}, "off")
     saved = brain.save(settings, "omp", {"fast": "", "standard": "anthropic/claude-sonnet-5-5", "deep": ""})
     assert saved == brain.load(settings)
     assert brain.models(saved) == {**brain.OMP_DEFAULTS, "standard": "anthropic/claude-sonnet-5-5"}
@@ -250,14 +250,37 @@ def test_the_brain_is_read_and_chosen_over_http(tmp_path, fake_omp):
     with site(make_root(tmp_path, ("workspace",))) as running:
         status, answer = running.request("/api/rika/brain")
         assert status == 200 and answer == {"provider": "openrouter", "models": {"fast": "", "standard": "", "deep": ""},
+                                            "thinking": "off", "thinking_levels": list(brain.THINKING),
                                             "defaults": brain.OMP_DEFAULTS, "omp_installed": True}
         status, answer = running.request("/api/rika/brain", {"provider": "omp", "models": {"deep": "anthropic/claude-opus-5"}})
         assert status == 200 and answer["provider"] == "omp" and answer["models"]["deep"] == "anthropic/claude-opus-5"
         assert brain.load(running.app.settings).provider == "omp"
         status, answer = running.request("/api/rika/brain", {"provider": "openrouter"})
         assert status == 200 and answer["provider"] == "openrouter" and answer["models"]["deep"] == ""
+        status, answer = running.request("/api/rika/brain", {"provider": "omp", "thinking": "high"})
+        assert status == 200 and answer["thinking"] == "high" and brain.load(running.app.settings).thinking == "high"
         for body in ({"provider": "anthropic"}, {"provider": "omp", "models": {"fast": "--help"}}, {"provider": "omp", "key": "x"},
-                     {"models": {}}):
+                     {"models": {}}, {"provider": "omp", "thinking": "ultra"}, {"provider": "omp", "thinking": 3}):
             assert running.request("/api/rika/brain", body)[0] == 400
+        running.request("/api/rika/brain", {"provider": "openrouter"})
         assert brain.load(running.app.settings).provider == "openrouter"
         assert running.request("/api/rika/brain", {"provider": "omp"}, headers={"X-Kitty-Request": None})[0] == 403
+
+
+@pytest.mark.parametrize(("level", "effort"), [("off", None), ("low", "low"), ("high", "high"), ("max", "max")])
+def test_the_thinking_level_rides_on_every_omp_request(build, workspace, fake_omp, level, effort):
+    brain.save(workspace.settings, "omp", {}, thinking=level)
+    fake_omp.replies([_text("Start with kinematics.")])
+    app, events = build()
+    app.rika.submit(workspace.conn, "what should I study first?")
+    assert of(until(events, finished), "message")[-1]["message"]["text"] == "Start with kinematics."
+    [request] = fake_omp.requests
+    assert request["body"].get("reasoning_effort") == effort
+    # Thinking spends output tokens first, so a thinking request gets room for both.
+    assert request["body"]["max_tokens"] == (2048 if effort is None else brain.THINKING_MAX_TOKENS)
+
+
+def test_saving_the_brain_without_a_thinking_level_keeps_the_saved_one(workspace):
+    brain.save(workspace.settings, "omp", {}, thinking="medium")
+    brain.save(workspace.settings, "omp", {"fast": "anthropic/claude-haiku-4-5"})
+    assert brain.load(workspace.settings).thinking == "medium"
