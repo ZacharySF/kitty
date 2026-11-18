@@ -1757,7 +1757,23 @@ forms**; × clears the ticks. On a job map (2D), every point carries its name.
 
 Home's **Edit** also colour-codes widgets: drag one of the six colours in the bar onto a
 widget, or press a colour and then a widget (the empty ring clears it). The colours are the
-active theme's own (`ui.home.tones` in the build).
+active theme's own (`ui.home.tones` in the build). A colour-coded widget is a **tile**:
+every tile is the same height (a share of an even column's width; one with more to show
+grows, one sized by hand keeps its height), so rows line up across the two columns. Its
+title is a small label at the top (its icon on a badge while the Icons module is on), what
+it shows is the largest thing on it, and a gauge, dial or chart stands on its right (under
+the content in a narrow tile). On the Black theme what a tile draws is in colour (the
+theme's `--tile-1` to `--tile-6`: blossom, sky, mint, violet, amber, coral), and the tile
+carries a wash of its own colour; other themes draw with their six data colours.
+
+A widget that has a page (Goals, This week, Applications, Flashcards, Focus) opens it from
+its title, which ends in a chevron; on a tile, pressing anywhere that is not a control does
+the same. **Goals** draws a gauge per active goal (up to three, nested, the first
+outermost), filled as far as the goal is along, beside each goal's percentage and days
+left. **Applications** shows how many are active and a slim bar per stage, as tall as its
+share of the busiest stage; with none it says so and offers **Find jobs**. **This week**
+puts today on a capsule, a point per event under each day in its calendar's colour, and
+lists the next three events. **Clock** shows the time large and on a dial.
 
 Home is a dashboard: the day's widgets on the left, **Rika** filling the right-hand
 column (see **Rika** above). The widgets sit in two columns when there is room (one in
@@ -1773,9 +1789,10 @@ doing; **Approve** opens herdr on a blocked one) and **Sections**, every page th
 active modules provide, by group. With every module off, one line says so and leads
 to Settings → Modules. Ctrl Space also finds every section.
 
-**Focus** is the study timer on one line: the phase, the time left and one button
-(Start, Pause, or Resume and Stop) over a rule that drains as the phase runs. It is
-the same timer as Study's and the top bar's, so starting it in one place starts it in
+**Focus** is the study timer: the time left, large (a session's length before it starts),
+its buttons (Start, Pause, or Resume and Stop) and a bezel of sixty ticks that go out
+clockwise as the phase runs.
+It is the same timer as Study's and the top bar's, so starting it in one place starts it in
 all. **Agent session** shows one coding-agent session's usage (see Agent usage under
 the Terminal module); it appears once usage is on for an agent.
 

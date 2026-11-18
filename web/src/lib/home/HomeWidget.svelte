@@ -29,7 +29,7 @@
 {#if widget === "agenda"}<TodayAgenda {id} {revision} {onview} />
 {:else if widget === "note"}<HomeQuickNote {id} {onview} />
 {:else if widget === "next"}<HomeUpNext {id} {revision} {onview} />
-{:else if widget === "focus"}<HomeFocus {id} />
+{:else if widget === "focus"}<HomeFocus {id} {onview} />
 {:else if widget === "goals"}<HomeGoals {id} {revision} {onview} />
 {:else if widget === "week"}<HomeWeek {id} {revision} {onview} />
 {:else if widget === "cards"}<HomeCards {id} {revision} {onview} />

@@ -1264,7 +1264,7 @@ describe("home dashboard", () => {
       assert.ok(r.width >= 300, `the Rika panel is only ${r.width}px wide`);
       // Design review: fewer, larger widgets. The brief is Rika's chip, sections are in search,
       // agents show only while a session runs (the demo has none).
-      const titles = await board.locator(".home-widget > header h3").allInnerTexts();
+      const titles = await board.getByRole("heading", { level: 3 }).allInnerTexts();
       // The demo has an agent session to show; a real workspace shows it once usage is switched on.
       assert.deepEqual(titles, ["Today", "Quick note", "Focus", "Up next", "Agent session"]);
       // Two columns of widgets when there is room, one when there is not.

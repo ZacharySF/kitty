@@ -29,6 +29,16 @@
   --fs-label: 13.5px;
   --fs-control: 14px;
   --fs-chrome: 12px;
+  /* Home tiles (design decisions, 18 Nov): the chrome stays black and white, and what a tile
+     counts is drawn in colour. rika!'s own six: blossom, sky, mint, violet, amber, coral.
+     A tile also carries a wash of its own colour, and its label takes it. */
+  --tile-1: #ff7eb6;
+  --tile-2: #6cc8ff;
+  --tile-3: #5ee6a8;
+  --tile-4: #b18cff;
+  --tile-5: #ffc15e;
+  --tile-6: #ff8a65;
+  --tile-wash: 1;
 }
 :root[data-theme="kitty"] body {
   font-size: 16px;

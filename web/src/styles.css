@@ -20,6 +20,14 @@
   --chrome: var(--br-inset);
   --wash: color-mix(in srgb, var(--br-structure) 9%, var(--br-panel));
   --violet: var(--br-structure);
+  /* What home's tiles draw with (the points of a goal, a stage, a minute): the theme's six
+     data colours, unless the theme names its own for them (themes/kitty). */
+  --tile-1: var(--c1);
+  --tile-2: var(--c2);
+  --tile-3: var(--c3);
+  --tile-4: var(--c4);
+  --tile-5: var(--c5);
+  --tile-6: var(--c6);
   --font-ui: "Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   /* Design labs (Type): no monospace in the interface. The fixed-width face is for code blocks
      (code, pre, samp, code editors) and the terminal only; everything else is --font-ui.

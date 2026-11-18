@@ -60,6 +60,8 @@
     if (tone === null) return;
     draftTones = withTone(tones, widget, tone || null);
   }
+  /** Colour-coded widgets make the board a grid of panes: one gutter both ways, every column ending on the same line. */
+  const paned = $derived(columns.some((column) => column.some((id) => toneColor(tones, id))));
   const panel = $derived(draftPanel ?? !buildStore.build.ui.home.hidden.includes("rika"));
   let board = $state<HTMLElement>();
   let home = $state<HTMLElement>();
@@ -290,8 +292,8 @@
   }
 </script>
 
-<div class="home" class:solo={!panel && !templatePicker.open} data-tutorial="home" bind:this={home} style:--rika-column={rikaWidth ? `${Math.round(rikaWidth * 100)}%` : null}>
-  <div class="board" class:editing class:sized={columns.length === 2} bind:this={board} role="region" aria-label="Home widgets"
+<div class="home" class:paned class:solo={!panel && !templatePicker.open} data-tutorial="home" bind:this={home} style:--rika-column={rikaWidth ? `${Math.round(rikaWidth * 100)}%` : null}>
+  <div class="board" class:editing class:paned class:sized={columns.length === 2} bind:this={board} role="region" aria-label="Home widgets"
     style:--board-columns={columns.length === 2 ? `minmax(0, ${shares[0]}fr) minmax(0, ${shares[1]}fr)` : null}>
     {#each columns as column, index (index)}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -392,6 +394,7 @@
      Rika scroll on their own, so the page itself never does. Side margins match main's. */
   .home {
     --rika-column: clamp(340px, 30vw, 460px);
+    --rail-gap: 48px;
     flex: 1 1 0px;
     min-height: 120px;
     width: 100%;
@@ -402,18 +405,21 @@
     display: grid;
     grid-template-columns: minmax(0, 1fr) var(--rika-column);
     grid-template-rows: minmax(0, 1fr);
-    gap: 48px;
+    gap: var(--rail-gap);
   }
   .home.solo {
     grid-template-columns: minmax(0, 1fr);
   }
   .board {
+    --gutter: 48px;
+    --row-gap: 28px;
+    container-type: inline-size;
     min-width: 0;
     min-height: 0;
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
     align-content: start;
-    gap: 20px 48px;
+    gap: 20px var(--gutter);
     padding-right: 4px;
     overflow-y: auto;
     overscroll-behavior: contain;
@@ -424,7 +430,15 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 28px;
+    gap: var(--row-gap);
+  }
+  /* Tiles sit closer than open widgets do, and as far from each other down as across. */
+  .home.paned {
+    --rail-gap: 28px;
+  }
+  .board.paned {
+    --gutter: 20px;
+    --row-gap: 20px;
   }
   /* Two columns share the room as the build says (even unless resized), once both fit side by side. */
   @media (min-width: 1200px) {
@@ -443,7 +457,7 @@
     position: absolute;
     top: 0;
     bottom: 0;
-    right: -29px;
+    right: calc(var(--gutter) / -2 - 5.5px);
     width: 11px;
     cursor: col-resize;
     touch-action: none;
@@ -453,7 +467,7 @@
   }
   .splitter.rika {
     top: 12px;
-    right: calc(26px + var(--rika-column) + 19px);
+    right: calc(26px + var(--rika-column) + var(--rail-gap) / 2 - 5.5px);
   }
   .splitter:hover,
   .splitter:focus-visible {
@@ -481,23 +495,52 @@
   .slot.dragged {
     opacity: 0.4;
   }
-  /* A colour-coded widget sits on a pane of its tone mixed into the page colour: dark glass
-     with a lit top edge, no outline. The widget's own top rule goes; the pane is its frame. */
+  /* A colour-coded widget is a tile, as a phone's or a desktop's widgets are: a pane of its
+     tone mixed into the page colour, no outline (dark glass with a lit top edge, or one flat
+     fill on a theme whose surfaces are flat). The widget's own top rule goes; the pane is its frame. */
   /* A widget with nothing to show right now (Agents with no session) keeps no empty pane. */
   .board:not(.editing) .slot.toned:not(:has(:global(.home-widget))) {
     display: none;
   }
+  /* Every tile is one height (a share of an even column's width), so rows line up across
+     columns and the tiles' top edge is the board's (and Rika's) top line; one with more to
+     show grows, and one sized by hand keeps its height. */
   .slot.toned {
-    margin: 8px 0;
-    padding: 2px 20px 16px;
-    border-radius: 22px;
+    --tile-pad: 18px;
+    --tile-radius: 22px;
+    display: flex;
+    flex-direction: column;
+    padding: var(--tile-pad);
+    border-radius: var(--tile-radius);
     background:
       linear-gradient(180deg, color-mix(in srgb, var(--ink) 5%, transparent), transparent 42%),
       color-mix(in srgb, var(--tone) 22%, var(--solid-void, #000));
     box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 9%, transparent);
   }
+  :global(:root[data-theme-surface="flat"]) .slot.toned {
+    background: color-mix(in srgb, var(--tone) 18%, var(--solid-void, #000));
+    box-shadow: none;
+  }
+  .slot.toned:not(.sized) {
+    box-sizing: border-box;
+    min-height: calc((100cqi - var(--gutter)) / 4.2);
+  }
+  .slot.toned .content {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .slot.toned:not(.sized) .content > :global(.home-widget) {
+    flex: 1 1 auto;
+  }
   .slot.toned :global(.home-widget) {
-    border-top-color: transparent;
+    border-top: 0;
+    padding: 0;
+  }
+  /* A tile that opens a page lifts a little under the pointer. */
+  .board:not(.editing) .slot.toned:has(:global(.open:hover)) {
+    background: color-mix(in srgb, var(--tone) 25%, var(--solid-void, #000));
   }
   .slot.tone-over {
     outline: 2px dashed color-mix(in srgb, var(--ink) 55%, transparent);
