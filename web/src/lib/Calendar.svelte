@@ -19,12 +19,15 @@
   import EditDrawer from "./ui/EditDrawer.svelte";
   import Select from "./ui/Select.svelte";
   import Popover from "./ui/Popover.svelte";
+  import ToastStack from "./ui/ToastStack.svelte";
   import CalendarQuickAdd from "./calendar/CalendarQuickAdd.svelte";
   import { wallAt, type QuickKind, type QuickPlan, type QuickSlot } from "./calendar/quickAdd";
   import QuickUnderstood from "./calendar/QuickUnderstood.svelte";
   import { parseQuickEvent, type QuickEvent } from "./calendar/quickParse";
   import { notifier } from "./notifications.svelte";
   import CalendarIntegrations from "./calendar/CalendarIntegrations.svelte";
+  import EventDelete from "./calendar/EventDelete.svelte";
+  import { deleteBody, deleteTarget, eventKey, lockedCalendars } from "./calendar/eventDelete";
   import type { Cal, CalendarEvent as Event } from "./calendar/types";
   let { revision = 0, demo = false, active = true }: {
     revision?: number; demo?: boolean; active?: boolean;
@@ -132,6 +135,14 @@
   let editor = $state<Event | null>(null);
   let originalEditor: Event | null = null;
   let editBase: Event | null = null;
+  /** The event a click selected (`eventKey`): Delete or Backspace removes it; Escape or a click elsewhere lets go. */
+  let pickedEvent = $state<string | null>(null);
+  /** Whether the event drawer takes focus when it opens: not after a pointer click, which leaves it on the event. */
+  let drawerFocus = $state(true);
+  const locked = $derived(lockedCalendars(data.calendars));
+  /** How long a deleted event's Undo toast stays. */
+  const UNDO_MS = 8000;
+  let removed = $state<{ id: number; left: number; title: string }[]>([]);
   let taskEditor = $state<Task | null>(null);
   let editScope = $state("this");
   let startInput = $state("");
@@ -481,9 +492,23 @@
     anchor = selectedDate;
   }
   let calendarLayout = $state<HTMLDivElement>();
+  let eventDrawer = $state<EditDrawer>();
+  /**
+   * A clicked event keeps focus while its drawer is open, so Delete reaches it. Typing (or Enter) there
+   * still goes to the drawer's title, as it did when the click focused that field.
+   */
+  function typeInDrawer(event: KeyboardEvent, target: HTMLElement) {
+    if (!editor || event.ctrlKey || event.metaKey || event.altKey || (event.key.length !== 1 && event.key !== "Enter") ||
+        !target.matches("[data-event] > :first-child") || target.parentElement?.dataset.event !== eventKey(editor)) return false;
+    // Enter would press the event again and reopen the drawer over what was typed.
+    if (event.key === "Enter") event.preventDefault();
+    eventDrawer?.focusField();
+    return true;
+  }
   /** Single-key shortcuts while focus is inside the calendar: D/W/M/A/Y/P views, J/K step, T today, N add. */
   function calendarKey(event: KeyboardEvent) {
     const target = event.target as HTMLElement;
+    if (typeInDrawer(event, target)) return;
     if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || event.defaultPrevented ||
         target.isContentEditable || target.closest("input, textarea, select")) return;
     const key = event.key.toLowerCase();
@@ -556,14 +581,22 @@
     foldChanged = false;
     googleOptionsText = JSON.stringify(e.google_options, null, 2);
   }
-  function openEvent(e: Event) {
+  function openEvent(e: Event, focus = true) {
     if (!isActive || Date.now() < suppressClickUntil) return;
+    drawerFocus = focus;
     originalEditor = $state.snapshot(e);
     editBase = structuredClone(originalEditor);
     editor = structuredClone(originalEditor);
     editScope = e.rrule ? "this" : "all";
     fold = 0;
     editorFields(e);
+  }
+  /** A click selects the event for Delete and Backspace and opens its drawer; only a keyboard press moves focus there. */
+  function pickEvent(e: Event, click: MouseEvent) {
+    if (!isActive || Date.now() < suppressClickUntil) return;
+    pickedEvent = eventKey(e);
+    openEvent(e, click.detail === 0);
+    if (click.detail) (click.currentTarget as HTMLElement).focus({ preventScroll: true });
   }
   async function changeScope() {
     if (!editor || !originalEditor) return;
@@ -678,11 +711,48 @@
       return result;
     });
   }
-  async function deleteEventAtPointer(event: MouseEvent, item: Event) {
+  /**
+   * Deletes an event straight from the grid (its x, Delete or Backspace, a right-click). A single event goes
+   * at once and leaves an Undo toast; a repeating one asks, then loses this occurrence. Read-only calendars
+   * are left alone.
+   */
+  async function removeEvent(item: Event, ask = !!item.rrule) {
+    if (!isActive || pending || locked.has(item.calendar_id)) return;
+    if (ask && !confirm(`Delete ${item.rrule ? "this occurrence of " : ""}“${item.title}”?`)) return;
+    const result = (await changed(() => api<Event>(`/calendar/events/${item.id}`, deleteBody(item)))) as Event | undefined;
+    if (!result) return;
+    if (editor?.id === item.id) editor = null;
+    if (pickedEvent === eventKey(item)) pickedEvent = null;
+    if (result.undo_id) removed = [...removed, { id: result.undo_id, left: UNDO_MS, title: item.title }].slice(-3);
+    // The deleted event held focus: keep it in the calendar so its keys keep working.
+    await tick();
+    if (document.activeElement === document.body) calendarLayout?.focus({ preventScroll: true });
+  }
+  async function undo(id: number) {
+    removed = removed.filter((item) => item.id !== id);
+    await run(async () => {
+      await api("/calendar/undo", { id });
+      if (undoId === id) undoId = null;
+      await load();
+    });
+  }
+  /** Delete or Backspace removes the focused event, else the selected one; never while typing or inside a dialog. */
+  function deleteKey(event: KeyboardEvent) {
+    if ((event.key !== "Delete" && event.key !== "Backspace") || event.defaultPrevented || event.repeat ||
+        event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+    const target = event.target as HTMLElement;
+    if (!calendarLayout || !(target === document.body || calendarLayout.contains(target)) || target.isContentEditable ||
+        target.closest("input, textarea, select, dialog, [role=dialog]")) return;
+    const focused = target.closest<HTMLElement>("[data-event]")?.dataset.event;
+    if (!focused && !pickedEvent) return;
+    // Taken even when nothing is deleted (a read-only event), so Backspace never turns into Back.
     event.preventDefault();
-    if (pending || !confirm(`Delete ${item.rrule ? "this occurrence of " : ""}“${item.title}”?`)) return;
-    openEvent(item);
-    await saveEvent(true);
+    const item = deleteTarget(data.events, locked, focused, pickedEvent);
+    if (item) void removeEvent(item);
+  }
+  function deleteEventAtPointer(event: MouseEvent, item: Event) {
+    event.preventDefault();
+    void removeEvent(item, true);
   }
   async function deleteTaskAtPointer(event: MouseEvent, item: Task) {
     event.preventDefault();
@@ -1059,6 +1129,10 @@
 <svelte:window
   onpointerup={finishRange}
   onpointercancel={() => { rangeStart = null; rangeEnd = null; }}
+  onpointerdown={(e) => {
+    // A press anywhere but an event or an open drawer or popover lets the selected event go.
+    if (pickedEvent && !(e.target as Element).closest?.("[data-event], [role=dialog]")) pickedEvent = null;
+  }}
   onkeydown={(e) => {
     if (!isActive) return;
     if (e.key === "Escape") {
@@ -1066,7 +1140,9 @@
       taskEditor = null;
       calendarEditor = null;
       rangeStart = null;
+      pickedEvent = null;
     }
+    deleteKey(e);
     if (
       (e.ctrlKey || e.metaKey) &&
       e.key === "z" &&
@@ -1077,14 +1153,15 @@
       )
     ) {
       e.preventDefault();
-      void run(async () => {
-        await api("/calendar/undo", { id: undoId });
-        undoId = null;
-        await load();
-      });
+      void undo(undoId);
     }
   }}
 />
+
+<!-- An event's x; a read-only calendar's events have none. -->
+{#snippet eventX(e: Event)}
+  {#if !locked.has(e.calendar_id)}<EventDelete title={e.title} ondelete={() => void removeEvent(e)} />{/if}
+{/snippet}
 
 <section class="calendar-workspace" class:drawer-open={!!editor} aria-label="Calendar workspace">
   <!-- One row, like the rest of the app: the title (it opens the calendar's pages), then search; the grid sits on the page under a hairline. -->
@@ -1105,13 +1182,7 @@
       </Popover>
     </h1>
     <div class="header-actions">
-      {#if undoId}<Button size="sm" disabled={pending > 0}
-        onclick={() =>
-          run(async () => {
-            await api("/calendar/undo", { id: undoId });
-            undoId = null;
-            await load();
-          })}>Undo last change</Button>{/if}
+      {#if undoId}{@const id = undoId}<Button size="sm" disabled={pending > 0} onclick={() => undo(id)}>Undo last change</Button>{/if}
       <label class="calendar-search"><span class="sr-only">Search</span><input type="search" bind:value={search}
         aria-label="Search" placeholder="Search events, tasks or tags" /></label>
     </div>
@@ -1189,12 +1260,16 @@
               {#if more > 0}<button class="day-more" onclick={() => (selectedDate = day)}>+{more} more</button>{/if}
             </div>
             {#each dayEvents.slice(0, 3) as e (e.id + e.occurrence)}
-              <button class="month-chip" style={`--calendar-color:${paint(e)}`} title={e.title}
-                draggable="true" ondragstart={(event) => drag(e, event)} ondragend={finishDrag}
-                oncontextmenu={(event) => void deleteEventAtPointer(event, e)}
-                onclick={() => { selectedDate = day; openEvent(e); }}>
-                <i class="dot"></i><span class="what">{e.title}</span>{#if !e.all_day}<span class="when">{parts(e.start).time}</span>{/if}
-              </button>
+              <div class="event-row" class:picked={pickedEvent === eventKey(e)} data-event={eventKey(e)}>
+                <button class="month-chip" style={`--calendar-color:${paint(e)}`} title={e.title}
+                  draggable="true" ondragstart={(event) => drag(e, event)} ondragend={finishDrag}
+                  oncontextmenu={(event) => deleteEventAtPointer(event, e)}
+                  aria-current={pickedEvent === eventKey(e) ? "true" : undefined}
+                  onclick={(click) => { selectedDate = day; pickEvent(e, click); }}>
+                  <i class="dot"></i><span class="what">{e.title}</span>{#if !e.all_day}<span class="when">{parts(e.start).time}</span>{/if}
+                </button>
+                {@render eventX(e)}
+              </div>
             {/each}
             {#each dayTasks.slice(0, Math.max(0, 3 - dayEvents.length)) as t (t.id)}
               <button class="month-chip" class:completed={t.status === "done"} style:--task-color={taskColor(t)} title={t.title}
@@ -1233,10 +1308,14 @@
                 ondrop={(event) => dropOn(day, true, event)}>
                 <div class="all-day-items">
                   {#each eventsOn(day).filter((e) => e.all_day) as e}
-                    <button class="event-chip all-day-event" style={blockStyle(e)}
-                      draggable="true" ondragstart={(event) => drag(e, event)} ondragend={finishDrag}
-                      oncontextmenu={(event) => void deleteEventAtPointer(event, e)}
-                      onclick={() => { selectedDate = day; openEvent(e); }} title={e.title}>{e.title}</button>
+                    <div class="event-row" class:picked={pickedEvent === eventKey(e)} data-event={eventKey(e)}>
+                      <button class="event-chip all-day-event" style={blockStyle(e)}
+                        draggable="true" ondragstart={(event) => drag(e, event)} ondragend={finishDrag}
+                        oncontextmenu={(event) => deleteEventAtPointer(event, e)}
+                        aria-current={pickedEvent === eventKey(e) ? "true" : undefined}
+                        onclick={(click) => { selectedDate = day; pickEvent(e, click); }} title={e.title}>{e.title}</button>
+                      {@render eventX(e)}
+                    </div>
                   {/each}
                   {#each tasksOn(day).filter((task) => task.due.length === 10) as t}
                     <button class="task-chip" class:completed={t.status === "done"} style:--task-color={taskColor(t)}
@@ -1305,15 +1384,18 @@
               {#each weekEvents[day] as placement}
                 {@const e = placement.event}
                 <div class="event-chip timed" class:short={placement.end - placement.start < 50} draggable="true" role="group" aria-label={e.title}
+                  class:picked={pickedEvent === eventKey(e)} data-event={eventKey(e)}
                   style={`${blockStyle(e)};top:${placement.start / 1440 * 100}%;height:calc(${Math.min(1440 - placement.start, Math.max(30, placement.end - placement.start)) / 1440 * 100}% - 2px);left:calc(${placement.column / placement.columns * 100}% + 1px);width:calc(${100 / placement.columns}% - 4px)`}
                   ondragstart={(event) => drag(e, event)} ondragend={finishDrag}>
                   <button class="timed-content" title={`${e.title} · ${label(e.start)} – ${label(e.end)}`}
-                    oncontextmenu={(event) => void deleteEventAtPointer(event, e)}
+                    oncontextmenu={(event) => deleteEventAtPointer(event, e)}
                     aria-label={`Edit ${e.title}, ${label(e.start)} – ${label(e.end)}`}
-                    onclick={() => { selectedDate = day; openEvent(e); }}>
+                    aria-current={pickedEvent === eventKey(e) ? "true" : undefined}
+                    onclick={(click) => { selectedDate = day; pickEvent(e, click); }}>
                     <strong>{e.title}</strong>
                     <span>{parts(e.start).time}–{parts(e.end).time}</span>
                   </button>
+                  {@render eventX(e)}
                   <button class="resize" draggable="true"
                     ondragstart={(event) => { event.stopPropagation(); drag(e, event, "resize"); }}
                     aria-label={`Resize ${e.title}`}></button>
@@ -1330,8 +1412,10 @@
       <DayPlan
         now={anchor === today ? currentMinute : null}
         busy={pending > 0}
-        events={timedEvents(anchor).map((p) => ({ key: `${p.event.id}:${p.event.occurrence}`, title: p.event.title,
-          start: p.start, end: p.end, column: p.column, columns: p.columns, style: blockStyle(p.event), open: () => openEvent(p.event) }))}
+        events={timedEvents(anchor).map((p) => ({ key: eventKey(p.event), title: p.event.title,
+          start: p.start, end: p.end, column: p.column, columns: p.columns, style: blockStyle(p.event),
+          picked: pickedEvent === eventKey(p.event), open: (click: MouseEvent) => pickEvent(p.event, click),
+          ondelete: locked.has(p.event.calendar_id) ? undefined : () => void removeEvent(p.event) }))}
         tasks={planTasks.map(({ task, at }) => ({ id: task.id!, title: task.title, priority: task.priority,
           done: task.status === "done", at, color: taskColor(task), open: () => (taskEditor = { ...task }) }))}
         onplan={(id) => void planTask(id)}
@@ -1348,12 +1432,16 @@
             </button></h2>
             <div class="agenda-items">
               {#each eventsOn(day) as e}
-                <button class="agenda-event" style={`--calendar-color:${paint(e)}`} onclick={() => openEvent(e)}>
-                  <span class="when">{e.all_day ? "All day" : `${parts(e.start).time} – ${parts(e.end).time}`}</span>
-                  <i class="dot"></i>
-                  <strong>{e.title}</strong>
-                  {#if e.location}<span class="where">{e.location}</span>{/if}
-                </button>
+                <div class="event-row" class:picked={pickedEvent === eventKey(e)} data-event={eventKey(e)}>
+                  <button class="agenda-event" style={`--calendar-color:${paint(e)}`}
+                    aria-current={pickedEvent === eventKey(e) ? "true" : undefined} onclick={(click) => pickEvent(e, click)}>
+                    <span class="when">{e.all_day ? "All day" : `${parts(e.start).time} – ${parts(e.end).time}`}</span>
+                    <i class="dot"></i>
+                    <strong>{e.title}</strong>
+                    {#if e.location}<span class="where">{e.location}</span>{/if}
+                  </button>
+                  {@render eventX(e)}
+                </div>
               {/each}
               {#each tasksOn(day) as t}
                 <button class="agenda-event" class:completed={t.status === "done"} style:--task-color={taskColor(t)} onclick={() => (taskEditor = { ...t })}>
@@ -1374,12 +1462,16 @@
       <section class="rail-section" aria-label="Selected day">
         <h3>{dateTitle(selectedDate, { weekday: "long", month: "short", day: "numeric" })}</h3>
         {#each eventsOn(selectedDate) as e}
-          <button class="plan-event" style={`--calendar-color:${paint(e)}`} onclick={() => openEvent(e)}
-            oncontextmenu={(event) => void deleteEventAtPointer(event, e)}>
-            <i class="dot"></i>
-            <strong>{e.title}</strong>
-            <span>{e.all_day ? "All day" : `${parts(e.start).time} – ${parts(e.end).time}`}{e.location ? ` · ${e.location}` : ""}</span>
-          </button>
+          <div class="event-row" class:picked={pickedEvent === eventKey(e)} data-event={eventKey(e)}>
+            <button class="plan-event" style={`--calendar-color:${paint(e)}`}
+              aria-current={pickedEvent === eventKey(e) ? "true" : undefined} onclick={(click) => pickEvent(e, click)}
+              oncontextmenu={(event) => deleteEventAtPointer(event, e)}>
+              <i class="dot"></i>
+              <strong>{e.title}</strong>
+              <span>{e.all_day ? "All day" : `${parts(e.start).time} – ${parts(e.end).time}`}{e.location ? ` · ${e.location}` : ""}</span>
+            </button>
+            {@render eventX(e)}
+          </div>
         {/each}
         {#each tasksOn(selectedDate) as t}
           <div class="plan-task" class:completed={t.status === "done"}>
@@ -1502,8 +1594,22 @@
     onundo={(id) => (undoId = id)} />
 </section>
 
+{#if isActive}
+  <ToastStack items={removed} total={UNDO_MS} label="Calendar changes" offset="var(--rika-toasts, 0px)" publish="--calendar-toasts"
+    ondismiss={(item) => (removed = removed.filter((other) => other.id !== item.id))}>
+    {#snippet toast(item)}
+      <div class="top">
+        <span>Event deleted</span>
+        <button class="x" aria-label="Dismiss" onclick={() => (removed = removed.filter((other) => other.id !== item.id))}>×</button>
+      </div>
+      <strong>{item.title}</strong>
+      <div class="acts"><button class="pill primary" onclick={() => undo(item.id)}>Undo</button></div>
+    {/snippet}
+  </ToastStack>
+{/if}
+
 {#if editor && isActive}
-  <EditDrawer title="Event details" accent={paint(editor)} closeLabel="Close event editor"
+  <EditDrawer bind:this={eventDrawer} title="Event details" accent={paint(editor)} closeLabel="Close event editor" autofocus={drawerFocus}
     meta={`${data.calendars.find((c) => c.id === editor?.calendar_id)?.name ?? "Calendar"} · ${startInput ? dateTitle(startInput.slice(0, 10), { weekday: "short", month: "short", day: "numeric" }) : ""}`}
     onclose={() => (editor = null)}>
       {#if error}<p class="error" role="alert">{error}</p>{/if}
@@ -2269,6 +2375,16 @@
   .selecting {
     background: color-mix(in srgb, var(--ink) 12%, transparent) !important;
   }
+  /* An event with its x (calendar/EventDelete.svelte). Selected, it carries a ring inside its edge until Escape or a press elsewhere. */
+  .event-row {
+    position: relative;
+    min-width: 0;
+    border-radius: var(--r-item);
+  }
+  .picked {
+    outline: 2px solid var(--ink);
+    outline-offset: -2px;
+  }
   /* An event: a soft tint of its colour over the page, a bar in the full colour, no outline. */
   .event-chip {
     display: flex;
@@ -2411,6 +2527,10 @@
     max-height: 100px;
     overflow: auto;
   }
+  /* The cell's + sits in the same corner: an all-day event's x stands beside it. */
+  .all-day-items .event-row {
+    --event-x-right: 24px;
+  }
   .all-day-event,
   .all-day-items .task-chip {
     width: 100%;
@@ -2534,6 +2654,10 @@
   .timed-content span {
     color: var(--muted);
     font-variant-numeric: tabular-nums;
+  }
+  /* The block clips what lies outside it, the focus ring included: draw it inside. */
+  .timed > .timed-content:focus-visible {
+    outline-offset: -2px;
   }
   /* Under 50 minutes there is one line: the title, then the time. */
   .timed.short > .timed-content {

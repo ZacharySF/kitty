@@ -207,8 +207,10 @@ fn calendar(conn: &Connection, ident: &Value) -> Done<Obj> {
     row(conn, "SELECT * FROM calendar_calendars WHERE id=? AND deleted=0", [bind(ident)?])?.ok_or_else(|| fail(404, "Calendar not found"))
 }
 
+/// Every calendar; `read_only` is 1 for one imported from an outside account (`calendar_remote`).
 pub fn calendars(conn: &Connection) -> Done<Vec<Obj>> {
-    rows(conn, "SELECT * FROM calendar_calendars WHERE deleted=0 ORDER BY name", [])
+    rows(conn, "SELECT c.*, EXISTS(SELECT 1 FROM calendar_remote r WHERE r.calendar_id=c.id) AS read_only \
+                FROM calendar_calendars c WHERE c.deleted=0 ORDER BY c.name", [])
 }
 
 pub fn save_calendar(conn: &Connection, body: &Obj) -> Done<Obj> {

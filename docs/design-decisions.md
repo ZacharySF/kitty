@@ -63,3 +63,6 @@
 - Home edit mode (Ctrl + Shift + Space or "Edit home" in search; no Edit link) moves widgets by their handle with a live preview, sets column widths by dividers, and sets widget heights by a bottom edge on an 8px grid (`ui.home.heights`); every action has a keyboard path on the handle and is announced. Widgets only glide after an actual move.
 - Study's drawer controls are upright pills along the top, drawers open beneath them, and the session ring sizes to the room (240–380px). Progress' share ring has a fixed size so WebKit never draws it over its legend.
 - Notes and Docs show a visible Full screen button (Ctrl + Shift + F works everywhere). Goal target dates use `ui/DatePicker.svelte`. Mind maps have no per-map Graph mode.
+
+## Calendar delete (18 Nov 2026)
+- An event deletes from the grid: an x in its top-right corner on hover, focus or selection, or Delete / Backspace on the clicked or focused event. A single event goes at once with an Undo toast; a repeating one asks and loses that occurrence. Read-only (Outlook) events offer neither. A click leaves focus on the event; typing or Enter there still goes to the drawer's title.

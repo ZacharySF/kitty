@@ -279,6 +279,14 @@ const shortcutGroups: ShortcutGroup[] = [
     ],
   },
   {
+    title: "Calendar",
+    module: "workspace",
+    shortcuts: [
+      ["Delete / Backspace", "Delete the selected or focused event (outside text fields and dialogs)"],
+      ["Escape", "Clear the event selection"],
+    ],
+  },
+  {
     title: "Study",
     module: "workspace",
     shortcuts: [

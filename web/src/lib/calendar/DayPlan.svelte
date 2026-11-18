@@ -1,12 +1,17 @@
 <script module lang="ts">
-  /** `style` sets `--block`, the event's colour (subject, palette slot or calendar): its bar and the tint of its fill. */
-  export type PlanEvent = { key: string; title: string; start: number; end: number; column: number; columns: number; style: string; open: () => void };
+  /**
+   * `style` sets `--block`, the event's colour (subject, palette slot or calendar): its bar and the tint of its fill.
+   * `key` names the event to the calendar's Delete key; `ondelete` is absent for a read-only calendar's event.
+   */
+  export type PlanEvent = { key: string; title: string; start: number; end: number; column: number; columns: number; style: string;
+    picked: boolean; open: (click: MouseEvent) => void; ondelete?: () => void };
   /** `color` is the task's study subject colour; unlinked tasks stay neutral. */
   export type PlanTask = { id: string; title: string; priority: string; done: boolean; at: number | null; color?: string; open: () => void };
 </script>
 
 <script lang="ts">
   import { PLAN_END, PLAN_LENGTH, PLAN_START } from "./plan";
+  import EventDelete from "./EventDelete.svelte";
 
   /** Today split: the day's timeline next to its tasks; Plan drops a task into the next free gap. */
   let { now = null, events, tasks, busy = false, onplan, onunplan, ontoggle }: {
@@ -34,10 +39,12 @@
     {/each}
     {#each events as e (e.key)}
       {#if e.end > PLAN_START && e.start < PLAN_END}
-        <button class="blk" class:past={now !== null && e.end < now} style={e.style}
+        <div class="blk event" class:past={now !== null && e.end < now} class:picked={e.picked} data-event={e.key} style={e.style}
           style:top={`${top(e.start)}px`} style:height={`${Math.max(26, top(e.end) - top(e.start) - 2)}px`}
-          style:left={`calc(${(e.column / e.columns) * 100}% + 1px)`} style:width={`calc(${100 / e.columns}% - 4px)`}
-          onclick={e.open}><strong>{e.title}</strong><span>{clock(e.start)}</span></button>
+          style:left={`calc(${(e.column / e.columns) * 100}% + 1px)`} style:width={`calc(${100 / e.columns}% - 4px)`}>
+          <button class="open" aria-current={e.picked ? "true" : undefined} onclick={e.open}><strong>{e.title}</strong><span>{clock(e.start)}</span></button>
+          {#if e.ondelete}<EventDelete title={e.title} ondelete={e.ondelete} />{/if}
+        </div>
       {/if}
     {/each}
     {#each tasks.filter((t) => t.at !== null) as t (t.id)}
@@ -136,6 +143,35 @@
   }
   .blk.past {
     opacity: 0.55;
+  }
+  /* An event is its opening button plus its x (EventDelete.svelte); selected, it carries a ring. */
+  .blk.event {
+    align-items: stretch;
+    padding: 0;
+    cursor: auto;
+  }
+  .open {
+    display: flex;
+    flex: 1;
+    align-items: baseline;
+    gap: 6px;
+    min-width: 0;
+    padding: 4px 8px;
+    overflow: hidden;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  /* The block clips what lies outside it: the focus ring is drawn inside. */
+  .open:focus-visible {
+    outline-offset: -2px;
+  }
+  .blk.picked {
+    outline: 2px solid var(--ink);
+    outline-offset: -2px;
   }
   .blk.task {
     left: 1px;

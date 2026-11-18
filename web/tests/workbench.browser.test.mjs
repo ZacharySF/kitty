@@ -1826,7 +1826,7 @@ describe("calendar redesign", () => {
     assert.ok(gridBox.width >= mainBox.width - 2, `the month grid is ${gridBox.width}px of ${mainBox.width}px`);
     await cell.getByRole("button", { name: "+2 more" }).click();
     const agenda = page.getByRole("complementary", { name: "Selected date plan" }).getByRole("region", { name: "Selected day" });
-    const items = agenda.getByRole("button", { name: /Dot \d+/ });
+    const items = agenda.getByRole("button", { name: /^Dot \d+/ });
     await items.nth(4).waitFor();
     assert.equal(await items.count(), 5);
     assert.match(await items.nth(2).textContent(), /Dot 12[\s\S]*12:00[\s\S]*Room 5/);

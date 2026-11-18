@@ -19,8 +19,8 @@
   };
 </script>
 
-<!-- Rika's reply stack sits closest to the bar; reminders stack above it. -->
-<ToastStack items={notifier.toasts} total={TOAST_MS} label="New notifications" offset="var(--rika-toasts, 0px)"
+<!-- Rika's reply stack sits closest to the bar, then the calendar's Undo; reminders stack above them. -->
+<ToastStack items={notifier.toasts} total={TOAST_MS} label="New notifications" offset="calc(var(--rika-toasts, 0px) + var(--calendar-toasts, 0px))"
   tone={(toast) => (toast.notice ? TONE[toast.notice.source] : "var(--violet)")} ondismiss={(toast) => notifier.dismiss(toast.id)}>
   {#snippet toast(toast)}
     {@const source = toast.notice?.source}
