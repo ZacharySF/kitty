@@ -11,7 +11,8 @@
    * On a colour-coded pane (Home.svelte's `.slot.toned`) it is a tile: a label at the top
    * (its icon on a small badge), what the widget shows as its largest thing (`.figure`), and
    * `art` (a gauge, a dial, a chart) on the right from top to bottom, under the content once
-   * the tile is too narrow for both. `hero` keeps the content at the foot of a tile taller
+   * the tile is too narrow for both (`compact` keeps it beside the content at any width, for
+   * a widget that fits a square tile). `hero` keeps the content at the foot of a tile taller
    * than it. `onopen` makes the title the way into the widget's page, and on a tile the
    * whole surface presses it. `tint` is the widget's own colour: where the theme asks for it
    * (`--tile-wash`), the tile carries a wash of it from its top-left corner and its label
@@ -24,6 +25,7 @@
     icon = "",
     fill = false,
     hero = false,
+    compact = false,
     opens = "",
     tint = "",
     onopen,
@@ -38,6 +40,7 @@
     icon?: string;
     fill?: boolean;
     hero?: boolean;
+    compact?: boolean;
     /** What `onopen` opens, for its tooltip: "calendar" reads "Open calendar". */
     opens?: string;
     /** A CSS colour, as `var(--tile-1)`. */
@@ -66,7 +69,7 @@
     {@render head()}
     {@render children?.()}
   {:else}
-    <div class="frame" class:with-art={!!art}>
+    <div class="frame" class:with-art={!!art} class:compact>
       <div class="main">
         {@render head()}
         <div class="body">{@render children?.()}</div>
@@ -106,14 +109,29 @@
     place-items: center;
     margin-top: 12px;
   }
+  /* A compact widget's art stays beside its content: while the widget is narrow, at the foot
+     and below the label's line, which may run on above it. */
+  .frame.with-art.compact {
+    flex-direction: row;
+    gap: 14px;
+  }
+  .frame.compact .art {
+    margin-top: 0;
+    padding-top: 40px;
+    align-items: end;
+  }
   /* Wide enough for both: the art stands beside the content, as tall as the widget. */
   @container (min-width: 360px) {
-    .frame.with-art {
+    .frame.with-art,
+    .frame.with-art.compact {
       flex-direction: row;
       gap: 24px;
     }
-    .art {
+    .art,
+    .frame.compact .art {
       margin-top: 0;
+      padding-top: 0;
+      align-items: center;
     }
   }
   header {
@@ -182,7 +200,7 @@
   :global(:where(.home-widget) .figure) {
     margin: 0;
     color: var(--ink);
-    font: 300 clamp(56px, 16cqi, 76px) / 1 var(--font-ui);
+    font: 300 clamp(34px, 16cqi, 76px) / 1 var(--font-ui);
     letter-spacing: -0.03em;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;

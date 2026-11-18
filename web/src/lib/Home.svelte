@@ -6,7 +6,7 @@
   import WidgetMenu from "./home/WidgetMenu.svelte";
   import type { Bootstrap } from "./api";
   import { buildStore, setPreferences } from "./build.svelte";
-  import { HEIGHT_LIMITS, HOME_WIDGETS, MAX_COLUMNS, RIKA_LIMITS, WIDTH_LIMITS, columnShares, nextRikaSide, placeWidget, resolveHome, rikaShare, rikaSide, rikaSideAt, savedHome, snapHeight, spareWidgets, splitWidths, widgetHeight, withHeight, type HomeWidgetId, type RikaSide } from "./home/layout";
+  import { HEIGHT_LIMITS, HOME_WIDGETS, MAX_COLUMNS, RIKA_LIMITS, WIDTH_LIMITS, columnShares, isSmall, nextRikaSide, placeWidget, resolveHome, rikaShare, rikaSide, rikaSideAt, savedHome, snapHeight, spareWidgets, splitWidths, widgetHeight, withHeight, type HomeWidgetId, type RikaSide } from "./home/layout";
   import { homeEditor, templatePicker } from "./home/templatePicker.svelte";
   import { TONES, toneColor, withTone } from "./home/tones";
   import TemplateSuggestion from "./home/TemplateSuggestion.svelte";
@@ -372,7 +372,7 @@
           {@const height = widgetHeight(heights, widget)}
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <!-- svelte-ignore a11y_click_events_have_key_events -->
-          <div class="slot" data-widget={widget} class:dragged={dragged === widget} class:toned={!!toneColor(tones, widget)} class:tone-over={toneOver === widget}
+          <div class="slot" data-widget={widget} data-size={isSmall(widget) ? "small" : null} class:dragged={dragged === widget} class:toned={!!toneColor(tones, widget)} class:tone-over={toneOver === widget}
             class:sized={height !== null} style:--tone={toneColor(tones, widget)} style:--widget-height={height === null ? null : `${height}px`}
             animate:glide
             ondragover={(event) => { if (toneInHand !== null && !dragged) { event.preventDefault(); toneOver = widget; } else over(event, index, row); }}
@@ -488,6 +488,35 @@
     display: flex;
     flex-direction: column;
     gap: var(--row-gap);
+  }
+  /* A board of tiles: a column is rows of tiles. A tile takes a whole row, a small one half
+     of it, so two small tiles next to each other stand side by side as squares and a small
+     tile with no small neighbour still fills its row. */
+  .board.paned .column {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-content: flex-start;
+  }
+  .board.paned .slot {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+  .board.paned .slot.toned[data-size="small"] {
+    flex-basis: calc(50% - var(--row-gap) / 2);
+  }
+  /* Half a column must still hold a tile: on a board too narrow for that (a phone, or two
+     columns in a small window) a small tile takes its whole row like the others. */
+  @container (max-width: 439.98px) {
+    .board.paned .slot.toned[data-size="small"] {
+      flex-basis: 100%;
+    }
+  }
+  @media (min-width: 1200px) {
+    @container (max-width: 899.98px) {
+      .board.paned.sized .slot.toned[data-size="small"] {
+        flex-basis: 100%;
+      }
+    }
   }
   /* Tiles sit closer than open widgets do, and as far from each other down as across. */
   .home.paned {

@@ -26,7 +26,7 @@
   const hourTurn = $derived((now.getHours() % 12) * 30 + now.getMinutes() / 2);
 </script>
 
-<HomeWidget {id} title={date} icon="clock" hero tint="var(--tile-6)" art={dial}>
+<HomeWidget {id} title={date} icon="clock" hero compact tint="var(--tile-6)" art={dial}>
   <p class="figure"><time datetime={now.toISOString()}>{time}{#if period}<small>{period}</small>{/if}</time></p>
 </HomeWidget>
 
@@ -51,8 +51,8 @@
     letter-spacing: 0;
   }
   .dial {
-    width: 152px;
-    height: 152px;
+    width: clamp(88px, 40cqi, 152px);
+    height: clamp(88px, 40cqi, 152px);
     stroke-linecap: round;
   }
   .face {

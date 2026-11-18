@@ -29,7 +29,7 @@
   });
 </script>
 
-<HomeWidget {id} title="Focus" icon="timer" hero tint="var(--tile-5)" opens="study" onopen={() => onview("study")} art={bezel}>
+<HomeWidget {id} title="Focus" icon="timer" hero compact tint="var(--tile-5)" opens="study" onopen={() => onview("study")} art={bezel}>
   {#if idle}{#if length}<p class="figure waiting">{length}</p>{/if}
   {:else}<p class="figure" class:waiting={paused} role="timer" aria-label={`${studyTimer.phase}, ${studyTimer.clock} left`}>{studyTimer.clock}</p>{/if}
   <div class="actions">
@@ -57,6 +57,7 @@
   }
   .actions {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 8px;
     margin-top: 14px;
@@ -67,8 +68,8 @@
     font-size: 13px;
   }
   .bezel {
-    width: 152px;
-    height: 152px;
+    width: clamp(88px, 40cqi, 152px);
+    height: clamp(88px, 40cqi, 152px);
     stroke: color-mix(in srgb, var(--ink) 16%, transparent);
     stroke-width: 2.6;
     stroke-linecap: round;

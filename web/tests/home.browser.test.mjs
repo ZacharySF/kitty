@@ -347,3 +347,48 @@ describe("Rika's place on home", () => {
     await context.close();
   });
 });
+
+describe("small tiles", () => {
+  /** A tile's box and whether anything it draws leaves it. */
+  const tile = (page, id) =>
+    page.evaluate((id) => {
+      const slot = document.querySelector(`.board [data-widget="${id}"]`);
+      const box = slot.getBoundingClientRect();
+      const spills = [...slot.querySelectorAll("svg, p, h3, button")].some((node) => {
+        const inner = node.getBoundingClientRect();
+        return inner.width && (inner.right > box.right + 1 || inner.bottom > box.bottom + 1);
+      });
+      return { top: Math.round(box.top), left: Math.round(box.left), right: Math.round(box.right), width: Math.round(box.width), height: Math.round(box.height), spills };
+    }, id);
+
+  test("Clock and Focus next to each other in a column share a row as two squares, each holding all it draws", async () => {
+    const { page, problems, context } = await open({ home: { ...HOME, columns: [["goals", "week"], ["pipeline", "clock", "focus"]] } });
+    await widget(page, "Focus").getByRole("button", { name: "Start" }).waitFor();
+    const [wide, clock, focus] = [await tile(page, "pipeline"), await tile(page, "clock"), await tile(page, "focus")];
+    assert.equal(clock.top, focus.top, "Clock and Focus are not on one row");
+    assert.equal(focus.left - clock.right, 20, "the gutter between them");
+    assert.equal(focus.right, wide.right);
+    assert.ok(Math.abs(clock.width - focus.width) <= 1 && Math.abs(clock.width - clock.height) <= 12, `Clock is ${clock.width}×${clock.height}, Focus ${focus.width}×${focus.height}`);
+    assert.equal(clock.height, wide.height, "a small tile is as tall as a wide one");
+    assert.deepEqual([clock.spills, focus.spills], [false, false], "something leaves its tile");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("a small tile with no small neighbour takes the whole row", async () => {
+    const { page, context } = await open();
+    const [wide, clock] = [await tile(page, "pipeline"), await tile(page, "clock")];
+    assert.equal(clock.width, wide.width);
+    await context.close();
+  });
+
+  test("on a phone small tiles do not pair up: each takes its row and holds all it draws", async () => {
+    const { page, context } = await open({ viewport: { width: 390, height: 844 }, home: { ...HOME, columns: [["goals", "week"], ["pipeline", "clock", "focus"]] } });
+    await widget(page, "Focus").getByRole("button", { name: "Start" }).waitFor();
+    const [wide, clock, focus] = [await tile(page, "pipeline"), await tile(page, "clock"), await tile(page, "focus")];
+    assert.deepEqual([clock.width, focus.width], [wide.width, wide.width]);
+    assert.ok(focus.top > clock.top);
+    assert.deepEqual([clock.spills, focus.spills], [false, false], "something leaves its tile");
+    await context.close();
+  });
+});

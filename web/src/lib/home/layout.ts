@@ -7,22 +7,25 @@ import type { ModuleId } from "../api";
 export const HOME_WIDGETS = [
   { id: "agenda", title: "Today", modules: ["workspace"], column: 0 },
   { id: "note", title: "Quick note", modules: ["workspace"], column: 0 },
-  { id: "focus", title: "Focus", modules: ["workspace"], column: 0 },
+  { id: "focus", title: "Focus", modules: ["workspace"], column: 0, small: true },
   { id: "next", title: "Up next", modules: ["workspace", "applyai"], column: 1 },
   { id: "agents", title: "Agents", modules: ["terminal"], column: 1 },
   { id: "session", title: "Agent session", modules: ["terminal"], column: 1 },
   { id: "goals", title: "Goals", modules: [], column: 1, library: true },
   { id: "week", title: "This week", modules: ["workspace"], column: 0, library: true },
-  { id: "cards", title: "Flashcards", modules: ["workspace"], column: 0, library: true },
+  { id: "cards", title: "Flashcards", modules: ["workspace"], column: 0, library: true, small: true },
   { id: "pipeline", title: "Applications", modules: ["applyai"], column: 1, library: true },
-  { id: "clock", title: "Clock", modules: [], column: 0, library: true },
+  { id: "clock", title: "Clock", modules: [], column: 0, library: true, small: true },
 ] as const satisfies readonly Widget[];
 /**
  * `modules`: the widget draws when any of them is on (none: always). `library`: it waits
  * in edit mode's Widgets menu until it is added or a template places it, so home stays as it
- * was for everyone who has not asked for it.
+ * was for everyone who has not asked for it. `small`: as a tile it needs only half a column,
+ * so two small ones next to each other in a column share a row.
  */
-type Widget = { id: string; title: string; modules: readonly ModuleId[]; column: number; library?: boolean };
+type Widget = { id: string; title: string; modules: readonly ModuleId[]; column: number; library?: boolean; small?: boolean };
+/** Whether `id` is a small widget. */
+export const isSmall = (id: string) => HOME_WIDGETS.some((widget) => widget.id === id && "small" in widget);
 const drawable = (widget: Widget, enabled: readonly string[]) => !widget.modules.length || widget.modules.some((module) => enabled.includes(module));
 export type HomeWidgetId = (typeof HOME_WIDGETS)[number]["id"];
 export type HomeLayout = { columns: string[][]; hidden: string[] };
