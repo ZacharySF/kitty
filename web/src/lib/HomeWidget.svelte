@@ -109,13 +109,15 @@
     place-items: center;
     margin-top: 12px;
   }
-  /* A compact widget's art stays beside its content, at the foot while the widget is narrow. */
+  /* A compact widget's art stays beside its content: while the widget is narrow, at the foot
+     and below the label's line, which may run on above it. */
   .frame.with-art.compact {
     flex-direction: row;
     gap: 14px;
   }
   .frame.compact .art {
     margin-top: 0;
+    padding-top: 40px;
     align-items: end;
   }
   /* Wide enough for both: the art stands beside the content, as tall as the widget. */
@@ -128,6 +130,7 @@
     .art,
     .frame.compact .art {
       margin-top: 0;
+      padding-top: 0;
       align-items: center;
     }
   }
