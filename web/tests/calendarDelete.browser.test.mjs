@@ -335,8 +335,10 @@ test("month chips, agenda rows, the day plan and the selected-day list carry the
 
 test("the second press of a double-click does not delete the event that moved under the pointer", async () => {
   await clearEvents();
-  await addEvent("First of two", 13);
-  await addEvent("Second of two", 14);
+  // Hours far from now: an event that starts or just started brings a reminder toast, which would lie over the list.
+  const hour = new Date().getHours() < 12 ? 20 : 2;
+  await addEvent("First of two", hour);
+  await addEvent("Second of two", hour + 1);
   const { page, context, problems } = await calendar();
   const list = page.getByRole("complementary", { name: "Selected date plan" });
   const first = remove(list, "First of two");
