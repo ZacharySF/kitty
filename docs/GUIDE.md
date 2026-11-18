@@ -1897,7 +1897,10 @@ its panel on home or its drawer (Ctrl+J), and it does the work through the app's
   sign-in bills it. Each tier has an omp model, Claude Haiku, Sonnet and Opus by
   default; any omp `--model` selector works there. The reply arrives whole, not word
   by word. If omp is not on `PATH`, Rika says so and sends nothing. The morning
-  brief's model check and drafted email replies use the same brain.
+  brief's model check and drafted email replies use the same brain. While the brain
+  is omp, the **Thinking** chip at the end of Rika's field sets how hard it thinks
+  (Off, Low, Medium, High, Max; saved in the same file). Each request sends it as
+  `reasoning_effort`, with up to 16,000 output tokens so the answer still fits.
 - **Tiers.** Each request goes to the smallest tier that can do it:
   - **fast** for talk, simple edits, and everything you say aloud;
   - **standard** for planning ("plan my week") and a brain dump's plan;

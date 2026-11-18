@@ -32,15 +32,6 @@
     const date = new Date(value ?? "");
     return Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   };
-  /** The reply whose text was just copied (its Copy reads "Copied" for a moment). */
-  let copied = $state("");
-  async function copy(key: string, text: string) {
-    try {
-      await navigator.clipboard.writeText(text);
-      copied = key;
-      setTimeout(() => { if (copied === key) copied = ""; }, 1600);
-    } catch { /* clipboard refused: the text can still be selected */ }
-  }
   // New entries scroll into view, so an approval or plan that arrived is in sight, and a
   // brain dump's transcript follows what is being said.
   $effect(() => {
@@ -87,22 +78,20 @@
             </div>
           {:else if entry.kind === "message"}
             {@const readout = usageReadout(entry)}
-            <div class="said">
+            <div class="said" class:failed-reply={entry.status === "failed"}>
               <span class="mark"><RikaMark size={12} active={!entry.text} /></span>
               <div>
                 <p class:thinking={!entry.text}>{entry.text || "Thinking…"}</p>
-                <span class="meta-line">
+                <span class="meta-line reply-meta">
+                  {#if entry.status === "failed"}<span class="failed">Didn't finish</span>{/if}
                   {#if readout}
                     <span class="rika-chip" data-tier={readout.tier} title={entry.model}>{readout.label}</span>
                     <span class="readout">{readout.detail}</span>
-                    <time>{time(entry.created_at)}</time>
                   {:else}
                     {#if entry.tier}<span class="rika-chip" data-tier={entry.tier} title={entry.model}>{entry.tier}</span>{/if}
-                    <time>{time(entry.created_at)}</time>
                     {#if costLabel(entry.cost_usd)}<span>{costLabel(entry.cost_usd)}</span>{/if}
                   {/if}
-                  {#if entry.status === "failed"}<span class="failed">Failed</span>{/if}
-                  {#if entry.text}<button type="button" class="text-button" onclick={() => copy(entryKey(entry), entry.text)}>{copied === entryKey(entry) ? "Copied" : "Copy"}</button>{/if}
+                  <time>{time(entry.created_at)}</time>
                 </span>
               </div>
             </div>
@@ -208,15 +197,20 @@
   }
   ol {
     display: grid;
-    gap: 12px;
+    gap: 18px;
     margin: 0;
     padding: 0;
     list-style: none;
   }
+  /* A tool card belongs to the reply above it, so it sits close under it. */
+  li[data-entry="action"],
+  li[data-entry="approval"] {
+    margin-top: -10px;
+  }
   p {
     margin: 0;
-    font-size: 13px;
-    line-height: 1.45;
+    font-size: 13.5px;
+    line-height: 1.55;
     overflow-wrap: anywhere;
   }
   time,
@@ -228,13 +222,14 @@
   .you {
     display: grid;
     justify-items: end;
-    gap: 3px;
-    margin-left: 48px;
+    gap: 4px;
+    margin-left: 56px;
   }
   .you p {
-    padding: 7px 11px;
-    border-radius: 12px 12px 4px 12px;
-    background: color-mix(in srgb, var(--ink) 9%, transparent);
+    padding: 8px 13px;
+    border-radius: 16px 16px 5px 16px;
+    background: color-mix(in srgb, var(--ink) 8%, transparent);
+    color: var(--ink);
   }
   /* Replies and requests keep the line breaks they were written with. */
   .you p,
@@ -244,19 +239,33 @@
   .said {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
-    gap: 9px;
-    margin-right: 24px;
+    gap: 10px;
+    margin-right: 16px;
   }
   .said > div {
     display: grid;
-    gap: 4px;
+    gap: 5px;
+  }
+  .said p {
+    color: var(--ink);
   }
   .thinking {
     color: var(--muted);
+    animation: rika-thinking 1.8s ease-in-out infinite;
+  }
+  @keyframes rika-thinking {
+    50% {
+      opacity: 0.45;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .thinking {
+      animation: none;
+    }
   }
   .mark {
     display: grid;
-    margin-top: 3px;
+    margin-top: 4px;
   }
   .meta-line {
     display: flex;
@@ -264,18 +273,44 @@
     align-items: center;
     gap: 8px;
   }
+  /* Times and a reply's readout stay out of the way until the pointer or focus is on it;
+     a reply that didn't finish keeps its readout in view. */
+  .you .meta-line,
+  .reply-meta {
+    opacity: 0;
+    transition: opacity 120ms ease;
+  }
+  li:is(:hover, :focus-within) :is(.you .meta-line, .reply-meta),
+  .failed-reply .reply-meta {
+    opacity: 1;
+  }
+  @media (hover: none) {
+    .you .meta-line,
+    .reply-meta {
+      opacity: 1;
+    }
+  }
+  .failed-reply p {
+    color: color-mix(in srgb, var(--danger) 70%, var(--ink));
+  }
   .failed {
     color: var(--danger);
   }
+  /* Cards read as quiet notes under the reply: a tone rail, no box. */
   .card {
     --tone: var(--success);
     display: grid;
-    gap: 4px;
-    margin-left: 21px;
-    padding: 8px 10px;
-    border: 1px solid var(--hairline);
-    border-radius: 10px;
-    background: color-mix(in srgb, var(--solid-raised) 55%, transparent);
+    gap: 3px;
+    margin-left: 22px;
+    padding: 7px 11px;
+    border: 0;
+    border-left: 2px solid color-mix(in srgb, var(--tone) 70%, transparent);
+    border-radius: 0 8px 8px 0;
+    background: color-mix(in srgb, var(--ink) 3.5%, transparent);
+  }
+  .card p {
+    font-size: 12.5px;
+    line-height: 1.5;
   }
   .card[data-status="undone"],
   .card[data-status="rejected"],
@@ -287,7 +322,7 @@
   }
   .card.ask[data-status="pending"] {
     --tone: var(--warning);
-    border-color: color-mix(in srgb, var(--warning) 45%, var(--hairline));
+    background: color-mix(in srgb, var(--warning) 7%, transparent);
   }
   .card header,
   .transcript header {
