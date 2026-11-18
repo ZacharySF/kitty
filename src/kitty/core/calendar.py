@@ -115,7 +115,10 @@ def _get_calendar(conn, ident):
 
 
 def calendars(conn):
-    return [dict(row) for row in conn.execute('SELECT * FROM calendar_calendars WHERE deleted=0 ORDER BY name')]
+    """Every calendar; `read_only` is 1 for one imported from an outside account (`calendar_remote`)."""
+    return [dict(row) for row in conn.execute(
+        'SELECT c.*, EXISTS(SELECT 1 FROM calendar_remote r WHERE r.calendar_id=c.id) AS read_only'
+        ' FROM calendar_calendars c WHERE c.deleted=0 ORDER BY c.name')]
 
 
 def color(value):

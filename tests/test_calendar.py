@@ -1035,6 +1035,9 @@ def test_outlook_calendars_are_read_only_with_pythons_refusals(api, workspace):
         {"event": {"title": "Fine", "start": "2026-11-02", "end": "2026-11-03", "all_day": True, "timezone": "UTC"}},
         {"event": {**new, "timezone": "UTC"}}]}) == read_only, "nothing of a refused import is written"
     assert stored(conn) == before
+    # The snapshot marks the calendar, so the calendar page offers no delete for its events.
+    marks = lambda: {cal["id"]: cal["read_only"] for cal in api.get("/api/calendar")["calendars"]}
+    assert marks() == {cal["id"]: cal["read_only"] for cal in calendar.calendars(conn)} == {"personal": 0, outlook["id"]: 1}
     # Reading is unchanged, and a stale revision is refused before anything else, as in Python.
     assert [event["title"] for event in api.occurrences(calendar_id=outlook["id"])] == ["Design review"] * 3
     assert api.get(f"/api/calendar/events/{theirs['id']}")["title"] == "Design review"
@@ -1044,3 +1047,4 @@ def test_outlook_calendars_are_read_only_with_pythons_refusals(api, workspace):
     # Once the account is disconnected the calendar is an ordinary one again.
     conn.execute("DELETE FROM calendar_remote")
     assert api.edit(theirs["id"], {"revision": theirs["revision"], "changes": {"title": "Mine"}})["title"] == "Mine"
+    assert marks() == {"personal": 0, outlook["id"]: 0}

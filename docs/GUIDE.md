@@ -1677,6 +1677,18 @@ title field still reads natural language to retime the event. Clicking a task op
 the same side drawer for the task. Repeat rules, time zone, custom reminder offsets
 and Google properties stay in the drawer's expandable sections, with their
 explanations in tooltips. Saving reports through the tab's status dot.
+**Deleting.** Hovering an event, or reaching it with Tab, shows an **x** in its
+top-right corner that deletes it. A click also selects the event: a ring marks it,
+its drawer opens as before and focus stays on the event, so **Delete** or
+**Backspace** then removes it; typing anything else (or Enter) goes to the drawer's
+title as before. The keys act on the event that has keyboard focus too, and do
+nothing while you type or inside a dialog; Escape or a click elsewhere lets go of
+the selection. A single
+event goes at once and an **Undo** toast stays for eight seconds (Ctrl+Z and
+**Undo last change** work as well). A repeating event asks first and loses only
+that occurrence; the drawer's **Delete selected scope** removes more. Right-click
+still asks before deleting. Events of read-only calendars (Outlook) have no x and
+ignore the keys.
 A task's **＋ Map** action optionally adds it beneath a chosen map node.
 When an event changed both in rika! and in Google Calendar, **Imports & Google**
 draws both versions on a small day grid in the event's colour: rika!'s as a solid

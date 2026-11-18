@@ -10,6 +10,8 @@ export type Cal = {
   visible: number;
   revision: number;
   google_id?: string;
+  /** 1 for a calendar imported from an outside account (Outlook): its events cannot be changed here. */
+  read_only?: number;
 };
 
 export type Attendee = {
