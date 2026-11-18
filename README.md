@@ -124,6 +124,10 @@ Rika reads what changed overnight and tells you in a few lines. She drafts the
 replies; **you** press Send. Ask her for something by typing, or by talking if
 you turn Voice on. Press **Ctrl + R** and she docks beside whatever page you're on.
 
+Rika thinks with a cloud model through [OpenRouter](https://openrouter.ai), on your
+own key, so what you ask her and what she reads to answer goes there. It's optional:
+without a key she still runs simple commands, and notes, plans and study don't need one.
+
 She has a page of her own for everything else: the coding agents working for
 you (what each is doing, how full its context is, what it has cost), the skills
 you can drag onto one, what she remembers, and what all of it has used.
@@ -196,7 +200,7 @@ or download the Brain when you want to see it all at once.
 | --- | --- |
 | **Core** · always on | Home, Rika, tabs, search, settings and module selection. |
 | **Workspace** | Notes and block references, documents and PDFs, canvas, mind maps, flashcards, study, calendar, tasks, goals and floating quick notes. |
-| **Terminal** | A pinned [herdr](https://github.com/herdrdev/herdr) session in a resizable dock. Open omp, Claude or Codex in labelled agent tabs with live activity. |
+| **Terminal** · download | Your own [herdr](https://github.com/herdrdev/herdr) session in a tab. Open omp, Claude or Codex in labelled agent tabs with live activity. |
 | **ApplyAI** · optional | Career: Find, Saved and Track in one bar. It fills forms but **never submits an application** and never invents facts about the applicant. |
 | **Math**, **LearnHarness**, **Voice** · download | Checked math practice, the LearnHarness app inside Study, and talking to Rika. Each fetches what it needs when you turn it on. |
 | **Brain** · download | Your workspace as a 3D brain or a 2D map, as its own view. |
@@ -212,8 +216,7 @@ against a signed list, and removed again when you switch it off and say so.
 ### From a thought to a terminal
 
 The Terminal module streams herdr into the window over a same-origin WebSocket.
-Keep a session in the dock or open the full herdr view, with coding agents in
-their own tabs.
+Open the full herdr view in a tab, with coding agents in their own tabs.
 
 If you separately install [Stencil Tern](https://stencil.so/tern), rika! can
 also drive its own Tern session: list live and exited panes, run a command,
@@ -247,6 +250,13 @@ The [module guide](docs/MODULES.md) explains the format and how to publish one.
 
 Updates are signed: use **Check for updates** inside the app. Your workspace
 lives apart from the application and stays put across updates.
+
+Linux x86_64 only for now (Ubuntu 22.04+, or glibc 2.35+ for the AppImage).
+There is no Windows, macOS or ARM build.
+
+Back your workspace up like any personal data. [Device sync](docs/GUIDE.md#device-sync)
+carries notes only, not attachments, calendar, study, jobs or settings, and
+[GitHub backup](docs/GUIDE.md#github-backup) copies notes but has no restore yet.
 
 <p align="center">
   <img src="docs/screenshots/readme/welcome.jpg" width="62%" alt="The rika! welcome card: a glowing neural-network brain above the words 'Welcome to rika!', with Continue with Google and Start locally buttons">
@@ -393,8 +403,8 @@ their features belongs to their authors.
 
 | Project | Licence | What it does here |
 | --- | --- | --- |
-| [herdr](https://github.com/herdrdev/herdr) | Apache-2.0 | The terminal multiplexer behind the Terminal module, bundled at a pinned version. |
-| [LearnHarness](https://github.com/amosblomqvist/learnharness) | AGPL-3.0 | The upstream learning app opened from Study, run as a separate local server in a cross-origin frame. Its licence and corresponding source ship with the desktop app. |
+| [herdr](https://github.com/herdrdev/herdr) | Apache-2.0 | The terminal multiplexer behind the Terminal module, downloaded as a pack at a pinned version. |
+| [LearnHarness](https://github.com/amosblomqvist/learnharness) | AGPL-3.0 | The upstream learning app opened from Study, run as a separate local server in a cross-origin frame. Its licence and corresponding source ship in its pack. |
 | [Grinstead and Snell's *Introduction to Probability*](https://math.dartmouth.edu/~doyle/docs/prob/) | GNU FDL | Its exercises, used as a textbook source in Math, ship with their licence and source note in `third_party/grinstead-snell/`. |
 | [Tauri](https://tauri.app), [Svelte](https://svelte.dev), [Textual](https://textual.textualize.io), [3d-force-graph](https://github.com/vasturiano/3d-force-graph) | MIT (Tauri: MIT or Apache-2.0) | The desktop shell, the interface, the TUI and the 3D graph views. |
 
