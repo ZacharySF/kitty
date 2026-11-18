@@ -57,6 +57,15 @@ def page(conn, title, *lines):
     return page_id
 
 
+@pytest.fixture(autouse=True)
+def restore_environment():
+    """Settings load the planted .env into os.environ; keep its fake key out of later tests."""
+    saved = dict(os.environ)
+    yield
+    os.environ.clear()
+    os.environ.update(saved)
+
+
 @pytest.fixture
 def away(tmp_path_factory):
     """A folder outside the workspace (the workspace fixture's root is tmp_path itself)."""
