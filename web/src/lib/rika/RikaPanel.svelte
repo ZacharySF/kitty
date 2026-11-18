@@ -6,7 +6,7 @@
   import { rika } from "./session.svelte";
 
   /**
-   * Rika on home: the whole right-hand column, the conversation above and the field at its
+   * Rika on home: a whole column (Home.svelte places it), the conversation above and the field at its
    * foot. While it is on screen (`active`: its tab is the one shown) it stands in for the
    * drawer and the reply toasts: Ctrl + J, Ctrl K and anything that would open the drawer
    * focus its field or switch its section instead. `lead` is home's own line above the

@@ -37,9 +37,9 @@
 <p align="center"><b>A little less scattered. A lot more connected.</b></p>
 
 <p align="center">
-  <img src="docs/screenshots/readme/home.jpg" width="100%" alt="The rika! home dashboard on black: today's schedule with a line for now, a quick note and a focus timer on the left; up next and an agent session in the middle; and the Rika panel on the right with three drafted replies waiting for Send.">
+  <img src="docs/screenshots/readme/home.jpg" width="100%" alt="The rika! home dashboard on black: the Rika panel on the left with three drafted replies waiting for Send; today's schedule, a quick note and a focus timer in the middle; up next and an agent session on the right.">
 </p>
-<p align="center"><sub>Home: today, what's next, and Rika on the right with your replies already drafted.</sub></p>
+<p align="center"><sub>Home: Rika on the left with your replies already drafted, then today and what's next.</sub></p>
 
 <br>
 

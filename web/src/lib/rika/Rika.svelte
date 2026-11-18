@@ -7,8 +7,8 @@
   import { rika } from "./session.svelte";
 
   /**
-   * Rika in the window (docs/rika-design.md): on home the panel (RikaPanel, in the home's
-   * right-hand column); everywhere else the drawer on the right and reply toasts. Ctrl + J
+   * Rika in the window (docs/rika-design.md): on home the panel (RikaPanel, in a column of
+   * its own); everywhere else the drawer on the right and reply toasts. Ctrl + J
    * opens or closes the drawer, or focuses the panel's field, from anywhere but a terminal
    * or a modal dialog. `onnavigate` runs Rika's "open view" actions.
    */

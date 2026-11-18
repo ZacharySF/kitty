@@ -89,15 +89,21 @@
   .word i + i {
     margin-bottom: 0.4em;
   }
+  /* The stamp keeps the foot corner Rika's field is not in: Rika stands on the left of home
+     unless moved to the right, where its side panel on other pages stands too. */
   .stamp {
     position: absolute;
-    left: 26px;
+    right: 26px;
     bottom: 20px;
     margin: 0;
     color: #ff7a2f;
     font: 700 17px/1 var(--font-ui);
     letter-spacing: 0.14em;
     opacity: 0.9;
+  }
+  :global(:root:has(.home[data-rika="right"]:not(.solo), .rika-dock)) .stamp {
+    right: auto;
+    left: 26px;
   }
   @keyframes aero-settle {
     from { translate: -1% -0.6%; }

@@ -6,7 +6,7 @@
   import WidgetMenu from "./home/WidgetMenu.svelte";
   import type { Bootstrap } from "./api";
   import { buildStore, setPreferences } from "./build.svelte";
-  import { HEIGHT_LIMITS, HOME_WIDGETS, MAX_COLUMNS, RIKA_LIMITS, WIDTH_LIMITS, columnShares, placeWidget, resolveHome, rikaShare, savedHome, snapHeight, spareWidgets, splitWidths, widgetHeight, withHeight, type HomeWidgetId } from "./home/layout";
+  import { HEIGHT_LIMITS, HOME_WIDGETS, MAX_COLUMNS, RIKA_LIMITS, WIDTH_LIMITS, columnShares, nextRikaSide, placeWidget, resolveHome, rikaShare, rikaSide, rikaSideAt, savedHome, snapHeight, spareWidgets, splitWidths, widgetHeight, withHeight, type HomeWidgetId, type RikaSide } from "./home/layout";
   import { homeEditor, templatePicker } from "./home/templatePicker.svelte";
   import { TONES, toneColor, withTone } from "./home/tones";
   import TemplateSuggestion from "./home/TemplateSuggestion.svelte";
@@ -17,8 +17,8 @@
   import { useWorkspaceContext } from "./workspaceContext.svelte";
 
   /**
-   * Home (design review): less going on. Today and a quick note on the left, what is up next
-   * beside them, Rika filling the right-hand column. The morning brief lives in Rika's panel,
+   * Home (design review): less going on. Rika fills a column of its own, on the left unless
+   * moved; beside it today, a quick note and what is up next. The morning brief lives in Rika's panel,
    * sections in search (Ctrl K); agents show only while a session runs. With every module off,
    * one quiet line says so. Which widgets show, and where, is the build's `ui.home`
    * (home/layout.ts); a template (home/templates.ts) rearranges it from Rika's panel.
@@ -28,8 +28,11 @@
    * set its height, double-click the edge for its own height back; Remove it, or bring one
    * in from the Widgets menu of the bar at the bottom (press it, or drag it to its place).
    * The bar also holds the colours, Hide Rika and Done, which saves the arrangement. In edit
-   * mode a splitter between the two columns, and one before Rika's column, sets how the
-   * width is shared (drag, arrow keys, Shift + Left/Right on a handle, double-click to reset).
+   * mode a splitter between the two columns, and one beside Rika's column, sets how the
+   * width is shared (drag, arrow keys, Shift + Left/Right on a handle, double-click to reset),
+   * and Rika's own handle moves its column between the two widget columns or to their right
+   * (and back to the left, where it starts): it lands in the third of home it is dragged
+   * over (or Left/Right on the handle), and `ui.home.rika_side` keeps it.
    */
   let { revision, counts, onview }: { revision: number; counts?: Bootstrap["counts"]; onview: (view: View) => unknown } = $props();
   const pane = useWorkspaceContext();
@@ -48,6 +51,13 @@
   let draftRika = $state<number | null>(null);
   const shares = $derived(columnShares(draftWidths ?? buildStore.build.ui.home.widths, columns.length));
   const rikaWidth = $derived(draftRika ?? buildStore.build.ui.home.rika);
+  /** Where Rika's column stands while editing (the build's `ui.home.rika_side` otherwise). */
+  let draftSide = $state<RikaSide | null>(null);
+  const side = $derived(rikaSide(draftSide ?? buildStore.build.ui.home.rika_side, columns.length));
+  /** How many widget columns stand side by side right now: two only in a window wide enough for both. */
+  const across = () => (columns.length >= 2 && window.matchMedia("(min-width: 1200px)").matches ? 2 : 1);
+  /** The side Rika is drawn on: a middle without two columns side by side is the left. */
+  const drawn = () => rikaSide(side, across());
   /** Rika's panel can leave home too: "rika" among the build's hidden widgets. The drawer still opens with Ctrl + J. */
   let draftPanel = $state<boolean | null>(null);
   /** Colour-coding: a tone dragged from the palette onto a widget, or picked there and then pressed onto one. */
@@ -60,6 +70,8 @@
     if (tone === null) return;
     draftTones = withTone(tones, widget, tone || null);
   }
+  /** Colour-coded widgets make the board a grid of panes: one gutter both ways, every column ending on the same line. */
+  const paned = $derived(columns.some((column) => column.some((id) => toneColor(tones, id))));
   const panel = $derived(draftPanel ?? !buildStore.build.ui.home.hidden.includes("rika"));
   let board = $state<HTMLElement>();
   let home = $state<HTMLElement>();
@@ -84,7 +96,9 @@
       draftWidths = splitWidths((event.clientX - box.left) / box.width);
     } else if (sizing === "rika" && home) {
       const box = home.getBoundingClientRect();
-      draftRika = rikaShare((box.right - event.clientX) / box.width);
+      const column = home.querySelector(".rika-column")?.getBoundingClientRect();
+      // On the right Rika's inner edge is its left one; elsewhere the splitter holds its right edge.
+      if (column) draftRika = rikaShare((drawn() === "right" ? column.right - event.clientX : event.clientX - column.left) / box.width);
     }
   }
   function grab(event: PointerEvent, which: "columns" | "rika") {
@@ -101,15 +115,17 @@
       draftWidths = splitWidths(next / 2);
     } else {
       const now = rikaWidth || 0.3;
-      // Rika's column grows to the left.
-      const next = event.key === "Home" ? RIKA_LIMITS.max : event.key === "End" ? RIKA_LIMITS.min : direction ? now - direction * 0.02 : null;
+      // On the right Rika's column grows to the left; elsewhere to the right.
+      const outward = drawn() === "right" ? -1 : 1;
+      const [near, far] = outward < 0 ? [RIKA_LIMITS.max, RIKA_LIMITS.min] : [RIKA_LIMITS.min, RIKA_LIMITS.max];
+      const next = event.key === "Home" ? near : event.key === "End" ? far : direction ? now + direction * outward * 0.02 : null;
       if (next === null) return;
       draftRika = rikaShare(next);
     }
     event.preventDefault();
   }
   let failure = $state("");
-  const titleOf = (id: HomeWidgetId) => HOME_WIDGETS.find((widget) => widget.id === id)!.title;
+  const titleOf = (id: HomeWidgetId | "rika") => (id === "rika" ? "Rika" : HOME_WIDGETS.find((widget) => widget.id === id)!.title);
 
   $effect(() => {
     if (homeEditor.on && !draft) draft = saved.map((column) => [...column]);
@@ -130,7 +146,8 @@
     const next = savedHome($state.snapshot(draft) ?? [], $state.snapshot(buildStore.build.ui.home), enabled);
     const sized = { widths: draftWidths ? $state.snapshot(draftWidths) : $state.snapshot(buildStore.build.ui.home.widths), rika: draftRika ?? buildStore.build.ui.home.rika };
     const hidden = [...next.hidden.filter((id) => id !== "rika"), ...(panel ? [] : ["rika"])];
-    if (!(await setPreferences({ ui: { home: { ...next, hidden, ...sized, tones: $state.snapshot(tones), heights: $state.snapshot(heights) } } }))) {
+    const placed = { rika_side: draftSide ?? buildStore.build.ui.home.rika_side };
+    if (!(await setPreferences({ ui: { home: { ...next, hidden, ...sized, ...placed, tones: $state.snapshot(tones), heights: $state.snapshot(heights) } } }))) {
       failure = "Could not save the arrangement.";
       return;
     }
@@ -139,6 +156,7 @@
     draftHeights = null;
     said = "";
     draftRika = null;
+    draftSide = null;
     draftPanel = null;
     draftTones = null;
     toneInHand = null;
@@ -202,13 +220,23 @@
     return true;
   }
 
-  /** A widget held by its handle: a preview rides under the pointer and the widget's place opens where it would land. */
-  let carrying = $state<{ id: HomeWidgetId; x: number; y: number; pointer: number } | null>(null);
-  function carry(event: PointerEvent, id: HomeWidgetId) {
+  /** A widget (or Rika's column) held by its handle: a preview rides under the pointer and its place opens where it would land. */
+  let carrying = $state<{ id: HomeWidgetId | "rika"; x: number; y: number; pointer: number } | null>(null);
+  function carry(event: PointerEvent, id: HomeWidgetId | "rika") {
     if (!draft || event.button !== 0) return;
     event.preventDefault();
     carrying = { id, x: event.clientX, y: event.clientY, pointer: event.pointerId };
-    dragged = id;
+    if (id !== "rika") dragged = id;
+  }
+  /** Arrow keys on Rika's handle: one place to the left or the right. */
+  function nudgeRika(event: KeyboardEvent) {
+    const direction = event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0;
+    if (!direction) return;
+    event.preventDefault();
+    draftSide = nextRikaSide(side, direction, across());
+    said = `Rika: ${draftSide}`;
+    // On the left Rika stands before the widgets in the page, so a move there redraws it: its handle takes the focus back.
+    void tick().then(() => document.querySelector<HTMLElement>('[data-handle="rika"]')?.focus());
   }
   // The window hears the rest of the drag: a move across columns redraws the widget, handle and all.
   const holding = $derived(carrying?.pointer ?? null);
@@ -226,21 +254,28 @@
   function travel(event: PointerEvent) {
     if (!carrying || event.pointerId !== carrying.pointer || !draft) return;
     carrying = { ...carrying, x: event.clientX, y: event.clientY };
+    const held = carrying.id;
+    if (held === "rika") {
+      // Rika lands in the third of home the pointer is over.
+      const box = home?.getBoundingClientRect();
+      if (box) draftSide = rikaSideAt((event.clientX - box.left) / box.width, across());
+      return;
+    }
     const hits = document.elementsFromPoint(event.clientX, event.clientY);
     const slot = hits.find((node) => node instanceof HTMLElement && node.dataset.widget && board?.contains(node)) as HTMLElement | undefined;
     const column = hits.find((node) => node instanceof HTMLElement && node.dataset.column !== undefined && board?.contains(node)) as HTMLElement | undefined;
     if (slot) {
       const target = slot.dataset.widget as HomeWidgetId;
-      if (target === carrying.id) return;
+      if (target === held) return;
       const at = draft.findIndex((items) => items.includes(target));
       const box = slot.getBoundingClientRect();
-      const others = draft[at].filter((item) => item !== carrying!.id);
-      place(carrying.id, at, event.clientY > box.top + box.height / 2 ? others[others.indexOf(target) + 1] : target);
+      const others = draft[at].filter((item) => item !== held);
+      place(held, at, event.clientY > box.top + box.height / 2 ? others[others.indexOf(target) + 1] : target);
     } else if (column) {
       // Below a column's last widget (or in the free column): the end of that column.
       const index = Number(column.dataset.column);
       const last = column.querySelector<HTMLElement>("[data-widget]:last-of-type");
-      if (!last || event.clientY > last.getBoundingClientRect().bottom) place(carrying.id, index);
+      if (!last || event.clientY > last.getBoundingClientRect().bottom) place(held, index);
     }
   }
   function letGo(event: PointerEvent) {
@@ -248,6 +283,10 @@
     const id = carrying.id;
     carrying = null;
     dragged = null;
+    if (id === "rika") {
+      said = `Rika: ${side}`;
+      return;
+    }
     const at = draft?.findIndex((items) => items.includes(id)) ?? -1;
     if (at >= 0 && draft) said = `${titleOf(id)}: column ${at + 1}, ${draft[at].indexOf(id) + 1} of ${draft[at].length}`;
   }
@@ -290,8 +329,41 @@
   }
 </script>
 
-<div class="home" class:solo={!panel && !templatePicker.open} data-tutorial="home" bind:this={home} style:--rika-column={rikaWidth ? `${Math.round(rikaWidth * 100)}%` : null}>
-  <div class="board" class:editing class:sized={columns.length === 2} bind:this={board} role="region" aria-label="Home widgets"
+<!-- While editing Rika keeps its column, dimmed and still like a widget's content, under its own handle.
+     With the panel off home, the template offer (the palette's Templates) still shows in it. -->
+{#snippet rikaColumn()}
+  {#if panel || templatePicker.open}
+    <div class="rika-column" class:editing>
+      {#if editing}
+        <div class="tools">
+          <button type="button" class="handle" data-handle="rika" aria-label="Move Rika: drag, or use the arrow keys"
+            onkeydown={nudgeRika} onpointerdown={(event) => carry(event, "rika")}>
+            <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M5 3.5h.01M5 8h.01M5 12.5h.01M11 3.5h.01M11 8h.01M11 12.5h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg>
+          </button>
+        </div>
+      {/if}
+      <div class="rika-slot" inert={editing}>
+        <RikaPanel id={`${homeId}-rika`} active={pane.active}>
+          {#snippet lead()}<TemplateSuggestion {counts} />{/snippet}
+        </RikaPanel>
+      </div>
+    </div>
+    {#if editing}
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex a11y_no_noninteractive_element_interactions -->
+      <div class="splitter rika" role="separator" aria-orientation="vertical" aria-label="Width of Rika's column" tabindex="0"
+        aria-valuemin={RIKA_LIMITS.min * 100} aria-valuemax={RIKA_LIMITS.max * 100} aria-valuenow={Math.round((rikaWidth || 0.3) * 100)}
+        onpointerdown={(event) => grab(event, "rika")} onpointermove={size} onpointerup={() => (sizing = null)} onpointercancel={() => (sizing = null)}
+        onkeydown={(event) => step(event, "rika")} ondblclick={() => (draftRika = 0)}></div>
+    {/if}
+  {/if}
+{/snippet}
+
+<div class="home" class:paned class:solo={!panel && !templatePicker.open} data-tutorial="home" data-rika={side} bind:this={home}
+  style:--rika-column={rikaWidth ? `${Math.round(rikaWidth * 100)}%` : null} style:--rika-inline={rikaWidth ? `${Math.round(rikaWidth * 100)}cqi` : null}
+  style:--home-columns={columns.length === 2 ? `minmax(0, ${shares[0]}fr) var(--rika-column) minmax(0, ${shares[1]}fr)` : null}>
+  <!-- Unless it is on the right Rika comes first in the page too, so Tab follows what is seen. -->
+  {#if side !== "right"}{@render rikaColumn()}{/if}
+  <div class="board" class:editing class:paned class:sized={columns.length === 2} bind:this={board} role="region" aria-label="Home widgets"
     style:--board-columns={columns.length === 2 ? `minmax(0, ${shares[0]}fr) minmax(0, ${shares[1]}fr)` : null}>
     {#each columns as column, index (index)}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -346,22 +418,7 @@
       <p class="quiet">Modules are off. <button type="button" class="text-button" onclick={openModuleSettings}>Turn some on</button></p>
     {/if}
   </div>
-  {#if panel || templatePicker.open}
-    {#if editing}
-      <!-- svelte-ignore a11y_no_noninteractive_tabindex a11y_no_noninteractive_element_interactions -->
-      <div class="splitter rika" role="separator" aria-orientation="vertical" aria-label="Width of Rika's column" tabindex="0"
-        aria-valuemin={RIKA_LIMITS.min * 100} aria-valuemax={RIKA_LIMITS.max * 100} aria-valuenow={Math.round((rikaWidth || 0.3) * 100)}
-        onpointerdown={(event) => grab(event, "rika")} onpointermove={size} onpointerup={() => (sizing = null)} onpointercancel={() => (sizing = null)}
-        onkeydown={(event) => step(event, "rika")} ondblclick={() => (draftRika = 0)}></div>
-    {/if}
-    <!-- While editing Rika keeps its column, dimmed and still like a widget's content.
-         With the panel off home, the template offer (the palette's Templates) still shows in it. -->
-    <div class="rika-column" class:editing inert={editing}>
-      <RikaPanel id={`${homeId}-rika`} active={pane.active}>
-        {#snippet lead()}<TemplateSuggestion {counts} />{/snippet}
-      </RikaPanel>
-    </div>
-  {/if}
+  {#if side === "right"}{@render rikaColumn()}{/if}
   {#if editing}
     <div class="edit-bar" role="toolbar" aria-label="Home editing">
       <span class="count">Editing home</span>
@@ -392,6 +449,9 @@
      Rika scroll on their own, so the page itself never does. Side margins match main's. */
   .home {
     --rika-column: clamp(340px, 30vw, 460px);
+    /* Rika's width as a length the tiles can subtract (a share set by hand comes in the board's own units). */
+    --rika-inline: clamp(340px, 30vw, 460px);
+    --rail-gap: 48px;
     flex: 1 1 0px;
     min-height: 120px;
     width: 100%;
@@ -400,20 +460,23 @@
     padding: 12px 26px 0;
     box-sizing: border-box;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) var(--rika-column);
+    grid-template-columns: var(--rika-column) minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr);
-    gap: 48px;
+    gap: var(--rail-gap);
   }
   .home.solo {
     grid-template-columns: minmax(0, 1fr);
   }
   .board {
+    --gutter: 48px;
+    --row-gap: 28px;
+    container-type: inline-size;
     min-width: 0;
     min-height: 0;
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
     align-content: start;
-    gap: 20px 48px;
+    gap: 20px var(--gutter);
     padding-right: 4px;
     overflow-y: auto;
     overscroll-behavior: contain;
@@ -424,7 +487,15 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 28px;
+    gap: var(--row-gap);
+  }
+  /* Tiles sit closer than open widgets do, and as far from each other down as across. */
+  .home.paned {
+    --rail-gap: 28px;
+  }
+  .board.paned {
+    --gutter: 20px;
+    --row-gap: 20px;
   }
   /* Two columns share the room as the build says (even unless resized), once both fit side by side. */
   @media (min-width: 1200px) {
@@ -443,7 +514,7 @@
     position: absolute;
     top: 0;
     bottom: 0;
-    right: -29px;
+    right: calc(var(--gutter) / -2 - 5.5px);
     width: 11px;
     cursor: col-resize;
     touch-action: none;
@@ -451,9 +522,23 @@
       linear-gradient(var(--muted), var(--muted)) center / 3px 44px no-repeat,
       linear-gradient(var(--hairline), var(--hairline)) center / 1px 100% no-repeat;
   }
+  /* Rika's splitter stands in Rika's own track, on its inner edge: right of it, or left of it when Rika is on the right. */
   .splitter.rika {
-    top: 12px;
-    right: calc(26px + var(--rika-column) + 19px);
+    position: relative;
+    top: auto;
+    bottom: auto;
+    right: auto;
+    z-index: 2;
+    grid-column: 1;
+    grid-row: 1;
+    justify-self: end;
+    margin-right: calc(var(--rail-gap) / -2 - 5.5px);
+  }
+  .home[data-rika="right"] .splitter.rika {
+    grid-column: 2;
+    justify-self: start;
+    margin-right: 0;
+    margin-left: calc(var(--rail-gap) / -2 - 5.5px);
   }
   .splitter:hover,
   .splitter:focus-visible {
@@ -481,23 +566,52 @@
   .slot.dragged {
     opacity: 0.4;
   }
-  /* A colour-coded widget sits on a pane of its tone mixed into the page colour: dark glass
-     with a lit top edge, no outline. The widget's own top rule goes; the pane is its frame. */
+  /* A colour-coded widget is a tile, as a phone's or a desktop's widgets are: a pane of its
+     tone mixed into the page colour, no outline (dark glass with a lit top edge, or one flat
+     fill on a theme whose surfaces are flat). The widget's own top rule goes; the pane is its frame. */
   /* A widget with nothing to show right now (Agents with no session) keeps no empty pane. */
   .board:not(.editing) .slot.toned:not(:has(:global(.home-widget))) {
     display: none;
   }
+  /* Every tile is one height (a share of an even column's width), so rows line up across
+     columns and the tiles' top edge is the board's (and Rika's) top line; one with more to
+     show grows, and one sized by hand keeps its height. */
   .slot.toned {
-    margin: 8px 0;
-    padding: 2px 20px 16px;
-    border-radius: 22px;
+    --tile-pad: 18px;
+    --tile-radius: 22px;
+    display: flex;
+    flex-direction: column;
+    padding: var(--tile-pad);
+    border-radius: var(--tile-radius);
     background:
       linear-gradient(180deg, color-mix(in srgb, var(--ink) 5%, transparent), transparent 42%),
       color-mix(in srgb, var(--tone) 22%, var(--solid-void, #000));
     box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 9%, transparent);
   }
+  :global(:root[data-theme-surface="flat"]) .slot.toned {
+    background: color-mix(in srgb, var(--tone) 18%, var(--solid-void, #000));
+    box-shadow: none;
+  }
+  .slot.toned:not(.sized) {
+    box-sizing: border-box;
+    min-height: calc((100cqi - var(--gutter)) / 4.2);
+  }
+  .slot.toned .content {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .slot.toned:not(.sized) .content > :global(.home-widget) {
+    flex: 1 1 auto;
+  }
   .slot.toned :global(.home-widget) {
-    border-top-color: transparent;
+    border-top: 0;
+    padding: 0;
+  }
+  /* A tile that opens a page lifts a little under the pointer. */
+  .board:not(.editing) .slot.toned:has(:global(.open:hover)) {
+    background: color-mix(in srgb, var(--tone) 25%, var(--solid-void, #000));
   }
   .slot.tone-over {
     outline: 2px dashed color-mix(in srgb, var(--ink) 55%, transparent);
@@ -602,13 +716,68 @@
     color: var(--ink);
   }
   .board.editing .content,
-  .rika-column.editing > :global(.rika-panel) {
+  .rika-column.editing .rika-slot {
     opacity: 0.55;
     pointer-events: none;
   }
-  /* Rika's column: a wrapper without a box, so the panel is still the grid's own child. */
+  /* Rika's column: its handle while editing, then the panel as tall as the room. */
   .rika-column {
-    display: contents;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .rika-slot {
+    flex: 1 1 0px;
+    min-height: 0;
+  }
+  /* Where each stands: Rika then the widgets; the widgets then Rika when it is on the right;
+     and in a window wide enough for two widget columns side by side, Rika between them: the
+     board then spans home and borrows its three tracks, leaving the middle one to Rika. */
+  @media (min-width: 600px) {
+    .board,
+    .rika-column {
+      grid-row: 1;
+    }
+    .rika-column,
+    .home.solo .board,
+    .home[data-rika="right"] .board {
+      grid-column: 1;
+    }
+    .board,
+    .home[data-rika="right"] .rika-column {
+      grid-column: 2;
+    }
+    .home[data-rika="right"]:not(.solo) {
+      grid-template-columns: minmax(0, 1fr) var(--rika-column);
+    }
+  }
+  @media (min-width: 1200px) {
+    .home[data-rika="middle"]:not(.solo) {
+      grid-template-columns: var(--home-columns);
+    }
+    .home[data-rika="middle"]:not(.solo) .board {
+      grid-column: 1 / -1;
+      grid-template-columns: subgrid;
+      column-gap: var(--rail-gap);
+    }
+    .home[data-rika="middle"]:not(.solo) .board > .column + .column {
+      grid-column: 3;
+    }
+    .home[data-rika="middle"]:not(.solo) .rika-column {
+      grid-column: 2;
+      z-index: 1;
+    }
+    .home[data-rika="middle"]:not(.solo) .splitter.rika {
+      grid-column: 2;
+    }
+    /* The widget columns' own splitter would stand on Rika; Shift + Left/Right on a handle still sets their widths. */
+    .home[data-rika="middle"]:not(.solo) .board .splitter {
+      display: none;
+    }
+    .home[data-rika="middle"]:not(.solo) .slot.toned:not(.sized) {
+      min-height: calc((100cqi - var(--rika-inline) - var(--rail-gap) * 2) / 4.2);
+    }
   }
   .failure {
     color: var(--muted);
@@ -626,10 +795,18 @@
       grid-template-columns: minmax(0, 1fr);
       grid-template-rows: none;
     }
-    .home :global(.rika-panel) {
+    .rika-column {
       order: -1;
+    }
+    .rika-slot {
+      flex: none;
+    }
+    .home :global(.rika-panel) {
       height: 70vh;
       min-height: 360px;
+    }
+    .splitter.rika {
+      display: none;
     }
     .board {
       overflow: visible;
