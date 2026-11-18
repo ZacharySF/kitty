@@ -1,7 +1,7 @@
 """Rika's GitHub backup tools: sync_status and sync_now.
 
 Rika reports on the backup and can start a run. It never connects a repository and
-never turns the backup on or off: those are the owner's clicks in Settings → Devices.
+never turns the backup on or off: those are the owner's clicks in Settings → Backup.
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ def _backup(ctx: Context) -> reposync.RepoSync:
 
 def _summary(state: dict) -> str:
     if not state["repo"]:
-        return "GitHub backup is not set up; you can connect a private repository in Settings → Devices"
+        return "GitHub backup is not set up; you can connect a private repository in Settings → Backup"
     if state["problem"]:
         return state["problem"]
     if state["paused"]:
@@ -45,7 +45,7 @@ def _sync_now(ctx: Context, args: dict) -> Result:
 
 TOOLS = (
     Tool("sync_status", "How the GitHub backup of the notes is doing: the repository, the last run, the next run "
-         "and any problem. The owner sets the backup up in Settings → Devices; you cannot.",
+         "and any problem. The owner sets the backup up in Settings → Backup; you cannot.",
          obj(), "read", _sync_status),
     Tool("sync_now", "Start a GitHub backup run now. Works only when the owner has connected a repository and "
          "the backup is not paused.", obj(), "change", _sync_now),

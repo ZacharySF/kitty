@@ -248,7 +248,7 @@
     const { target } = notice;
     if (target.kind === "rika") {
       // A Rika alert without a goal is a problem with the GitHub backup.
-      if (target.goal_id === null) openSettings("devices");
+      if (target.goal_id === null) openSettings("backup");
       else window.location.hash = goalHash(target.goal_id);
     }
     else if (target.kind === "calendar") navigate("calendar");

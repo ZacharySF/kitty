@@ -1,6 +1,5 @@
 <script lang="ts">
   import Popover from "./ui/Popover.svelte";
-  import RepoSync from "./RepoSync.svelte";
   import { onMount } from "svelte";
   import { Button, Panel } from "@nunera/bracket";
   import {
@@ -217,7 +216,6 @@
       </Popover>
       {#if notice}<p role="status">{notice}</p>{/if}
       {#if error}<p role="alert">{error}</p>{/if}
-      <RepoSync />
     </div>
 </Panel>
 

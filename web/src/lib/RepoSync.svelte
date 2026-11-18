@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { Button } from "@nunera/bracket";
+  import { Button, Panel } from "@nunera/bracket";
   import {
     backupBad, backupNow, backupStatus, connectBackup, disconnectBackup, loadBackup, pauseBackup, type BackupState,
   } from "./reposync";
@@ -41,8 +41,9 @@
   }
 </script>
 
-<h3>GitHub backup</h3>
-<p class="muted">Keeps a copy of your notes in a private GitHub repository you choose. Unlike device sync, this copy leaves your devices and is stored on GitHub, where it is not encrypted.</p>
+<Panel title="GitHub backup" aria-label="GitHub backup">
+<div class="github">
+<p class="muted">A copy of your notes in a private GitHub repository you choose. It leaves your devices and is stored on GitHub unencrypted, so GitHub can read it. Notes only; no restore from it yet.</p>
 {#if backup && !backup.enabled}
   <p class="muted" role="status">{backup.reason}</p>
 {:else if backup?.repo}
@@ -65,10 +66,12 @@
   <p class="muted">The repository must be private; rika! checks before every push. It pushes with the git sign-in this computer already has.</p>
 {/if}
 {#if error}<p role="alert">{error}</p>{/if}
+</div>
+</Panel>
 
 <style>
   p { margin: 0; }
-  h3 { margin: .25rem 0 0; font-size: .9rem; }
+  .github { display: grid; gap: .8rem; }
   .muted { color: var(--muted); font-size: .8rem; line-height: 1.5; }
   .row { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; padding: .65rem .75rem; border: 1px solid var(--border-fine, var(--border)); border-radius: 8px; }
   .who { display: grid; gap: .15rem; flex: 1; min-width: 0; }

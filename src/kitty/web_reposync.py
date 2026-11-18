@@ -1,4 +1,4 @@
-"""Settings → Devices → GitHub backup: a push-only copy of the notes in a private repository.
+"""Settings → Backup → GitHub backup: a push-only copy of the notes in a private repository.
 
 Page routes (behind the normal page guard; mutations behind the mutation guard)::
 

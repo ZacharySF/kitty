@@ -1,4 +1,4 @@
-// Settings → Devices → GitHub backup: a push-only copy of the notes in a private GitHub
+// Settings → Backup → GitHub backup: a push-only copy of the notes in a private GitHub
 // repository the owner names. Unlike device sync, this copy leaves the owner's devices.
 import { api } from "./api.ts";
 import { relativeTime } from "./devices.ts";
