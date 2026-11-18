@@ -5,8 +5,10 @@
   a reversible flag and an undo payload;
 * :mod:`~kitty.core.rika.commands`: deterministic phrases that run tools without a model
   (also the demo's scripted responder);
-* :mod:`~kitty.core.rika.llm`: OpenRouter tool-calling with streaming, under the shared
-  AI key, daily budget and price ceilings;
+* :mod:`~kitty.core.rika.llm`: tool-calling under the shared AI controls, on OpenRouter
+  (streamed, under the shared key, daily budget and price ceilings) or omp;
+* :mod:`~kitty.core.rika.brain`: which of the two this computer thinks with;
+* :mod:`~kitty.core.rika.omp`: one chat completion through ``omp auth-gateway stdio``;
 * :mod:`~kitty.core.rika.agents`: worker agents in herdr panes and Tern windows;
 * :mod:`~kitty.core.rika.store`: messages, actions and approvals (migration 037);
 * :mod:`~kitty.core.rika.loop`: the agent loop, approvals and undo; it publishes events

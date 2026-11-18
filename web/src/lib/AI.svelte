@@ -3,6 +3,7 @@
   import { api, type TaskRecord } from "./api";
   import AIReview from "./AIReview.svelte";
   import { activeModules } from "./modules.svelte";
+  import RikaBrainSettings from "./rika/RikaBrainSettings.svelte";
   import RikaVoiceSettings from "./rika/RikaVoiceSettings.svelte";
   import UsageSection from "./usage/UsageSection.svelte";
   let { revision = 0, demo = false }: { revision?: number; demo?: boolean } =
@@ -119,6 +120,8 @@
     <h2 id="ai-title">AI</h2>
     {#if error}<p class="error-banner" role="alert">{error}</p>{/if}
     {#if message}<p role="status">{message}</p>{/if}
+    <RikaBrainSettings />
+    <h3>OpenRouter</h3>
     {#if status}
       <div class="fields">
         <label
@@ -171,7 +174,7 @@
           /></label
         >
       </div>
-      <h3>Rika's models</h3>
+      <h3>Rika's OpenRouter models</h3>
       <datalist id="ai-model-ids">{#each status.models as item}<option value={item.id}>{item.name}</option>{/each}</datalist>
       <div class="fields">
         {#each TIERS as [tier, label] (tier)}

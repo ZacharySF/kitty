@@ -30,6 +30,11 @@ POST /api/rika/voice/model {}  ->  {started}; downloads the chosen model now
 GET  /api/rika/speech/<message id>  ->  {text, audio}
     A short summary of a reply to a spoken request and, with a local engine, its
     speech as a data: URL (audio is null without one, and always in the demo).
+GET  /api/rika/brain  ->  {provider: openrouter|omp, models: {fast, standard, deep}, defaults, omp_installed}
+POST /api/rika/brain {provider, models?}  ->  the same
+    What Rika thinks with on this computer (kitty.core.rika.brain, Settings → AI):
+    OpenRouter, or omp's own sign-in. ``models`` are omp's tier models ('' is the
+    default in ``defaults``); OpenRouter's tier models stay in POST /api/ai/settings.
 GET  /api/rika/stream  (WebSocket upgrade)
     Server-to-page JSON text messages: token, message, action, approval, plan, tier,
     navigate, agents and voice.model events. Like every upgrade it is guarded by the
@@ -53,7 +58,7 @@ import re
 import select
 
 from kitty import packs
-from kitty.core.rika import speech
+from kitty.core.rika import brain, omp, speech
 from kitty.core.rika.agents import AgentError
 from kitty.core.rika.loop import Rika, RikaError
 from kitty.core.rika.voice import FRAME_MAX, MODES, Session, VoiceError
@@ -96,6 +101,11 @@ def _voice(app, conn) -> dict:
     return {**app.rika.voice.status(conn), "speech": found[0] if found else None}
 
 
+def _brain(chosen: brain.Brain) -> dict:
+    return {"provider": chosen.provider, "models": chosen.models, "defaults": dict(brain.OMP_DEFAULTS),
+            "omp_installed": omp.program() is not None}
+
+
 def get(app, conn, path, query):
     if path == STREAM:
         raise _error(426, "Open Rika's stream with a WebSocket upgrade")
@@ -105,6 +115,9 @@ def get(app, conn, path, query):
     if path == PREFIX + "/voice":
         app._no_query(query)
         return _voice(app, conn)
+    if path == PREFIX + "/brain":
+        app._no_query(query)
+        return _brain(brain.load(app.settings))
     match = re.fullmatch(PREFIX + "/speech/" + _ID, path)
     if match:
         app._no_query(query)
@@ -135,6 +148,12 @@ def post(app, conn, path, body):
         except VoiceError as exc:
             raise _error(400, str(exc)) from None
         return _voice(app, conn)
+    if path == PREFIX + "/brain":
+        _keys(body, {"provider", "models"}, {"provider"})
+        try:
+            return _brain(brain.save(app.settings, body["provider"], body.get("models", {})))
+        except ValueError as exc:
+            raise _error(400, str(exc)) from None
     if path == PREFIX + "/voice/model":
         _keys(body, set())
         try:
