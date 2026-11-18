@@ -311,7 +311,11 @@ selection: base only.
    `flock`; the old version goes only after that. Anything that fails leaves the previous state,
    and a start sweeps unreferenced folders and day-old downloads. `POST /api/packs/uninstall
    {id}` is refused while a module needing it is selected. A pack counts only for the exact app
-   version (its chunks import the base's hashed chunks). The static route serves a missing
+   version (its chunks import the base's hashed chunks), so an update leaves every installed
+   pack `outdated`: the page, once per load (`moduleStore.renew`, called from `App.svelte`),
+   downloads again those of the saved modules and those no module owns, behind
+   `ModuleDownload`'s cover, then asks the desktop app to restart (a browser tab reloads);
+   it tries nothing while the index cannot be fetched. The static route serves a missing
    website file from an installed pack. `POST /api/modules` refuses (409) to turn on a module
    whose pack is not ready; the CLI's `kitty modules enable` does not check (the home then shows
    the card). Packs live under `$XDG_DATA_HOME/kitty/packs/`. `KITTY_PACKS_URL` and
@@ -326,6 +330,7 @@ selection: base only.
    verification and unpacking, release-guard and publisher tests, and
    `web/tests/packs.browser.test.mjs` (the built website without the Brain, Settings → Modules
    download with progress, turning the Brain on, the Brain drawn from the pack after a restart,
+   a pack left by an older version downloaded again by itself and the restart it asks for,
    removal).
 
    Measured (this build): the website the installer carries went from 11,928,862 to

@@ -44,6 +44,17 @@ export function downloadsOf(item: ModuleInfo, packs: PacksState | null): PackInf
 }
 
 /**
+ * After an update: the packs an older version left (a pack is tied to one build) that are
+ * still in use and so download again: the saved modules' and those no module owns (Themes,
+ * Animations). A module that is off gets its pack again when it is turned on.
+ */
+export function renewals(available: ModuleInfo[], configured: readonly ModuleId[], packs: PacksState | null): PackInfo[] {
+  const owned = new Set(available.flatMap((item) => item.packs));
+  const wanted = new Set(available.filter((item) => configured.includes(item.id)).flatMap((item) => item.packs));
+  return (packs?.packs ?? []).filter((pack) => pack.state === "outdated" && (wanted.has(pack.id) || !owned.has(pack.id)));
+}
+
+/**
  * The selection before and after answers and switches: a module is on when the user set
  * it so; otherwise when `base` has it (first run: every module without a download) or an
  * answer wants it and it can be had. Canonical order, as the server keeps it.

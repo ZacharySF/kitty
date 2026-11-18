@@ -1,5 +1,5 @@
 import { api, ApiError, type ModuleId, type ModulesState, type PackInfo, type PacksState } from "./api";
-import { packReady, totals } from "./modulePicker";
+import { packReady, renewals, totals } from "./modulePicker";
 
 const POLL_MS = 500;
 
@@ -122,6 +122,38 @@ class ModuleStore {
     } finally {
       this.phase = "";
       this.progress = null;
+    }
+  }
+
+  /**
+   * After an update: download again, for this version, the packs the older one left
+   * (`renewals`), one at a time. True when they all arrived, so a restart puts them to use;
+   * false when there was nothing to do or this version's list cannot be reached. A failure
+   * is left in `packsError`.
+   */
+  async renew(): Promise<boolean> {
+    try {
+      const modules = this.modules ?? (this.modules = await api<ModulesState>("/modules"));
+      this.packs = await api<PacksState>("/packs");
+      const stale = this.packs.index.error ? [] : renewals(modules.available, modules.configured, this.packs);
+      if (!stale.length || this.phase) return false;
+      this.phase = "downloading";
+      try {
+        const bytes = stale.reduce((sum, pack) => sum + (pack.size ?? 0), 0);
+        let done = 0;
+        for (const pack of stale) {
+          await this.download(pack, done, bytes);
+          done += pack.size ?? 0;
+        }
+      } finally {
+        this.phase = "";
+        this.progress = null;
+      }
+      this.packsError = "";
+      return true;
+    } catch (cause) {
+      this.packsError = (cause as Error).message;
+      return false;
     }
   }
 
