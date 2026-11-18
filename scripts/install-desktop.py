@@ -56,6 +56,11 @@ def atomic_copy_tree(source: Path, destination: Path) -> None:
         os.replace(staged, destination)
 
 
+def launcher_export(launcher: Path) -> str:
+    """The app writes its start-at-login unit to run this launcher, not the bare AppImage."""
+    return f"export KITTY_DESKTOP_LAUNCHER={shlex.quote(str(launcher))}"
+
+
 def previous_appimage_launcher(launcher: Path, image: Path) -> tuple[list[str], list[str]]:
     """Read our generated launcher as data; never execute shell to recover settings."""
     lines = launcher.read_text().splitlines()
@@ -72,7 +77,8 @@ def previous_appimage_launcher(launcher: Path, image: Path) -> tuple[list[str], 
     runtime = []
     generated = {
         "unset KITTY_HOME KITTY_DB", "export APPIMAGE_EXTRACT_AND_RUN=1",
-        "export KITTY_DESKTOP_LAUNCHER=1", "while :; do", "result=$?",
+        # v0.3.41 and earlier said "=1"; later launchers name themselves for start at login.
+        "export KITTY_DESKTOP_LAUNCHER=1", launcher_export(launcher), "while :; do", "result=$?",
         '[ "$result" -eq 42 ] || exit "$result"', "done", command, "exec " + command,
     }
     for line in lines:
@@ -158,7 +164,7 @@ def main() -> None:
     # Never let an ambient developer workspace leak into a desktop installation.
     lines.append("unset KITTY_HOME KITTY_DB")
     if args.appimage is not None:
-        lines.extend(["export APPIMAGE_EXTRACT_AND_RUN=1", "export KITTY_DESKTOP_LAUNCHER=1",
+        lines.extend(["export APPIMAGE_EXTRACT_AND_RUN=1", launcher_export(launcher),
                       "# Exit 42 requests a restart outside the old AppImage/FHS environment.",
                       "while :; do", "  " + shlex.join(command) + ' "$@"',
                       "  result=$?", '  [ "$result" -eq 42 ] || exit "$result"', "done"])

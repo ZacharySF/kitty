@@ -29,9 +29,12 @@ PartOf=graphical-session.target\nAfter=graphical-session.target\n\n\
 [Install]\nWantedBy=graphical-session.target\n"))
 }
 
-/// The program a login should start: the AppImage itself when rika! runs from one.
-pub fn program(appimage: Option<OsString>, current: io::Result<PathBuf>) -> Option<PathBuf> {
-    appimage.map(PathBuf::from).filter(|path| path.is_absolute()).or_else(|| current.ok())
+/// The program a login should start: the installed launcher when it names itself (NixOS runs the
+/// AppImage through appimage-run, so the bare AppImage cannot start there), else the AppImage
+/// itself when rika! runs from one, else this executable.
+pub fn program(launcher: Option<OsString>, appimage: Option<OsString>, current: io::Result<PathBuf>) -> Option<PathBuf> {
+    let absolute = |value: OsString| Some(PathBuf::from(value)).filter(|path| path.is_absolute());
+    launcher.and_then(absolute).or_else(|| appimage.and_then(absolute)).or_else(|| current.ok())
 }
 
 /// Start at login can be set here: there is a unit folder to write to and systemd runs this session.
@@ -101,8 +104,17 @@ mod tests {
 
     #[test]
     fn an_appimage_is_started_by_its_own_file() {
-        assert_eq!(program(Some("/apps/rika.AppImage".into()), Ok("/tmp/.mount_x/usr/bin/rika".into())), Some(PathBuf::from("/apps/rika.AppImage")));
-        assert_eq!(program(None, Ok("/usr/bin/rika".into())), Some(PathBuf::from("/usr/bin/rika")));
+        assert_eq!(program(None, Some("/apps/rika.AppImage".into()), Ok("/tmp/.mount_x/usr/bin/rika".into())), Some(PathBuf::from("/apps/rika.AppImage")));
+        assert_eq!(program(None, None, Ok("/usr/bin/rika".into())), Some(PathBuf::from("/usr/bin/rika")));
+    }
+
+    #[test]
+    fn a_named_launcher_is_started_instead_of_the_appimage_it_wraps() {
+        // NixOS runs the AppImage through appimage-run; only the launcher can start it at login.
+        assert_eq!(program(Some("/home/me/.local/bin/kitty-workspace".into()), Some("/apps/rika.AppImage".into()), Ok("/x".into())),
+                   Some(PathBuf::from("/home/me/.local/bin/kitty-workspace")));
+        // The v0.3.41 launcher only said "1": that is not a path, so the AppImage stays.
+        assert_eq!(program(Some("1".into()), Some("/apps/rika.AppImage".into()), Ok("/x".into())), Some(PathBuf::from("/apps/rika.AppImage")));
     }
 
     #[test]
