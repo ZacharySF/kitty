@@ -1775,8 +1775,8 @@ share of the busiest stage; with none it says so and offers **Find jobs**. **Thi
 puts today on a capsule, a point per event under each day in its calendar's colour, and
 lists the next three events. **Clock** shows the time large and on a dial.
 
-Home is a dashboard: the day's widgets on the left, **Rika** filling the right-hand
-column (see **Rika** above). The widgets sit in two columns when there is room (one in
+Home is a dashboard: **Rika** filling a column of its own (on the left unless you move
+it; see **Rika** above), the day's widgets beside it. The widgets sit in two columns when there is room (one in
 a narrow window) and scroll on their own, so the page never does. **Morning brief**
 leads, then **Today** (today's events with a live now-line, the current event's
 progress and a countdown to the next) and **Quick note** (Ctrl+Enter saves; the last
@@ -1801,9 +1801,14 @@ home: drag a widget by its handle to another place or column (or focus the handl
 the arrow keys), or **Remove** it. A bar at the bottom of the window holds the rest:
 **Widgets** lists the ones not on home (press one to add it, or drag it to its place), then
 the colours, **Hide Rika** (or **Show Rika**) and **Done**. Two thin splitters set the
-widths: one between the two widget columns and one before Rika's column (drag them, or
-focus one and use the arrow keys; a double-click resets it). **Done** saves the
-arrangement and the widths to the build (`ui.home`).
+widths: one between the two widget columns and one beside Rika's column (drag them, or
+focus one and use the arrow keys; a double-click resets it). Rika's column has a handle
+of its own: drag it and Rika lands in the third of home it is held over (left of the
+widgets, where it starts, between the two widget columns, or right of them), or focus the
+handle and press Left or Right. The middle needs two widget columns side by side; in a
+narrower window a Rika kept in the middle stands on the left. **Done** saves the
+arrangement, the widths and Rika's side to the build (`ui.home`, the side as
+`ui.home.rika_side`).
 
 Loading shows a small turning brain made of points with a line that names what is
 loading; there are no placeholder rows. The Brain itself stays still while you work

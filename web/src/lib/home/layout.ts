@@ -111,6 +111,29 @@ export function rikaShare(fraction: number): number {
   return Number(snap(fraction, RIKA_LIMITS).toFixed(2));
 }
 
+/** Where Rika's panel stands on home (the build's `ui.home.rika_side`): left of the widgets unless moved; the middle is between the two widget columns. */
+export const RIKA_SIDES = ["left", "middle", "right"] as const;
+export type RikaSide = (typeof RIKA_SIDES)[number];
+
+/** The side to draw with `columns` widget columns side by side: a middle without two of them, or a side this build does not know, is the left. */
+export function rikaSide(saved: unknown, columns: number): RikaSide {
+  const side = RIKA_SIDES.find((item) => item === saved) ?? "left";
+  return side === "middle" && columns < 2 ? "left" : side;
+}
+
+/** Where a dragged Rika lands: the third of home the pointer is over (`fraction` of home's width), or the half with fewer than two columns. */
+export function rikaSideAt(fraction: number, columns: number): RikaSide {
+  if (columns < 2) return fraction < 0.5 ? "left" : "right";
+  return fraction <= 1 / 3 ? "left" : fraction < 2 / 3 ? "middle" : "right";
+}
+
+/** One arrow key on Rika's handle: the next place to the left (-1) or right (1), stopping at the ends. */
+export function nextRikaSide(side: RikaSide, direction: -1 | 1, columns: number): RikaSide {
+  const places = RIKA_SIDES.filter((item) => item !== "middle" || columns >= 2);
+  const at = places.indexOf(rikaSide(side, columns));
+  return places[Math.min(places.length - 1, Math.max(0, at + direction))];
+}
+
 /**
  * A widget's height set by hand, in pixels: on an 8px grid, between these (the build keeps
  * `ui.home.heights`, one `widget:pixels` entry per sized widget; the rest are as tall as their content).

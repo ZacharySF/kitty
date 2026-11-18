@@ -1250,17 +1250,17 @@ describe("study streak", () => {
 
 describe("home dashboard", () => {
   for (const viewport of [DEFAULT, SCALED_MINIMUM]) {
-    test(`home at ${viewport.width}×${viewport.height}: the day's widgets on the left, Rika filling the right-hand column`, async () => {
+    test(`home at ${viewport.width}×${viewport.height}: Rika filling the left-hand column, the day's widgets beside it`, async () => {
       const { page, problems, context } = await open("today", { viewport });
       const board = page.getByRole("region", { name: "Home widgets" });
       const panel = page.locator(".home").getByRole("region", { name: "Rika" });
       await Promise.all([board.waitFor(), panel.waitFor()]);
       await board.getByRole("region", { name: "Up next" }).waitFor();
       const [b, r, home] = await Promise.all([rect(board), rect(panel), rect(page.locator(".home"))]);
-      // Home keeps the page's side margins (its padding); Rika fills the right-hand column inside them.
-      const pad = await page.locator(".home").evaluate((node) => { const s = getComputedStyle(node); return { right: parseFloat(s.paddingRight), top: parseFloat(s.paddingTop) }; });
-      assert.ok(b.right <= r.left, `the widgets and Rika overlap: ${b.left}-${b.right} | ${r.left}-${r.right}`);
-      assert.ok(Math.abs(r.right - (home.right - pad.right)) <= 1 && Math.abs(r.top - (home.top + pad.top)) <= 1 && Math.abs(r.bottom - home.bottom) <= 1, "Rika does not fill the right-hand column");
+      // Home keeps the page's side margins (its padding); Rika fills the left-hand column inside them.
+      const pad = await page.locator(".home").evaluate((node) => { const s = getComputedStyle(node); return { left: parseFloat(s.paddingLeft), top: parseFloat(s.paddingTop) }; });
+      assert.ok(r.right <= b.left, `Rika and the widgets overlap: ${r.left}-${r.right} | ${b.left}-${b.right}`);
+      assert.ok(Math.abs(r.left - (home.left + pad.left)) <= 1 && Math.abs(r.top - (home.top + pad.top)) <= 1 && Math.abs(r.bottom - home.bottom) <= 1, "Rika does not fill the left-hand column");
       assert.ok(r.width >= 300, `the Rika panel is only ${r.width}px wide`);
       // Design review: fewer, larger widgets. The brief is Rika's chip, sections are in search,
       // agents show only while a session runs (the demo has none).

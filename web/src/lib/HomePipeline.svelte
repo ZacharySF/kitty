@@ -61,7 +61,7 @@
     margin: 0;
   }
   /* Beside the figure, the chart takes the larger share of the tile. */
-  @container (min-width: 400px) {
+  @container (min-width: 360px) {
     dl {
       width: min(62cqi, 300px);
     }
@@ -104,6 +104,21 @@
     justify-content: center;
     font-size: var(--fs-label);
     white-space: nowrap;
+  }
+  /* In a narrower tile (Rika in the middle) the stage names step down a size so they never
+     touch; narrower still, a name that does not fit its column is cut short. */
+  @container (max-width: 459.98px) {
+    dt {
+      font-size: 12px;
+    }
+  }
+  @container (max-width: 419.98px) {
+    dt {
+      display: block;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
   }
   .empty {
     display: flex;

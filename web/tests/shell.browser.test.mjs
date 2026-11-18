@@ -128,6 +128,8 @@ describe("shell: Rika side panel", () => {
     const home = page.locator(".home .rika-panel");
     await home.waitFor();
     const homeBox = await rect(home);
+    // Rika stands on the left of home; the side panel stands on the right, inside home's right margin.
+    const margin = await page.locator(".home").evaluate((node) => node.getBoundingClientRect().right - parseFloat(getComputedStyle(node).paddingRight));
     await page.evaluate(() => (location.hash = "calendar"));
     await page.waitForFunction(() => location.hash === "#calendar");
     const opener = page.getByRole("button", { name: "Today", exact: true });
@@ -147,7 +149,7 @@ describe("shell: Rika side panel", () => {
       && document.activeElement.getAttribute("aria-label") === "Ask Rika");
     const dockBox = await rect(page.locator(".rika-dock .rika-panel"));
     assert.ok(Math.abs(dockBox.width - homeBox.width) <= 2, `the panel is ${dockBox.width}px wide, home's ${homeBox.width}px`);
-    assert.ok(Math.abs(dockBox.right - homeBox.right) <= 2, `the panel's right edge ${dockBox.right} is not home's ${homeBox.right}`);
+    assert.ok(Math.abs(dockBox.right - margin) <= 2, `the panel's right edge ${dockBox.right} is not home's right margin ${margin}`);
     assert.ok(Math.abs(dockBox.bottom - homeBox.bottom) <= 2, `the panel's foot ${dockBox.bottom} is not home's ${homeBox.bottom}`);
     // The page stays usable beside it: its content ends before the panel begins.
     const mainBox = await rect(page.locator("main"));

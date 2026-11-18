@@ -64,7 +64,7 @@ async function open({ home = HOME, viewport = DESKTOP, routes = {}, icons = fals
       ? route.fulfill({ json: { configured: false, identity: null, onboarding: { welcome_completed: true, tutorial_completed: true } } })
       : route.continue(),
   );
-  await routeBuild(context, { theme: { base: "kitty" }, ui: { home, icons: { on: icons } } });
+  const prefs = await routeBuild(context, { theme: { base: "kitty" }, ui: { home, icons: { on: icons } } });
   const fixed = { "/pipeline": PIPELINE, "/study/timer": timer("idle"), "/calendar?*": { events: [], calendars: [] }, ...routes };
   for (const [path, json] of Object.entries(fixed))
     await context.route(`**/api${path}`, (route) => (route.request().method() === "GET" ? route.fulfill({ json }) : route.continue()));
@@ -73,7 +73,7 @@ async function open({ home = HOME, viewport = DESKTOP, routes = {}, icons = fals
   page.on("pageerror", (error) => problems.push(error.message));
   await page.goto(new URL("#today", base).href);
   await widget(page, "Applications").locator("dd, .note").first().waitFor();
-  return { page, problems, context };
+  return { page, problems, context, prefs };
 }
 
 const widget = (page, name) => page.getByRole("region", { name: "Home widgets" }).getByRole("region", { name, exact: true });
@@ -258,5 +258,92 @@ describe("what each tile shows", () => {
     assert.deepEqual(await badge.evaluate((node) => [node.getBoundingClientRect().width, node.getBoundingClientRect().height]), [28, 28]);
     assert.notEqual(await badge.evaluate((node) => getComputedStyle(node).backgroundColor), "rgba(0, 0, 0, 0)");
     await on.context.close();
+  });
+});
+
+describe("Rika's place on home", () => {
+  /** Which side Rika's panel stands on, from where it is drawn against the two widget columns. */
+  const drawnSide = (page) =>
+    page.evaluate(() => {
+      const [first, second] = [...document.querySelectorAll(".board .column")].map((column) => column.getBoundingClientRect());
+      const rika = document.querySelector(".rika-panel").getBoundingClientRect();
+      if (rika.right <= first.left + 1) return "left";
+      if (rika.left >= second.right - 1) return "right";
+      return rika.left >= first.right - 1 && rika.right <= second.left + 1 ? "middle" : "overlapping";
+    });
+  const bar = (page) => page.getByRole("toolbar", { name: "Home editing" });
+  async function edit(page) {
+    await page.keyboard.press("Control+Shift+Space");
+    await bar(page).waitFor();
+    return page.getByRole("button", { name: /^Move Rika/ });
+  }
+
+  for (const side of ["left", "middle", "right"]) {
+    test(`a saved ${side} draws Rika there, as tall as home, with the tiles still in rows`, async () => {
+      const { page, problems, context } = await open({ home: { ...HOME, rika_side: side } });
+      assert.equal(await drawnSide(page), side);
+      const [left, right] = await tiles(page);
+      for (const [index, tile] of right.entries()) assert.equal(tile.top, left[index].top, `row ${index + 1}`);
+      const [panel, home] = await page.evaluate(() => [".rika-panel", ".home"].map((selector) => { const box = document.querySelector(selector).getBoundingClientRect(); return [box.top, box.bottom]; }));
+      assert.ok(panel[1] - panel[0] >= (home[1] - home[0]) * 0.9, `Rika is ${panel[1] - panel[0]}px tall in a ${home[1] - home[0]}px home`);
+      assert.deepEqual(problems, []);
+      await context.close();
+    });
+  }
+
+  test("Rika stands on the left until it is moved", async () => {
+    const { page, context } = await open();
+    assert.equal(await drawnSide(page), "left");
+    await context.close();
+  });
+
+  test("in edit mode Rika, dragged by its handle, snaps to the middle and to the right while held, and Done saves where it was let go", async () => {
+    const { page, context, prefs } = await open();
+    const handle = await (await edit(page)).boundingBox();
+    const home = await page.locator(".home").boundingBox();
+    const y = home.y + home.height / 2;
+    await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(home.x + home.width * 0.5, y, { steps: 10 });
+    await page.waitForFunction(() => document.querySelector("[data-drag-preview]")?.textContent.trim() === "Rika");
+    assert.equal(await drawnSide(page), "middle", "still held over the middle");
+    await page.mouse.move(home.x + home.width * 0.9, y, { steps: 10 });
+    assert.equal(await drawnSide(page), "right", "still held over the right");
+    await page.mouse.up();
+    await page.locator("[data-drag-preview]").waitFor({ state: "detached" });
+    await bar(page).getByRole("button", { name: "Done" }).click();
+    await bar(page).waitFor({ state: "detached" });
+    assert.equal(prefs.ui.home.rika_side, "right");
+    assert.equal(await drawnSide(page), "right");
+    await context.close();
+  });
+
+  test("the arrow keys on Rika's handle move it a place at a time, say where it is, and keep the handle focused", async () => {
+    const { page, context, prefs } = await open();
+    const handle = await edit(page);
+    await handle.focus();
+    await page.keyboard.press("ArrowRight");
+    assert.equal(await drawnSide(page), "middle");
+    await page.keyboard.press("ArrowRight");
+    assert.equal(await drawnSide(page), "right");
+    await bar(page).getByRole("status").filter({ hasText: "Rika: right" }).waitFor({ state: "attached" });
+    assert.match(await page.evaluate(() => document.activeElement?.getAttribute("aria-label") ?? ""), /^Move Rika/);
+    await page.keyboard.press("ArrowLeft");
+    assert.equal(await drawnSide(page), "middle");
+    await bar(page).getByRole("button", { name: "Done" }).click();
+    await bar(page).waitFor({ state: "detached" });
+    assert.equal(prefs.ui.home.rika_side, "middle");
+    await context.close();
+  });
+
+  test("with Rika on the left, Tab reaches its field before the widgets", async () => {
+    const { page, context } = await open({ home: { ...HOME, rika_side: "left" } });
+    const order = await page.evaluate(() => {
+      const field = document.querySelector('.rika-panel [aria-label="Ask Rika"]');
+      const title = document.querySelector(".board .home-widget h3 button");
+      return field.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING ? "field first" : "widgets first";
+    });
+    assert.equal(order, "field first");
+    await context.close();
   });
 });

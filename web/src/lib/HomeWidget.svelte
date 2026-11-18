@@ -107,7 +107,7 @@
     margin-top: 12px;
   }
   /* Wide enough for both: the art stands beside the content, as tall as the widget. */
-  @container (min-width: 400px) {
+  @container (min-width: 360px) {
     .frame.with-art {
       flex-direction: row;
       gap: 24px;
