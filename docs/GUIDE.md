@@ -1651,10 +1651,11 @@ a study subject takes that subject's Study colour, shown in the editor as a lock
 colours (new calendars start on the next one), which recolour with the theme.
 Colours picked before keep their hex, and tasks linked to a subject carry its
 colour too. One header row above the grid holds the range (click it to jump to a
-date), **‹ Today ›**, the views (Day, Week, Month, Agenda, Year, Plan),
+date), **‹ Today ›** (**This week**, **This month** or **This year** in those views),
+the views (Day, Week, Month, Agenda, Year, Plan),
 **Calendars** (show or hide calendars, edit or add one, the display time zone) and
 **New event**. While the calendar has focus **D**/**W**/**M**/**A**/**Y**/**P** switch views,
-**J**/**K** step, **T** goes to today and **N** adds. Month lists up to three events per
+**J**/**K** step, **T** goes back to now and **N** adds. Month lists up to three events per
 date and **+N more**; the picked day's agenda is in the sidebar under the mini
 month. Year shows every day's number in a circle that deepens with booked hours
 (hover to read, click to pin, **Open day** to jump). Plan splits the day's timeline from its open tasks;
@@ -1662,6 +1663,11 @@ month. Year shows every day's number in a circle that deepens with booked hours
 sidebar's mini month shows ISO weeks; hover a week to preview its
 load and click a date to jump there. The all-day row's **+** appears when a cell
 is hovered or focused.
+**Time zone.** The Personal calendar's time zone is the one Rika reads "6 pm" and
+"tomorrow" in. A new workspace starts it on UTC; opening the workspace on a computer
+set to another zone gives it that zone (TZ, else the zone `/etc/localtime` links
+to), so what Rika adds lands where the grid shows it. A zone other than UTC is
+yours and is never replaced; change it by editing the Personal calendar.
 **Adding.** **New event** opens a quick add: type a phrase such as
 `gym tue 6pm 1h` or `lunch with Mira fri 12:30 at Café Rose every week`, pick
 **Event** or **Task**, and Enter saves it; the chip shows the day and time it
