@@ -1868,10 +1868,15 @@ describe("calendar redesign", () => {
     await page.waitForFunction((old) => document.querySelector('[aria-label="Calendar range"] .range')?.textContent === old, thisWeek);
     await bar.getByRole("button", { name: "Next week" }).click();
     await page.waitForFunction((old) => document.querySelector('[aria-label="Calendar range"] .range')?.textContent !== old, thisWeek);
-    await bar.getByRole("button", { name: "Today", exact: true }).click();
+    // The way back names the view's unit: this week in the week view, today in the day view.
+    await bar.getByRole("button", { name: "This week", exact: true }).click();
     await page.waitForFunction((old) => document.querySelector('[aria-label="Calendar range"] .range')?.textContent === old, thisWeek);
     await page.keyboard.press("d");
     await page.getByRole("region", { name: "Day calendar" }).waitFor();
+    await bar.getByRole("button", { name: "Today", exact: true }).waitFor();
+    await bar.getByRole("button", { name: "Month", exact: true }).click();
+    await bar.getByRole("button", { name: "This month", exact: true }).waitFor();
+    await page.keyboard.press("d");
     await page.keyboard.press("a");
     await page.getByRole("region", { name: "Agenda" }).waitFor();
     await page.getByRole("searchbox").fill("dwm");
