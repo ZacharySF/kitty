@@ -3589,15 +3589,17 @@ register** adds the compiled revision to the resume library without changing any
 track default or application.
 
 Masters are your base resumes; company and role versions copy a master revision,
-optionally linked to an ApplyAI job. The left column lists both with a format badge
-(TeX, Typ, HTML), the templates and a drop zone for imports; the open resume shows its
-source with line numbers beside the PDF, then the ATS check as a score ring. The tools
-are tabs under it: **Tailor with Rika**, **Facts & privacy**, **Many at once** (one
-tailored version per selected job under a total cost limit; nothing is applied or
-submitted), **Outcomes** (ApplyAI outcomes per exported revision, as observed counts
-only) and **Files & history**. With the Animations module on, the page rises in, a new
-PDF page lifts into place, the score ring fills and the findings arrive one by one;
-nothing moves under Reduce motion.
+optionally linked to an ApplyAI job. The workshop is one studio of three columns:
+the library (**New resume**, each master with its company and role versions under it,
+and the compiler status), the open resume (its source with line numbers beside the
+PDF), and that resume's tools as four tabs: **Check** (the ATS check, issues first),
+**Tailor** (this resume, or **Many jobs at once**: one tailored version per selected
+job under a total cost limit; nothing is applied or submitted), **Facts** (cloud help
+and the facts Rika may use) and **History** (revisions, project files, downloads and how
+exported versions did in ApplyAI, as observed counts only). **New resume** opens a
+gallery of the templates drawn as small page sketches, with import below it. With the
+Animations module on, the columns rise in, a new PDF page lifts into place and the check
+ring fills; nothing moves under Reduce motion.
 
 Templates: Clean HTML, Clean Typst, Clean LaTeX and **Jake's Resume** (Jake
 Gutierrez's one-page LaTeX layout from `github.com/jakegut/resume`, MIT, notice kept;
