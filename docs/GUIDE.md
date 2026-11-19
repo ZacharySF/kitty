@@ -3589,9 +3589,15 @@ register** adds the compiled revision to the resume library without changing any
 track default or application.
 
 Masters are your base resumes; company and role versions copy a master revision,
-optionally linked to an ApplyAI job. **Many resumes at once** queues one tailored
-version per selected job under a total cost limit; nothing is applied or submitted.
-ApplyAI outcomes are shown per exported revision as observed counts only.
+optionally linked to an ApplyAI job. The left column lists both with a format badge
+(TeX, Typ, HTML), the templates and a drop zone for imports; the open resume shows its
+source with line numbers beside the PDF, then the ATS check as a score ring. The tools
+are tabs under it: **Tailor with Rika**, **Facts & privacy**, **Many at once** (one
+tailored version per selected job under a total cost limit; nothing is applied or
+submitted), **Outcomes** (ApplyAI outcomes per exported revision, as observed counts
+only) and **Files & history**. With the Animations module on, the page rises in, a new
+PDF page lifts into place, the score ring fills and the findings arrive one by one;
+nothing moves under Reduce motion.
 
 Templates: Clean HTML, Clean Typst, Clean LaTeX and **Jake's Resume** (Jake
 Gutierrez's one-page LaTeX layout from `github.com/jakegut/resume`, MIT, notice kept;
