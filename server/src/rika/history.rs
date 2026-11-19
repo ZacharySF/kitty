@@ -11,7 +11,8 @@ use crate::search::text::split;
 const PAGE: usize = 50;
 /// The tools whose effect is `outward` (`kitty.core.rika.tools.registry()`): a plan item
 /// calling one of them says so. The parity scenario calls every registered tool.
-const OUTWARD: [&str; 5] = ["delete_page", "run_command", "send_reply", "set_modules", "start_worker"];
+const OUTWARD: [&str; 7] = ["delete_page", "prepare_resume_edit", "research_resume_company", "run_command", "send_reply",
+                            "set_modules", "start_worker"];
 /// `mail.HISTORY_TABLE`.
 const MAIL: &str = "(SELECT d.*, m.sender AS original_sender, m.sender_email AS original_email, m.subject AS original_subject, \
                     m.received_at AS original_received, m.body AS original_body FROM rika_mail_drafts d LEFT JOIN \
