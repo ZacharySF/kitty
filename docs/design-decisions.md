@@ -76,3 +76,7 @@
 
 ## Calendar delete (18 Nov 2026)
 - An event deletes from the grid: an x in its top-right corner on hover, focus or selection, or Delete / Backspace on the clicked or focused event. A single event goes at once with an Undo toast; a repeating one asks and loses that occurrence. Read-only (Outlook) events offer neither. A click leaves focus on the event; typing or Enter there still goes to the drawer's title.
+
+## Calendar time zone and the way back (19 Nov 2026)
+- The Personal calendar's zone decides Rika's times and "today". Migration 010 seeded it as UTC, so on a computer in Matamoros "6 pm" was saved as 18:00 UTC and drawn at noon. Opening a workspace (`open_workspace`) gives a still-UTC Personal calendar the computer's zone (`kitty.core.calendar.device_zone`: TZ, every link from /etc/localtime, /etc/timezone); a zone other than UTC is the user's choice and stays. Events already saved keep their instant.
+- The range bar's way back names the view's unit: Today (day, agenda, plan), This week, This month, This year.

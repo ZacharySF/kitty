@@ -13,8 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from kitty.config import Config, load_config
+from kitty.core import calendar, concept_maps
 from kitty.core import companies as companies_core
-from kitty.core import concept_maps
 from kitty.core import sources as sources_core
 from kitty.core import tracks as tracks_core
 from kitty.db import connect, migrate, pending_migrations
@@ -87,6 +87,7 @@ def open_workspace(
         conn.close()
         raise ValueError(f"{resolved.db_path} has migrations rika-server has not applied")
     concept_maps.migrate(conn, resolved.data_dir / "exports")
+    calendar.adopt_device_zone(conn, calendar.device_zone())
     if sync:
         sync_config_to_db(conn, config)
         sync_build_to_db(conn, resolved)

@@ -13,7 +13,7 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
 
-  /** The calendar's one header row: the range as the title, ‹ Today ›, the views as words, then quiet tools and the primary add. */
+  /** The calendar's one header row: the range as the title, ‹ Today › (‹ This week › and so on), the views as words, then quiet tools and the primary add. */
   let { heading, view, date, tools, add, onview, onstep, ontoday, ondate }: {
     heading: string;
     view: string;
@@ -28,6 +28,8 @@
     ondate: (date: string) => void;
   } = $props();
   const unit = $derived(view === "plan" ? "day" : view === "agenda" ? "period" : view);
+  /** The way back to now, in the view's own unit: "This week" in the week view, "Today" in a day or the agenda. */
+  const back = $derived(view === "week" ? "This week" : view === "month" ? "This month" : view === "year" ? "This year" : "Today");
   let picker = $state<HTMLInputElement>();
 </script>
 
@@ -39,7 +41,7 @@
   </h2>
   <div class="step">
     <button class="chevron" aria-label={`Previous ${unit}`} title={`Previous ${unit} (J)`} aria-keyshortcuts="J" onclick={() => onstep(-1)}>‹</button>
-    <button class="today" title="Today (T)" aria-keyshortcuts="T" onclick={ontoday}>Today</button>
+    <button class="today" title={`${back} (T)`} aria-keyshortcuts="T" onclick={ontoday}>{back}</button>
     <button class="chevron" aria-label={`Next ${unit}`} title={`Next ${unit} (K)`} aria-keyshortcuts="K" onclick={() => onstep(1)}>›</button>
   </div>
   <nav class="views" aria-label="Calendar view" data-page-tabs>

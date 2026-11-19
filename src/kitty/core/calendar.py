@@ -14,8 +14,10 @@ import csv
 import hashlib
 import io
 import json
+import os
 import re
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -65,6 +67,54 @@ def zone(value):
         return ZoneInfo(value)
     except (ZoneInfoNotFoundError, ValueError):
         fail('Timezone must be an IANA zone such as America/Chicago')
+
+
+def _zone_name(value):
+    """`value` as an IANA zone name this process knows (the part after `zoneinfo/` of a path), else None."""
+    name = value.rsplit('/zoneinfo/', 1)[-1] if '/zoneinfo/' in value else value
+    try:
+        ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError, OSError):
+        return None
+    return name
+
+
+def device_zone(environ=os.environ, localtime=Path('/etc/localtime'), timezone_file=Path('/etc/timezone')):
+    """This computer's IANA zone ('America/Chicago'), or None when it cannot be told.
+
+    TZ wins, as it does for the C library. Then every link from /etc/localtime on the way to
+    the zone file, not only the last: a sandbox (the AppImage's) puts its own link in front
+    (/etc/localtime -> /.host-etc/localtime -> /etc/zoneinfo/America/Chicago), and the file
+    itself may sit under a store path with no zone in its name. Then Debian's /etc/timezone.
+    """
+    readings = [environ.get('TZ', '').removeprefix(':')]
+    path = localtime
+    for _ in range(40):
+        try:
+            path = path.parent / os.readlink(path)
+        except OSError:
+            break
+        readings.append(str(path))
+    try:
+        readings.append(timezone_file.read_text(encoding='utf-8').strip())
+    except OSError:
+        pass
+    return next((name for name in map(_zone_name, filter(None, readings)) if name), None)
+
+
+def adopt_device_zone(conn, device):
+    """Give the personal calendar the zone `device` while it still has migration 010's UTC.
+
+    That zone is the one Rika reads "6 pm" and "tomorrow" in and the grid of a window on this
+    computer draws in, so a UTC calendar elsewhere put what Rika wrote hours off. A zone other
+    than UTC is the user's and stays. Returns the zone set, or None when nothing changed.
+    """
+    if not device or device == 'UTC':
+        return None
+    with transaction(conn):
+        changed = conn.execute("UPDATE calendar_calendars SET timezone=?,revision=revision+1,updated_at=?"
+                               " WHERE id='personal' AND timezone='UTC'", (device, now())).rowcount
+    return device if changed else None
 
 
 def instant(value, tz='UTC', all_day=False):
