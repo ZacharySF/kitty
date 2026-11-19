@@ -1,5 +1,5 @@
 // Calendar adding (Q20 A) in a real browser against tests/calendarHarness.js (synthetic data):
-// one + on the range pill opens QuickAdd with a typed phrase; a slot click prefills it; the
+// one New event button in the header row opens QuickAdd with a typed phrase; a slot click prefills it; the
 // drawer only edits existing items; no native selects; helper text kept to the Q9 budget.
 // PLAYWRIGHT_BROWSERS_PATH=<Nix playwright-driver.browsers store path> \
 // PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true node --test tests/calendarQuickAdd.browser.test.mjs
@@ -38,10 +38,10 @@ async function calendar(theme = "kitty") {
   return { page, problems, context };
 }
 const posted = (page, path) => page.evaluate((p) => window.calendarHarness.posted(p), path);
-const pill = (page) => page.getByRole("toolbar", { name: "Calendar range" });
-const plus = (page) => pill(page).getByRole("button", { name: "Add event or task" });
-const quick = (page) => page.getByRole("dialog", { name: "Add event or task" });
-const phrase = (page) => quick(page).getByRole("textbox", { name: "Add event or task" });
+const bar = (page) => page.getByRole("toolbar", { name: "Calendar range" });
+const plus = (page) => bar(page).getByRole("button", { name: "New event", exact: true });
+const quick = (page) => page.getByRole("dialog", { name: "New event" });
+const phrase = (page) => quick(page).getByRole("textbox", { name: "New event" });
 async function until(check, what) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     if (await check()) return;
@@ -58,17 +58,12 @@ function nextTuesday() {
   return d;
 }
 
-test("adding lives in one + on the range pill; the three Add task / Add event spots are gone", async () => {
+test("adding lives in one New event button, last in the header row; the three Add task / Add event spots are gone", async () => {
   const { page, problems, context } = await calendar();
   assert.equal(await page.getByRole("button", { name: /^(Add task|Add event|＋ Task)$/ }).count(), 0, "a duplicate add button remains");
   assert.equal(await plus(page).count(), 1);
-  const size = await plus(page).evaluate((node) => {
-    const style = getComputedStyle(node);
-    return { w: node.offsetWidth, h: node.offsetHeight, radius: style.borderRadius };
-  });
-  const letter = await pill(page).getByRole("button", { name: "Week", exact: true }).evaluate((node) => node.offsetHeight);
-  assert.equal(size.h, letter, "the + is not the pill's control height");
-  assert.equal(size.w, size.h, "the + is not round");
+  const last = await bar(page).getByRole("button").last().textContent();
+  assert.equal(last.trim(), "New event", "New event is not the header row's last control");
   assert.equal(await plus(page).getAttribute("aria-keyshortcuts"), "N");
   assert.deepEqual(problems, []);
   await context.close();
@@ -154,7 +149,8 @@ test("no native selects on any calendar section, and helper text stays within th
   assert.ok(await words() <= 12, `calendar view carries ${await words()} words of helper text`);
   assert.equal(await page.getByText("Shortcuts", { exact: true }).count(), 0, "the Shortcuts fold-out remains");
   for (const name of ["Tasks", "Activity", "Availability", "Imports & Google"]) {
-    await page.getByRole("navigation", { name: "Calendar sections" }).getByRole("button", { name, exact: true }).click();
+    await page.getByRole("region", { name: "Calendar workspace" }).getByRole("heading", { level: 1 }).getByRole("button").click();
+    await page.getByRole("menu", { name: "Calendar pages" }).getByRole("menuitemradio", { name, exact: true }).click();
     for (const fold of await page.locator(".calendar-workspace details").all()) await fold.evaluate((node) => (node.open = true));
     assert.equal(await page.locator("select").count(), 0, `a native select remains on ${name}`);
   }

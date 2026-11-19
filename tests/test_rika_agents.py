@@ -5,11 +5,15 @@ from __future__ import annotations
 import os
 import shutil
 import time
+from contextlib import closing
 
 import pytest
 
 from tern_support import FakeTern
 from terminal_support import FakeHerdr, make_root, site
+
+from kitty.core.rika import store
+from kitty.db import connect
 
 SESSION = "kitty-rika-test"
 
@@ -46,7 +50,9 @@ def wait_for(check, timeout=10.0):
 
 
 def latest(running, kind):
-    items = running.request("/api/rika/history")[1]["items"]
+    # `GET /api/rika/history` is rika-server's (tests/test_rika_data_parity.py); this site is the worker alone.
+    with closing(connect(running.app.settings.db_path)) as conn:
+        items = store.history(conn)["items"]
     return [item for item in items if item["kind"] == kind]
 
 

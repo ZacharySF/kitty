@@ -204,9 +204,9 @@ def test_selected_document_import_web_task_and_original_metadata(workspace):
         task = runner.snapshot(started['task']['id'])
         assert task['status'] == 'completed'
         assert task['result']['document']['content'] == '# Local imported text'
-        retained = web_documents.get(app, workspace.conn, '/api/documents/originals', {'document_id': str(saved['id'])})
-        assert retained['originals'] == task['result']['originals']
-        assert web_documents.download(app, workspace.conn, '/api/documents/originals/' + retained['originals'][0]['id'], {})[0] == b'# Local imported text'
+        retained = documents.originals(workspace.conn, document_id=saved['id'])
+        assert retained == task['result']['originals']
+        assert documents.original(workspace.conn, app.settings.data_dir, retained[0]['id'])[0] == b'# Local imported text'
     finally:
         runner.close()
 

@@ -4,6 +4,7 @@
  */
 import type { AgentNow } from "../agentSkills";
 import type { Guarantee } from "../agents/agents";
+import type { SessionUsage } from "../usage/usage";
 
 export type Id = number | string;
 export type Tier = "fast" | "standard" | "deep";
@@ -61,6 +62,8 @@ export type RikaAgent = {
   now?: AgentNow | null;
   /** The mediation guarantee of its pane's newest launch (Settings → Agents); absent from older servers. */
   guarantee?: Guarantee;
+  /** Its session's usage (Settings → AI → Usage); null while usage is off for its kind. */
+  usage?: SessionUsage | null;
 };
 
 /** Q7 A: the six areas a brain dump's plan is grouped by, in order. */
@@ -82,9 +85,15 @@ export type PlanItem = {
   choice: number | null;
   picked?: boolean | null;
   result: { status: "done" | "failed" | "skipped"; summary: string; links: string[] } | null;
+  /** The question is about a date, so another date may answer it; `time` when it may carry a time. */
+  date?: { time: boolean } | null;
 };
+/** The answer to an item's question: one of its choices, or another date. */
+export type PlanChoice = number | { date: string; time: string | null };
 export type RikaPlan = {
   id: Id;
+  /** A brain dump's plan, a question about a date before a dated item is added, or a check-in on a task whose day passed. */
+  plan_kind?: "dump" | "confirm" | "checkin";
   /** The rika reply that carries it. */
   message_id: Id;
   /** The brain dump it plans. */
@@ -136,6 +145,34 @@ export function planGroups(items: PlanItem[]): { area: PlanArea; items: PlanItem
   return PLAN_AREAS.map((area) => ({ area, items: items.filter((item) => item.area === area) })).filter((group) => group.items.length);
 }
 
+/**
+ * When a question or check-in is placed in the conversation: just after the reply that asks it. A live
+ * reply is stamped by this page's clock when its first event lands, which can be after the server made
+ * the plan; history already has them in order.
+ */
+export function askedAt(plan: RikaPlan, reply: { created_at: string } | undefined): string {
+  if (!reply || !plan.plan_kind || plan.plan_kind === "dump") return plan.created_at;
+  const asked = Date.parse(reply.created_at);
+  return asked >= Date.parse(plan.created_at) ? new Date(asked + 1).toISOString() : plan.created_at;
+}
+
+/** A picked date (`YYYY-MM-DD`, with `THH:MM` when timed) as the answer "another date"; null until it is one. */
+export function otherDate(value: string): { date: string; time: string | null } | null {
+  const match = value.match(/^(\d{4}-\d{2}-\d{2})(?:T(\d{2}:\d{2}))?$/);
+  if (!match || Number.isNaN(new Date(`${match[1]}T${match[2] ?? "00:00"}`).getTime())) return null;
+  return { date: match[1], time: match[2] ?? null };
+}
+
+/** Where a key moves the selection in a radio group of `count` chips (WAI-ARIA radio group); null for other keys. */
+export function radioStep(index: number, count: number, key: string): number | null {
+  if (count < 1) return null;
+  if (key === "ArrowRight" || key === "ArrowDown") return (index + 1) % count;
+  if (key === "ArrowLeft" || key === "ArrowUp") return (index - 1 + count) % count;
+  if (key === "Home") return 0;
+  if (key === "End") return count - 1;
+  return null;
+}
+
 /** The plan's approve button: all of it, or only the ticked items. */
 export function approveLabel(picked: number, total: number): string {
   return picked === total ? `Approve all ${total}` : `Approve ${picked} of ${total}`;
@@ -155,20 +192,16 @@ export function downloadLabel(received: number, total: number): string {
   return `${percent}% of ${Math.round(total / 1_000_000)} MB`;
 }
 
-export type History = { items: Entry[]; has_more?: boolean; next_before?: string | null };
-
-/** How many agents get a chip each before the bar shows one count instead. */
-export const CHIP_LIMIT = 4;
-const URGENCY: AgentStatus[] = ["blocked", "working", "idle", "done"];
-
-export type Chips = { kind: "agents"; agents: RikaAgent[] } | { kind: "count"; count: number; status: AgentStatus };
-
-/** Q19 B: a chip per running agent; past four, one count in the most urgent state. */
-export function agentChips(agents: RikaAgent[], limit = CHIP_LIMIT): Chips {
-  if (agents.length <= limit) return { kind: "agents", agents };
-  const status = URGENCY.find((state) => agents.some((agent) => agent.status === state)) ?? "idle";
-  return { kind: "count", count: agents.length, status };
+/**
+ * Voice input and speech are the `voice` module's (its pack holds the speech engine): on,
+ * with its pack's files present. Without it Rika is text only. `missing` lists modules
+ * turned on whose pack is not installed (optional until every bootstrap carries it).
+ */
+export function voiceEnabled(modules: { enabled: readonly string[]; missing?: readonly string[] }): boolean {
+  return modules.enabled.includes("voice") && !(modules.missing ?? []).includes("voice");
 }
+
+export type History = { items: Entry[]; has_more?: boolean; next_before?: string | null };
 
 /** The stream stays on the page's own origin; only the scheme changes. */
 export function rikaSocketUrl(location: { protocol: string; host: string }): string {

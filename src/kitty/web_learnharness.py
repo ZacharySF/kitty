@@ -3,14 +3,16 @@ from __future__ import annotations
 
 from http.client import HTTPConnection, HTTPException
 
+from kitty import packs
+
 URL = "http://127.0.0.1:3210"
 
 
 def start(app):
     from kitty.learnharness_runtime import LearnHarnessRuntime
-    from kitty.process_runtime import bundle_dir
 
-    app.learnharness = LearnHarnessRuntime(bundle_dir() / "learnharness", app.settings.data_dir / "learnharness")
+    # This program's own payload, else the installed `learnharness` pack's (kitty.packs).
+    app.learnharness = LearnHarnessRuntime(packs.learnharness_dir(), app.settings.data_dir / "learnharness")
 
 
 def stop(app):

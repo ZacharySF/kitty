@@ -314,16 +314,16 @@ def test_closed_job_selected_for_preparation_is_a_live_check_attempt(space):
     assert json.loads(run["stats_json"])["outcomes"] == {"closed": 1}
 
 
-def test_apply_report_cli_and_health_api(space, monkeypatch):
+def test_apply_report_cli(space, monkeypatch):
     from types import SimpleNamespace
 
     from typer.testing import CliRunner
 
     from kitty import cli
-    from kitty import web_automation
+    from kitty.cli import common as cli_common
 
     _seed(space)
-    monkeypatch.setattr(cli, "_open", lambda: SimpleNamespace(
+    monkeypatch.setattr(cli_common, "open_workspace", lambda _settings: SimpleNamespace(
         settings=space.settings, config=space.config, conn=space.conn, close=lambda: None,
     ))
     shown = CliRunner().invoke(cli.app, ["apply", "report"])
@@ -334,9 +334,7 @@ def test_apply_report_cli_and_health_api(space, monkeypatch):
     assert as_json.exit_code == 0, as_json.output
     assert json.loads(as_json.output) == health.report(space.conn)
     assert CliRunner().invoke(cli.app, ["apply", "report", "5"]).exit_code == 1
-
-    api = web_automation.get(SimpleNamespace(config=space.config), space.conn, "/api/apply/health", {})
-    assert api == health.report(space.conn)
+    # GET /api/apply/health is rika-server's: tests/test_applyai_insights_parity.py.
 
 
 # ------------------------------------------------------------------ stale flags

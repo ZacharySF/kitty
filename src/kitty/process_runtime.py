@@ -10,7 +10,6 @@ from __future__ import annotations
 import os
 import socket
 import subprocess
-import sys
 import threading
 import time
 from collections.abc import Container, Sequence
@@ -21,14 +20,12 @@ from pathlib import Path
 LOADER_ENV = ("NIX_LD", "NIX_LD_LIBRARY_PATH", "LD_LIBRARY_PATH")
 
 
-def bundle_dir() -> Path:
-    """The packaged desktop payload (PyInstaller), or the developer staging folder."""
-    return Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2] / "desktop/.build"))
-
-
 def bundled_node() -> Path:
-    """The Node runtime shipped for LearnHarness; external modules may use it too."""
-    return bundle_dir() / "learnharness" / "node"
+    """LearnHarness's Node runtime (this program's own, else the installed pack's; kitty.packs);
+    external modules may use it too."""
+    from kitty import packs
+
+    return packs.learnharness_dir() / "node"
 
 
 def free_port() -> int:

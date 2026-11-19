@@ -28,8 +28,8 @@
       "description": "Enabled feature modules. Applies the next time rika! starts.",
       "type": "array",
       "uniqueItems": true,
-      "items": {"enum": ["applyai", "workspace", "terminal"]},
-      "default": ["applyai", "workspace", "terminal"]
+      "items": {"enum": ["applyai", "workspace", "math", "learnharness", "terminal", "voice", "brain"]},
+      "default": ["applyai", "workspace", "math", "learnharness", "terminal", "voice"]
     },
     "settings": {
       "type": "object",
@@ -105,7 +105,7 @@
           "type": "string",
           "pattern": "^[a-z0-9][a-z0-9-]{0,39}$",
           "description": "A built-in theme. An unknown name (say, from a newer rika!) is a warning and falls back to the default.",
-          "examples": ["harness", "dracula", "catppuccin-mocha", "tokyo-night", "nord", "gruvbox", "one-dark", "kitty", "scythe", "liquid-glass", "speed", "c", "red", "pretti", "bloodluxe", "halfblood"],
+          "examples": ["harness", "dracula", "catppuccin-mocha", "tokyo-night", "nord", "gruvbox", "one-dark", "kitty", "blossom", "scythe", "liquid-glass", "speed", "c", "red", "pretti", "bloodluxe", "halfblood", "aero"],
           "default": "kitty"
         },
         "tokens": {
@@ -174,7 +174,7 @@
           "additionalProperties": false,
           "description": "Settings → Appearance: the look choices besides the theme.",
           "properties": {
-            "title_font": {"enum": ["fraunces", "plain"], "default": "fraunces"},
+            "title_font": {"enum": ["fraunces", "plain"], "default": "plain"},
             "density": {"enum": ["compact", "comfortable"], "default": "compact"},
             "motion": {"enum": ["full", "reduced"], "default": "full"},
             "motif": {"type": "boolean", "description": "The theme's motif layer (bullets, ticks, dividers, ornaments).", "default": true},
@@ -185,7 +185,15 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "look": {"enum": ["brain", "2d"], "description": "Home shows the Brain or the 2D atlas.", "default": "brain"}
+            "look": {"enum": ["brain", "2d"], "description": "Home shows the Brain or the 2D atlas.", "default": "brain"},
+            "columns": {"type": "array", "maxItems": 3, "items": {"type": "array", "maxItems": 24, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$"}}, "description": "Home's widgets, column by column. A widget whose module is off is kept and not drawn.", "default": [["agenda", "note"], ["next", "agents"]]},
+            "hidden": {"type": "array", "maxItems": 24, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$"}, "description": "Widgets taken off home.", "default": []},
+            "widths": {"type": "array", "maxItems": 3, "items": {"type": "number", "minimum": 0.5, "maximum": 1.5}, "description": "Each widget column's share of the room, column by column (1 is an even share).", "default": [1, 1]},
+            "rika": {"type": "number", "minimum": 0, "maximum": 0.45, "description": "Rika's share of home's width; 0 keeps the usual width.", "default": 0},
+            "rika_side": {"enum": ["left", "middle", "right"], "description": "Where Rika's panel stands on home: left of the widgets, between the two widget columns, or right of them.", "default": "left"},
+            "template_offered": {"type": "boolean", "description": "Rika has offered a home template once.", "default": false},
+            "tones": {"type": "array", "maxItems": 32, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}:[a-z][a-z0-9-]{0,19}$"}, "description": "Colour-coded widgets, each as widget:tone (a tone this rika! does not know is kept and not drawn).", "default": []},
+            "heights": {"type": "array", "maxItems": 32, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}:[0-9]{2,4}$"}, "description": "Widgets given a height by hand, each as widget:pixels; the others are as tall as their content.", "default": []}
           }
         },
         "brain": {
@@ -197,7 +205,7 @@
             "group_by": {"enum": ["section", "group", "type"], "default": "section"},
             "labels": {"enum": ["off", "sections", "hover"], "default": "hover"},
             "turning": {"type": "boolean", "default": true},
-            "speed": {"type": "number", "minimum": 0, "maximum": 3, "default": 1},
+            "speed": {"type": "number", "minimum": 0, "maximum": 3, "default": 0.5},
             "lines": {"type": "boolean", "default": false},
             "scaffold": {"type": "boolean", "default": true},
             "point_size": {"type": "number", "minimum": 0.25, "maximum": 3, "default": 1},
@@ -246,6 +254,54 @@
           "properties": {
             "guide_view": {"enum": ["columns", "rail"], "default": "columns"},
             "plans_view": {"enum": ["timeline", "days"], "default": "timeline"}
+          }
+        },
+        "themes": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The Themes module: the extra themes kept in Settings → Appearance, besides the default and the one in use.",
+          "properties": {
+            "installed": {
+              "type": "array",
+              "maxItems": 64,
+              "uniqueItems": true,
+              "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,39}$"},
+              "description": "Theme names. Empty: the module is off. An unknown name (say, from a newer rika!) is kept and not shown.",
+              "default": []
+            }
+          }
+        },
+        "icons": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The Icons module: an icon beside the names across the app (the top bar, home's widgets, Rika's page).",
+          "properties": {
+            "on": {"type": "boolean", "default": false}
+          }
+        },
+        "animations": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The Animations module: views, widgets and overlays move as they arrive and when pressed.",
+          "properties": {
+            "on": {"type": "boolean", "default": false}
+          }
+        },
+        "pages": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Page edit mode (Ctrl+Shift+Space): the blocks moved or resized on each page, and the home widgets placed on it.",
+          "properties": {
+            "moves": {"type": "array", "maxItems": 400, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}[|][-]?[0-9]{1,5},[-]?[0-9]{1,5},[0-9]{0,5},[0-9]{0,5}[|][ -~]{1,600}$"}, "description": "One moved block each, as view|dx,dy,width,height|path: the offset and size in px (a size left empty is unchanged), then the block's path inside the page (a block this rika! cannot find is kept and not moved).", "default": []},
+            "widgets": {"type": "array", "maxItems": 200, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}[|][a-z][a-z0-9-]{0,39}[|][0-9]{1,5},[0-9]{1,5},[0-9]{3,4}$"}, "description": "One home widget placed on a page each, as view|widget|x,y,width: px from the page's top-left corner (a widget this rika! does not know, or whose module is off, is kept and not drawn).", "default": []}
+          }
+        },
+        "rika": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "How Rika's conversation is drawn.",
+          "properties": {
+            "text": {"enum": ["normal", "large"], "default": "normal"}
           }
         }
       }

@@ -18,7 +18,7 @@ const brainHarness = {
     if (instance) unmount(instance);
     host.replaceChildren();
     if (look || home) void setPreferences({ ui: { ...(look ? { graph: { look } } : {}), ...(home ? { home: { look: home } } : {}) } });
-    setActiveModules(["workspace"]);
+    setActiveModules(["workspace", "brain"]);
     instance = mount(BrainHarness, { target: host, props: { kind } });
     flushSync();
   },

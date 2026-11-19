@@ -1,5 +1,4 @@
-// Browser fixture for tests/agentSkills.browser.test.mjs. Mounts the real Rika bar and
-// history drawer, the herdr view's new-agent strip and the All agent skills view; the
+// Browser fixture for tests/agentSkills.browser.test.mjs. Mounts the real Rika drawer, the herdr view's new-agent strip and the All agent skills view; the
 // test serves /api/rika/* and /api/terminal/* with a scripted stand-in. The look and the
 // coding-agent choice come from a stand-in build, as in every harness on the platform stack.
 import { mount } from "svelte";

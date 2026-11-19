@@ -130,7 +130,8 @@
   --focus-ring-color: var(--br-lineHot);
   --focus-ring-offset: 4px;
 }
-:root :where(button, a, input, select, textarea, summary, [tabindex]):focus-visible {
+/* The page itself (`main`, focused after a jump from search) is a landing place, not a control: no ring. */
+:root :where(button, a, input, select, textarea, summary, [tabindex]:not(main)):focus-visible {
   outline: var(--focus-ring-width) solid var(--focus-ring-color);
   outline-offset: var(--focus-ring-offset);
 }

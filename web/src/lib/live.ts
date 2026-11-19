@@ -1,7 +1,7 @@
 // The live channel: one WebSocket per window, open for the window's whole life. It carries
 // every committed block change (op_log row), whoever made it, so open views refresh
 // without polling, and every change to the build file (Q8/Q9) so each window restyles at
-// once. Protocol: src/kitty/web_live.py. The block editor sends its transactions over the
+// once. Protocol: server/src/live/mod.rs (rika-server). The block editor sends its transactions over the
 // same socket with `transact` and receives the server's ack or reject.
 import { api, socketProtocols } from "./api";
 import type { Op } from "./blockDoc";

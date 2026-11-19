@@ -594,6 +594,7 @@ def page_titles_within(conn: sqlite3.Connection, tokens: set[str], *, exclude: s
     at all (only punctuation) is never found.
     """
     require(conn)
+    sync(conn)
     found: dict[str, dict] = {}
     ordered = sorted(tokens)
     for start in range(0, len(ordered), 200):

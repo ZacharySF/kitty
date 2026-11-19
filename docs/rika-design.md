@@ -8,12 +8,14 @@ What it does for you:
 - It drafts email.
 - It routes every request to the smallest model tier that can handle it, and learns over time to spend fewer tokens.
 
-Rika lives in the **Rika bar**, which replaces the old herdr dock at the bottom of the window. The design was decided in a grill-with-ui interview paired with a design lab (branch `lab/rika`, `web/rika-lab.html`). Every question has a card there showing the "today" state and every option.
+Rika first lived in the **Rika bar**, which replaced the old herdr dock at the bottom of the window. The design was decided in a grill-with-ui interview paired with a design lab (branch `lab/rika`, `web/rika-lab.html`). Every question has a card there showing the "today" state and every option.
+
+**Revised (2026-11-12): the panel replaces the bar.** Home became a plain dashboard and Rika fills its right-hand column (`RikaPanel.svelte`): the conversation with the field at its foot. The bar is gone. Away from home Ctrl+J and Ctrl K open the same conversation in the drawer, whose field is focused when opened by hand; a drawer that opens by itself (an approval, a plan, a brain dump) leaves focus where it was. Reply toasts show only where the panel is not on screen; on home approvals and plans wait in the panel. The bar's agent chips (Q19 B) are gone: the Agents section holds the cards. The breathing ring (Q4 C) became the mark turning and the field's edge taking the accent, with no glow. Voice (Q3, Q5, Q7) is the `voice` module's: without it Rika is text only. Below, "the bar" reads as Rika's field and "the history drawer" as the conversation in the panel or the drawer.
 
 ## Terms
 
 - **Rika**: the app's own consumer agent you talk or type to; it operates every part of rika! and directs other agents. *Avoid:* assistant, first mate, copilot.
-- **Rika bar**: the bar at the bottom of the window where the herdr dock handle used to be; you type or hold Space there to talk to Rika. *Avoid:* dock, prompt box.
+- **Rika panel**: Rika on home, the right-hand column: the conversation and its field. Away from home the same conversation is in the **drawer** (Ctrl+J). The **Rika bar** at the bottom of the window is retired. *Avoid:* dock, prompt box.
 - **Worker agent**: a coding or task agent Rika starts and directs, namely omp, Claude Code or Codex in a herdr pane or Tern window. *Avoid:* subagent.
 - **Brain dump**: a long spoken or typed ramble that Rika turns into one plan of actions at the end. *Avoid:* voice note.
 - **Tier**: a model size class Rika routes to:
@@ -164,6 +166,8 @@ Risk is mixed because a wrong auto-reply can't be unsent.
 
 B lost because it makes a consumer agent depend on a terminal tool. C lost because it duplicates auth and data access.
 
+**Later addition: omp as a model, not as the engine.** Each computer can choose omp instead of OpenRouter as the service the loop's model requests go to (Settings → AI → Rika's brain, `kitty.core.rika.brain`). The loop stays A: Rika's tools, approvals, readout and ledger record are unchanged. Only the Chat Completions request goes through `omp auth-gateway stdio` on omp's own sign-in (`kitty.core.rika.omp`), so a Claude subscription can stand in for an OpenRouter key. B stays rejected: no omp session runs Rika, and omp's own tools are never offered to the model.
+
 ## Routine choices
 
 - **Q2, where conversations show:** D. Replies appear as toasts above the bar, and the history drawer holds the full conversation. The bar never grows into a sheet.
@@ -192,6 +196,7 @@ B lost because it makes a consumer agent depend on a terminal tool. C lost becau
 - **Q18, memory:** A. A local search index over blocks, edit history, notes, jobs, calendar and emails, plus a preference memory the user can view and edit. Rika fetches only what each request needs.
 - **Q19, running agents:** A and B. A chip per running agent in the Rika bar (state dot and name; past four they collapse to a count; clicking one opens its Tern window), plus the full live cards in the history drawer's Agents section. The Agent skills view (separate interview) builds on these cards.
 - **Q20, plans and approvals:** A. The history drawer opens by itself for brain-dump plans and outward-action approvals, then closes when you're done.
+- **Q21, follow-ups:** Rika asks before adding a dated item only when unsure, which keeps Q9 A: a clear date applies at once with Undo. An unclear one (more than one reading, an event with no time, a date that has passed, or a date that disagrees with the user's words) becomes one question with a chip per reading, as a non-blocking `confirm` plan (`core/rika/when.py`, `slots.py`); it is not an approval and has no effects-kernel kind. Check-ins (`core/rika/followups.py`) ask "Did you finish X?" on the brief scheduler's tick for tasks and study tasks Rika added, at 18:00 local on the due day, once per due date; events get none. Morning, afternoon and evening mean 09:00, 14:00 and 19:00. Not built yet: the Always / When unsure / Never setting, a `schedule_checkin` tool for "ask me Friday if I sent it", check-ins for overdue tasks Rika did not add, and check-ins as desktop notices.
 
 ## Verified facts
 

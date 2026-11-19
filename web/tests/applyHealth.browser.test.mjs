@@ -84,7 +84,7 @@ async function openHealth() {
   const views = page.getByRole("navigation", { name: "Jobs view" });
   await views.waitFor({ timeout: 60_000 });
   await views.getByRole("button", { name: "List", exact: true }).click();
-  await page.getByRole("button", { name: "Preparation", exact: true }).click();
+  await page.getByRole("button", { name: "Progress", exact: true }).click();
   const drawer = page.getByRole("dialog", { name: "Prepare applications" });
   await drawer.waitFor();
   const toggle = drawer.getByRole("button", { name: "Health", exact: true });
@@ -178,7 +178,7 @@ test("an API failure is reported inline and Retry loads again", async () => {
   const views = page.getByRole("navigation", { name: "Jobs view" });
   await views.waitFor({ timeout: 60_000 });
   await views.getByRole("button", { name: "List", exact: true }).click();
-  await page.getByRole("button", { name: "Preparation", exact: true }).click();
+  await page.getByRole("button", { name: "Progress", exact: true }).click();
   const drawer = page.getByRole("dialog", { name: "Prepare applications" });
   await drawer.getByRole("button", { name: "Health", exact: true }).click();
   const panel = drawer.getByRole("region", { name: "Apply health" });

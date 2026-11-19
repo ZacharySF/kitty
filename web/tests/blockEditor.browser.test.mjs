@@ -418,7 +418,8 @@ test("History gives every actor kind its own theme colour and icon, AA on every 
     // Colours transition on a theme switch; measure once they have settled (ambient art loops forever: not those).
     await page.evaluate(() => Promise.all(document.getAnimations().filter((animation) => animation instanceof CSSTransition)
       .map((animation) => animation.finished.catch(() => {}))));
-    if (["kitty", "liquid-glass", "speed", "bloodluxe"].includes(theme.id)) await distinct(theme.label);
+    // Kitty has no accent: its kinds are told apart by icon (asserted above), not by hue.
+    if (["blossom", "liquid-glass", "speed", "bloodluxe"].includes(theme.id)) await distinct(theme.label);
     const ratios = await sessions.locator(".who").evaluateAll((items, [measure, grounds]) => {
       const contrast = new Function(`return (${measure})`)();
       return items.map((item) => ({ look: item.dataset.actor, ratio: contrast(item, grounds) }));

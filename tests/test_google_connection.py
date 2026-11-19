@@ -10,7 +10,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 import pytest
 
 from kitty.google_connection import GoogleConnection, ConnectionError
-from test_web_modules import make_root, site
+from test_web_modules import db, front, make_root, site
 
 
 CLIENT = "synthetic.apps.googleusercontent.com"
@@ -28,6 +28,14 @@ def callback(url, **query):
         client.close()
 
 
+def _identity(settings):
+    """The saved identity as `GET /api/account` (rika-server) shows it; the sign-in itself runs
+    in this process, whose patched token exchange a front's worker would not see."""
+    with db(settings) as conn:
+        row = conn.execute("SELECT google_sub, google_email, google_name FROM workspace_onboarding WHERE id=1").fetchone()
+    return {"sub": row[0], "email": row[1], "name": row[2]} if row[0] else None
+
+
 @pytest.mark.parametrize("client_id,client_secret", [(None, None), (CLIENT, None), (None, SECRET)])
 def test_no_credentials_preserves_local_api_and_remembers_tutorial(tmp_path, monkeypatch, client_id, client_secret):
     # Google's Desktop app clients reject the token exchange without their secret.
@@ -37,8 +45,10 @@ def test_no_credentials_preserves_local_api_and_remembers_tutorial(tmp_path, mon
         else:
             monkeypatch.setenv(name, value)
     settings = make_root(tmp_path, ())
-    with site(settings) as (_, request):
-        assert request("/api/bootstrap")[0] == 200
+    # The front (server/src/account.rs) answers the account and the onboarding flags, with
+    # `configured` from the worker's readiness line; the worker answers Google sign-in.
+    with front(settings) as request:
+        assert request("/api/ai/status")[0] == 200
         status, state = request("/api/account")
         assert status == 200
         assert state["configured"] is False and state["identity"] is None
@@ -47,9 +57,9 @@ def test_no_credentials_preserves_local_api_and_remembers_tutorial(tmp_path, mon
         assert request("/api/account/onboarding", {"welcome_completed": True})[0] == 200
         assert request("/api/account/onboarding", {"tutorial_completed": True})[0] == 200
         assert request("/api/account/onboarding", {"tutorial_completed": "yes"})[0] == 400
-    with site(settings) as (_, request):
+    with front(settings) as request:
         assert request("/api/account")[1]["onboarding"] == {"welcome_completed": True, "tutorial_completed": True}
-        assert request("/api/bootstrap")[0] == 200
+        assert request("/api/ai/status")[0] == 200
 
 
 def test_loopback_state_pkce_and_receipt_are_independent(monkeypatch):
@@ -180,14 +190,18 @@ def test_identity_is_saved_only_by_one_use_initiator_receipt_and_disconnect_keep
         _, started = request("/api/account/google/start", {})
         params = parse_qs(urlsplit(started["url"]).query)
         assert callback(params["redirect_uri"][0], code="synthetic-code", state=params["state"][0])[0] == 200
-        assert request("/api/account")[1]["identity"] is None
+        assert _identity(settings) is None
         assert request("/api/account/google/poll", {"ticket": params["state"][0]})[0] == 400
         assert request("/api/account/google/poll", {"ticket": started["ticket"]})[1]["status"] == "connected"
         assert request("/api/account/google/poll", {"ticket": started["ticket"]})[0] == 400
-        assert request("/api/account")[1]["identity"] == identity
-        request("/api/account/onboarding", {"welcome_completed": True, "tutorial_completed": True})
+        assert _identity(settings) == identity
+    with db(settings) as conn:
+        conn.execute("UPDATE workspace_onboarding SET welcome_completed=1, tutorial_completed=1 WHERE id=1")
     with site(settings) as (_, request):
-        assert request("/api/account")[1]["identity"] == identity
+        assert _identity(settings) == identity
         assert request("/api/account/google/disconnect", {})[1]["identity"] is None
-        assert request("/api/account")[1]["onboarding"]["tutorial_completed"] is True
-        assert request("/api/bootstrap")[0] == 200
+    assert _identity(settings) is None
+    with db(settings) as conn:
+        assert conn.execute("SELECT tutorial_completed FROM workspace_onboarding").fetchone()[0] == 1
+    with site(settings) as (_, request):
+        assert request("/api/usage")[0] == 200

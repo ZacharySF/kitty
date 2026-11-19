@@ -58,7 +58,7 @@
 <dialog bind:this={dialog} class="workspace-dialog block-trash" aria-labelledby="trash-title" oncancel={onclose}>
   <header>
     <div>
-      <span class="eyebrow">DELETED ITEMS ARE KEPT FOR {RETENTION_DAYS} DAYS</span>
+      <span class="eyebrow">Kept for {RETENTION_DAYS} days</span>
       <h2 id="trash-title">Trash</h2>
     </div>
     <button class="icon-button" onclick={onclose} aria-label="Close Trash">×</button>

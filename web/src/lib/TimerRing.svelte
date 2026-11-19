@@ -103,7 +103,7 @@
   }
   .rounds b {
     color: var(--muted);
-    font: 500 10.5px var(--font-mono);
+    font: 500 10.5px var(--font-ui);
   }
   @media (prefers-reduced-motion: reduce) {
     .progress {

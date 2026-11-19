@@ -1,52 +1,54 @@
 """Loopback-only website adapter over the shared rika! core.
 
-Run ``kitty-web`` after building ``web/dist``. The API never submits forms,
-starts paid discovery, or exposes configuration/credentials. Demo workspaces use
-only public example configuration and are discarded when the process exits.
+Run ``kitty-web`` after building ``web/dist`` and ``server/`` (rika-server). It starts
+rika-server, the Rust front (docs/rust-core-design.md), which serves the page and the
+routes ported to Rust and runs this module behind itself as its worker
+(``kitty-web --worker``) for every other route. The API never submits forms, starts paid
+discovery, or exposes configuration/credentials. Demo workspaces use only public example
+configuration and are discarded when the process exits.
 
 Features belong to the ``applyai``, ``workspace`` and ``terminal`` modules
 (kitty.modules). The active set is frozen at start-up; routes of a disabled module
 answer 403 and none of its extensions, workers, processes or credentials are loaded.
+The selection itself (``/api/modules``) is answered by rika-server (server/src/modules.rs).
 External modules installed from GitHub releases (kitty.web_external_modules,
-docs/MODULES.md) are likewise read once at start-up and own ``/api/modules/<id>``.
+docs/MODULES.md) are likewise read once at start-up and own ``/api/modules/<id>``;
+rika-server adds their state to ``/api/modules`` from ``GET /api/external-modules``.
 """
 from __future__ import annotations
 
 import argparse
-import dataclasses
 import hashlib
+import hmac
 import importlib
 import json
+import os
 import re
-import secrets
 import shutil
 import signal
 import sqlite3
+import sys
 import threading
 from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from kitty import web_auth, web_clients
+from kitty import packs, web_auth, web_clients
 from kitty.config import Config, ConfigError
 from kitty.core import endpoint, record_events
-from kitty.core.bootstrap import configure_modules
 from kitty.core.builds.project import startup_modules
 from kitty.core.builds.store import BuildStoreError
 from kitty.core.workspace import open_workspace
-from kitty.db import connect
-from kitty.db.connection import transaction
+from kitty.db import connect, migrate
 from kitty.models import Job, Resume
-from kitty.modules import ModuleDisabledError, modules_state
+from kitty.modules import BUILD_FILE, MODULE_IDS, MODULE_PACKS, ModuleDisabledError, modules_state
 from kitty.settings import Settings, find_project_root
 from kitty.web_tasks import TaskRunner
 
 MAX_BODY = 20 * 1024 * 1024  # Bounded canvas JSON + base64 raster import.
 MAX_FILE = 32 * 1024 * 1024
-LATER_STATUSES = frozenset({"oa", "interview", "offer", "rejected", "ghosted", "withdrawn"})
 # Deliberately an allowlist: adding a future paid adapter cannot enable it here.
 FREE_SOURCES = frozenset({
     "simplify2027", "nuft2027", "vansh2027", "speedyapply2027", "derec4", "greenhouse",
@@ -123,7 +125,7 @@ def _pdf_available(settings: Settings, resume: Resume) -> bool:
 
 
 #: API route prefix -> owning module; the longest matching prefix wins. Anything not
-#: listed (tasks, ai status/settings/models, atlas home, brain, bootstrap, modules, reload)
+#: listed (tasks, ai status/settings/models, atlas home, bootstrap, modules, reload)
 #: belongs to the always-on core.
 ROUTE_MODULES: tuple[tuple[str, str], ...] = tuple(sorted((
     *((prefix, "applyai") for prefix in (
@@ -135,10 +137,20 @@ ROUTE_MODULES: tuple[tuple[str, str], ...] = tuple(sorted((
     *((prefix, "workspace") for prefix in (
         "/api/calendar", "/api/opportunities", "/api/study", "/api/flashcards", "/api/notes",
         "/api/documents", "/api/schema", "/api/backlinks", "/api/ai/preview", "/api/ai/mind-map",
-        "/api/ai/run", "/api/atlas/sections", "/api/quick-notes", "/api/extensions/learnharness",
-        "/api/blocks", "/api/tags", "/api/mirror", "/api/math")),
+        "/api/ai/run", "/api/atlas/sections", "/api/quick-notes",
+        "/api/blocks", "/api/tags", "/api/mirror")),
+    ("/api/math", "math"),
+    ("/api/extensions/learnharness", "learnharness"),
     ("/api/terminal", "terminal"),
+    ("/api/brain", "brain"),
 ), key=lambda item: -len(item[0])))
+#: API route prefix -> the pack it runs on (kitty.packs); the longest matching prefix wins.
+#: Such a route needs the module that needs the pack (Rika's voice routes sit in the core's
+#: /api/rika), and with that module on but the pack missing it answers 409 (download it first).
+ROUTE_PACKS: tuple[tuple[str, str], ...] = (
+    ("/api/terminal/agent-skills", ""), ("/api/terminal/tern", ""), ("/api/terminal", "herdr"),
+    ("/api/math", "math"), ("/api/extensions/learnharness", "learnharness"), ("/api/rika/voice", "voice"),
+)
 #: Extension modules per feature module, in dispatch order; None is the always-on core.
 #: The live channel starts first and the build second: other extensions read both.
 EXTENSIONS: tuple[tuple[str | None, str], ...] = (
@@ -147,15 +159,14 @@ EXTENSIONS: tuple[tuple[str | None, str], ...] = (
     ("applyai", "web_workshop"), ("applyai", "web_workshop_ai"), ("applyai", "web_workshop_batches"),
     ("applyai", "web_profile"), ("applyai", "web_insights"), ("applyai", "web_apply_accounts"),
     ("workspace", "web_calendar"), ("workspace", "web_opportunities"), ("workspace", "web_study"),
-    ("workspace", "web_flashcards"), ("workspace", "web_notes"), ("workspace", "web_documents"),
-    ("workspace", "web_math"),
-    (None, "web_ai"),
-    ("workspace", "web_schema"), (None, "web_atlas"), (None, "web_brain"), ("workspace", "web_backlinks"),
-    ("workspace", "web_learnharness"), ("workspace", "web_quick_notes"), ("workspace", "web_blocks"),
-    ("workspace", "web_tags"), ("workspace", "web_mirror"), (None, "web_desktop"), (None, "web_clients"), (None, "web_agents"),
-    (None, "web_keys"),
-    (None, "web_devices"), (None, "web_search"), (None, "web_effects"),
-    (None, "web_account"), (None, "web_rika"), (None, "web_goals"), (None, "web_rika_mail"), (None, "web_rika_memory"),
+    ("workspace", "web_notes"), ("workspace", "web_documents"),
+    ("math", "web_math"),
+    (None, "web_ai"), (None, "web_usage"),
+    (None, "web_atlas"), ("brain", "web_brain"),
+    ("learnharness", "web_learnharness"), ("workspace", "web_blocks"),
+    ("workspace", "web_mirror"), (None, "web_desktop"), (None, "web_clients"), (None, "web_agents"),
+    (None, "web_devices"), (None, "web_reposync"), (None, "web_backup"), (None, "web_phone"), (None, "web_connect"), (None, "web_search"), (None, "web_effects_worker"),
+    (None, "web_account"), (None, "web_rika"), (None, "web_goals"), (None, "web_rika_mail"),
     ("terminal", "web_agent_skills"), ("terminal", "web_terminal"), ("terminal", "web_tern"),
     (None, "web_external_modules"),
 )
@@ -169,15 +180,24 @@ def route_module(path: str) -> str | None:
     return None
 
 
+def route_pack(path: str) -> str | None:
+    """The pack an API path runs on, or None."""
+    for prefix, pack in ROUTE_PACKS:
+        if path == prefix or path.startswith(prefix + "/"):
+            return pack or None
+    return None
+
+
 class WebApplication:
     """Local services and configuration; each HTTP request owns its connection.
 
     The active module set is frozen when the process starts (``config.modules``).
     Only the extensions, workers and credentials of active modules exist; a pending
-    selection saved through ``/api/modules`` takes effect in the next process.
+    selection saved through ``/api/modules`` (rika-server) takes effect in the next process.
     """
 
-    def __init__(self, settings: Settings, config: Config, static_dir: Path, *, desktop=None, safe: bool = False):
+    def __init__(self, settings: Settings, config: Config, static_dir: Path, *, ui_session: str, desktop=None,
+                 safe: bool = False):
         self.settings = settings
         self.config = config
         self.modules: tuple[str, ...] = tuple(config.modules)
@@ -190,9 +210,11 @@ class WebApplication:
         self.origin: str | None = None
         self.static_dir = static_dir.resolve()
         self.mutation_lock = threading.Lock()
-        #: This launch's window session: approvals of effects (kitty.core.effects) are bound
-        #: to it, so an approval never outlives the rika! process whose window granted it.
-        self.ui_session = "ui-" + secrets.token_hex(12)
+        #: This launch's window session, made by rika-server and sent in its handshake
+        #: (`front_handshake`): approvals of effects (kitty.core.effects), the front's and the
+        #: inline views', are bound to it, so an approval never outlives the rika! launch whose
+        #: window granted it.
+        self.ui_session = ui_session
         self.discovery_lock = threading.Lock()
         self.discovery: dict[str, Any] = {"running": False, "error": None, "result": None}
         #: Set when the server closes: long-lived upgraded streams end themselves.
@@ -236,10 +258,16 @@ class WebApplication:
             raise APIError(403, str(ModuleDisabledError(module)))
 
     def guard(self, path: str) -> None:
-        """Reject a request for a disabled module before any handler or worker runs."""
+        """Reject a request for a disabled module, or one whose pack is missing, before any
+        handler or worker runs."""
         module = route_module(path)
         if module is not None:
             self.require_module(module)
+        pack = route_pack(path)
+        if pack is not None:
+            self.require_module(next(key for key, needed in MODULE_PACKS.items() if pack in needed))
+            if not packs.loaded(pack):
+                raise APIError(409, str(packs.PackMissing(pack)))
 
     def modules_state(self, conn: sqlite3.Connection | None = None) -> dict[str, Any]:
         """Built-in selection (kitty.modules) plus external modules (kitty.web_external_modules)."""
@@ -264,7 +292,7 @@ class WebApplication:
         The active module snapshot is pinned: a pending module edit in the build is neither
         applied nor validated here.
         """
-        with open_workspace(self.settings, modules=self.modules) as workspace:
+        with open_workspace(self.settings, modules=self.modules, auto_migrate=False) as workspace:
             self.config = workspace.config
 
     def job_filter(self, view: str):
@@ -290,78 +318,7 @@ class WebApplication:
             result = extension.get(self, conn, path, query)
             if result is not None:
                 return result
-        if path == "/api/modules":
-            self._no_query(query)
-            return self.modules_state(conn)
-        if path == "/api/bootstrap":
-            self._no_query(query)
-            return self._bootstrap(conn)
-        if "applyai" in self.modules:
-            result = self._applyai_get(conn, path, query)
-            if result is not None:
-                return result
         raise APIError(404, "API route not found")
-
-    def _bootstrap(self, conn: sqlite3.Connection) -> dict:
-        """Core shell state; careers figures exist only while applyai is active."""
-        result: dict[str, Any] = {"demo": self.settings.demo, "modules": self.modules_state(conn)}
-        if "applyai" in self.modules:
-            from kitty.core import jobs, today, tracks
-
-            digest = today.build_digest(conn, self.config)
-            result.update({
-                "tracks": [{"name": name, "label": name.replace("_", " ").title(),
-                            "weekly_target": target} for name, target in tracks.weekly_targets(conn).items()],
-                "counts": {key: jobs.count_jobs(conn, self.job_filter(view)) for key, view in (
-                    ("jobs", "jobs"), ("queued", "queue"),
-                    ("applications", "applications"), ("favorites", "favorites"))},
-                "weekly_total": digest.weekly_total, "streak_days": digest.streak_days,
-                "today": today.digest_text(digest),
-            })
-        return result
-
-    def _applyai_get(self, conn: sqlite3.Connection, path: str, query: dict[str, str]) -> dict | None:
-        from kitty.core import applications, jobs, resumes, resume_versions
-        from kitty.core.apply.filler import choose_resume
-
-        match = re.fullmatch(r"/api/jobs/([1-9][0-9]{0,17})", path)
-        if match:
-            self._no_query(query)
-            job = self._job(conn, int(match[1]))
-            application = applications.get_application_for_job(conn, job.id)
-            chosen = (resumes.get_resume(conn, application.resume_id)
-                      if application and application.resume_id is not None
-                      else choose_resume(conn, self.config, job) if not application else None)
-            result = _job_json(job)
-            result.update({
-                "description": job.jd_text, "my_notes": job.my_notes,
-                "tier_reason": job.tier_reason, "fill_blocker": job.fill_blocker,
-                "resume": {"id": chosen.id, "label": chosen.label} if chosen else None,
-                "application": {
-                    **dataclasses.asdict(application),
-                    "history": [dataclasses.asdict(event)
-                                for event in applications.history(conn, application.id)],
-                } if application else None,
-            })
-            return result
-        if path == "/api/resumes":
-            self._no_query(query)
-            defaults: dict[int, list[str]] = {}
-            for track in self.config.tracks.tracks:
-                selected = resume_versions.default_resume(conn, self.config, track.name)
-                if selected:
-                    defaults.setdefault(selected.id, []).append(track.name)
-            return {
-                "resumes": [{"id": resume.id, "label": resume.label,
-                             "track": next(iter(defaults.get(resume.id, resume.default_tracks)), None),
-                             "available": _pdf_available(self.settings, resume),
-                             "is_default": resume.id in defaults}
-                            for resume in resumes.list_resumes(conn)],
-                "versions": [{key: version[key] for key in
-                              ("id", "track", "status", "is_default", "created_at")}
-                             for version in resume_versions.list_versions(conn, self.settings)],
-            }
-        return None
 
     @staticmethod
     def _no_query(query: dict) -> None:
@@ -377,25 +334,12 @@ class WebApplication:
             raise APIError(404, "Job not found")
         return job
 
-    def set_modules(self, body: dict) -> dict:
-        """Persist the pending module selection; the active snapshot never changes."""
-        enabled = body.get("enabled")
-        if set(body) != {"enabled"} or not isinstance(enabled, list):
-            raise APIError(400, "Expected {\"enabled\": [module ids]}")
-        try:
-            configure_modules(self.settings.config_dir, enabled)
-        except ValueError as exc:
-            raise APIError(400, str(exc)) from None
-        return self.modules_state()
-
     def mutate(self, conn: sqlite3.Connection, path: str, body: dict) -> dict:
         if path == "/api/reload":
             if body:
                 raise APIError(400, "Reload expects an empty object")
             self.reload_config()
             return {"ok": True}
-        if path == "/api/modules":
-            return self.set_modules(body)
         self.guard(path)
         op_log_before = record_events.op_log_mark(conn)
         result = self._dispatch_mutation(conn, path, body)
@@ -407,94 +351,7 @@ class WebApplication:
             result = extension.post(self, conn, path, body)
             if result is not None:
                 return result
-        return self._mutate_job(conn, path, body)
-
-    def _mutate_job(self, conn: sqlite3.Connection, path: str, body: dict) -> dict:
-        match = re.fullmatch(r"/api/jobs/([1-9][0-9]{0,17})", path)
-        if match is None:
-            raise APIError(404, "API route not found")
-        from kitty.core import applications, favorites, followups, jobs, resumes
-        from kitty.core.apply.filler import choose_resume
-        from kitty.dates import parse_user_date
-
-        if set(body) - {"action", "value", "when", "note"} or not isinstance(body.get("action"), str):
-            raise APIError(400, "Expected an action and optional value")
-        action, value = body["action"], body.get("value")
-        occurred_at = None
-        note = None
-        if {"when", "note"} & body.keys():
-            if action not in {"status", "applied"}:
-                raise APIError(400, "Date and evidence are only valid for application records")
-            when = body.get("when", "")
-            note = body.get("note", "")
-            if not isinstance(when, str) or len(when) > 100 or not isinstance(note, str) or len(note) > 20000:
-                raise APIError(400, "Invalid application date or evidence")
-            occurred_at = parse_user_date(when) if when.strip() else None
-            if when.strip() and occurred_at is None:
-                raise APIError(400, "Use a valid application date")
-        if action in {"queue", "skip", "restore"}:
-            if "value" in body:
-                raise APIError(400, "Queue actions do not accept a value")
-        elif action == "favorite":
-            if type(value) is not bool:
-                raise APIError(400, "Favorite value must be a boolean")
-        elif action == "notes":
-            if not isinstance(value, str) or len(value) > 20000 or "\x00" in value:
-                raise APIError(400, "Notes must be text of at most 20000 characters without NUL")
-            try:
-                value.encode("utf-8")
-            except UnicodeError:
-                raise APIError(400, "Notes must contain valid Unicode text") from None
-        elif action == "applied":
-            if value is not True:
-                raise APIError(400, "Explicit confirmation that you submitted is required")
-        elif action == "status":
-            if not isinstance(value, str) or value not in LATER_STATUSES:
-                raise APIError(400, "Choose a later application status")
-        elif action == "track":
-            if value is not None and (not isinstance(value, str) or value not in self.config.track_names):
-                raise APIError(400, "Choose a configured track or null for none")
-        elif action == "resume":
-            if value is not None and (type(value) is not int or not 1 <= value <= 2**63 - 1):
-                raise APIError(400, "Resume value must be a registered resume ID or null for the track default")
-        else:
-            raise APIError(400, "Unknown action")
-        job = self._job(conn, int(match[1]))
-        if action == "favorite":
-            (favorites.favorite if value else favorites.unfavorite)(conn, [job.id])
-        elif action in {"queue", "skip", "restore"}:
-            if job.application_id is not None:
-                raise APIError(409, "An applied job cannot change queue state")
-            favorites.set_state(conn, [job.id], {"queue": "queued", "skip": "skipped", "restore": "new"}[action])
-        else:
-            with transaction(conn):
-                if action == "notes":
-                    jobs.set_notes(conn, job.id, value)
-                elif action in {"status", "track"} and job.application_id is None:
-                    raise APIError(409, "Record your submission before changing application status")
-                elif action == "status":
-                    applications.set_status(conn, job.application_id, value, source="manual",
-                                            occurred_at=occurred_at, evidence=note)
-                elif action == "track":
-                    applications.set_track(conn, job.application_id, value)
-                elif action == "resume":
-                    if job.application_id is not None:
-                        raise APIError(409, "Historical application resume is pinned")
-                    if value is not None:
-                        resume = resumes.get_resume(conn, value)
-                        if resume is None or not resume.active:
-                            raise APIError(400, "Choose an active registered resume")
-                        _pdf_bytes(self.settings, resume)
-                    jobs.set_resume(conn, job.id, value)
-                elif action == "applied":
-                    chosen = choose_resume(conn, self.config, job)
-                    followups.mark_applied(
-                        conn, self.config, job.id, resume_id=chosen.id if chosen else None,
-                        track=job.tracks[0] if job.tracks else None,
-                        applied_at=occurred_at, evidence=note,
-                    )
-        return {"ok": True}
-
+        raise APIError(404, "API route not found")
 
 
 class LocalHTTPServer(ThreadingHTTPServer):
@@ -507,6 +364,9 @@ class LocalHTTPServer(ThreadingHTTPServer):
         self.origin = f"http://{self.authority}"
         #: This launch's UI secret, bootstrap code and link tickets (kitty.web_auth).
         self.ui_auth = web_auth.UiAuth()
+        #: Behind rika-server (``kitty-web --worker``): the front's private secret, required
+        #: on every request; None when this server faces the page itself.
+        self.front_secret: str | None = None
         #: The address paired programs use (Settings → Connected apps shows it for the browser extension).
         app.origin = self.origin
 
@@ -634,8 +494,35 @@ class RequestHandler(BaseHTTPRequestHandler):
         else:
             self._json(405, {"error": "Cross-origin preflight is not supported"})
 
+    def _front(self) -> None:
+        """Behind rika-server, serve only requests that carry its private secret."""
+        expected = self.server.front_secret
+        if expected is None:
+            return
+        presented = self.headers.get_all(web_auth.FRONT_HEADER, [])
+        if (len(presented) != 1 or not presented[0].isascii()
+                or not hmac.compare_digest(presented[0].encode(), expected.encode())):
+            raise APIError(403, "This backend answers only rika!'s front")
+
+    def connection_ports(self) -> tuple[int, int]:
+        """The caller's port and this server's port on the loopback connection the caller opened.
+
+        Behind rika-server that connection ends at the front, which reports both ports in
+        headers that only it can send (``_front``); agent verification needs them (web_agents).
+        """
+        if self.server.front_secret is None:
+            return self.client_address[1], self.server.server_address[1]
+        ports = []
+        for name in (web_auth.PEER_PORT_HEADER, web_auth.FRONT_PORT_HEADER):
+            values = self.headers.get_all(name, [])
+            if len(values) != 1:
+                raise APIError(400, f"A single {name} is required")
+            ports.append(_integer(values[0], name, 1, 65535))
+        return ports[0], ports[1]
+
     def _dispatch(self, mutation: bool) -> None:
         try:
+            self._front()
             if web_clients.is_ingress(self.path):
                 web_clients.ingress_request(self)
                 return
@@ -826,24 +713,43 @@ def _interrupt(*_args: object) -> None:
     raise KeyboardInterrupt
 
 
-def _link(server: LocalHTTPServer) -> str:
-    """A browser-mode link: the page trades its one-time code for the UI secret."""
-    return f"{server.origin}/?code={server.ui_auth.issue_code()}"
+def readiness(server: LocalHTTPServer, settings: Settings, modules: tuple[str, ...]) -> str:
+    """The worker's readiness line rika-server waits for (server/src/worker.rs `Readiness`).
+
+    It holds this backend's UI secret, so it goes only to the front (or the desktop shell),
+    plus the workspace the front answers its own routes from: the config directory and the
+    database, this process's frozen module snapshot, the version a new build file records,
+    with ApplyAI the digest settings its config validated (server/src/bootstrap.rs), the
+    packs it has and lacks (kitty.packs; server/src/packs.rs lists a built-in one as such),
+    its framed external-module ports, which the front's Content-Security-Policy allows
+    (kitty.web_external_modules; fixed at start-up), the folder of the math textbook's
+    exercises (GNU FDL data the front reads where this process would, server/src/math/),
+    and with Terminal the herdr binary and session its runtime resolved (server/src/terminal.rs),
+    and whether Google sign-in has its client ID and secret (server/src/account.rs).
+    """
+    from kitty import __version__
+    from kitty.core.math import textbook
+
+    apply = server.app.config.apply if "applyai" in modules else None
+    terminal = getattr(server.app, "terminal", None)
+    return json.dumps({"origin": server.origin, "secret": server.ui_auth.secret,
+                       "config_dir": str(settings.config_dir), "db_path": str(settings.db_path),
+                       "modules": list(modules), "version": __version__,
+                       "digest": {"deadline_window_days": apply.deadline_window_days,
+                                  "archive_after_days": apply.archive_after_days} if apply else None,
+                       "packs": {"built_in": packs.built_in(), "missing": packs.missing(modules)},
+                       "frame_ports": list(server.app.frame_ports()),
+                       "math_textbook": str(textbook.directory()),
+                       "terminal": {"binary": terminal.runtime.binary, "session": terminal.runtime.session,
+                                    "cwd": str(settings.root)} if terminal else None,
+                       "google_configured": server.app.google_connection.configured})
 
 
-def _announce_links(server: LocalHTTPServer, code_link: str, stop: threading.Event) -> None:
-    """Print a fresh link whenever the current one is used or expires (kitty.web_auth)."""
-    while True:
-        server.ui_auth.wait_code(code_link.rsplit("=", 1)[1], stop)
-        if stop.is_set():
-            return
-        code_link = _link(server)
-        print(f"rika! next link (one browser tab each, works once within {int(web_auth.CODE_TTL // 60)} minutes): {code_link}", flush=True)
-
-
-def _serve(settings: Settings, static_dir: Path, port: int, *, safe: bool = False) -> None:
+def _serve(settings: Settings, static_dir: Path, *, safe: bool, front: tuple[str, str, str]) -> None:
+    front_secret, public_origin, ui_session = front
     # A build file saved with an error starts the server on the last good build (Q9).
-    with open_workspace(settings, modules=startup_modules(settings)) as workspace:
+    # rika-server migrated the database before starting this worker (server/src/migrations.rs).
+    with open_workspace(settings, modules=startup_modules(settings), auto_migrate=False) as workspace:
         if settings.demo and workspace.config.enabled("applyai"):
             from kitty.core import demo
 
@@ -854,26 +760,79 @@ def _serve(settings: Settings, static_dir: Path, port: int, *, safe: bool = Fals
 
             demo_seed.seed(workspace.conn)
             agent_demo.seed_demo(workspace.conn, settings.root)
-        app = WebApplication(settings, workspace.config, static_dir, safe=safe)
-    # A plain `kill` stops kitty-web like Ctrl+C: workers drain and the endpoint file goes.
+        app = WebApplication(settings, workspace.config, static_dir, ui_session=ui_session, safe=safe)
+    # A plain `kill` stops the worker like Ctrl+C: workers drain and the endpoint file goes.
     signal.signal(signal.SIGTERM, _interrupt)
-    with LocalHTTPServer(app, port) as server:
-        stop = threading.Event()
+    # Behind rika-server the port is the system's choice: only the front knows it.
+    with LocalHTTPServer(app, 0) as server:
+        server.front_secret = front_secret
+        app.origin = public_origin
         try:
-            # Paired programs find this server through the owner-only endpoint file.
-            with endpoint.published(settings.root, server.origin):
+            # Paired programs find rika! (the front) through the owner-only endpoint file.
+            with endpoint.published(settings.root, app.origin):
                 # A stop signal right after the announcement must still end serving cleanly.
                 try:
-                    link = _link(server)
-                    print(f"rika! {'synthetic demo ' if settings.demo else ''}website: {link}", flush=True)
-                    threading.Thread(target=_announce_links, args=(server, link, stop),
-                                     daemon=True, name="kitty-links").start()
+                    print(readiness(server, settings, app.modules), flush=True)
+                    threading.Thread(target=_stop_when_front_leaves, daemon=True, name="kitty-front").start()
                     server.serve_forever()
                 except KeyboardInterrupt:
                     pass
         finally:
-            stop.set()
             app.close()
+
+
+def _stop_when_front_leaves() -> None:
+    """End serving once rika-server closes this worker's stdin (it quit or crashed)."""
+    for _line in sys.stdin:
+        pass
+    os.kill(os.getpid(), signal.SIGTERM)
+
+
+def front_handshake(public_origin: str | None) -> tuple[str, str, str]:
+    """The front's secret and window session (the first two stdin lines) and its origin,
+    validated (kitty-web and the desktop backend)."""
+    secret = sys.stdin.readline().strip()
+    if not re.fullmatch(r"[0-9a-f]{64}", secret):
+        raise ValueError("rika-server must send its secret first")
+    session = sys.stdin.readline().strip()
+    if not re.fullmatch(r"ui-[0-9a-f]{24}", session):
+        raise ValueError("rika-server must send its window session second")
+    if not public_origin or not re.fullmatch(r"http://127\.0\.0\.1:[1-9][0-9]{0,4}", public_origin):
+        raise ValueError("--public-origin must be rika-server's loopback origin")
+    return secret, public_origin, session
+
+
+#: How to build the front kitty-web starts (docs/GUIDE.md, "The Rust front").
+RIKA_SERVER_BUILD = ("cargo build --release --manifest-path server/Cargo.toml (from the project root; on NixOS:"
+                     " nix develop ./desktop -c cargo build --release --manifest-path server/Cargo.toml)")
+
+
+def rika_server() -> Path | None:
+    """The rika-server binary: $KITTY_RIKA_SERVER, else the checkout's release build."""
+    configured = os.environ.get("KITTY_RIKA_SERVER")
+    path = Path(configured) if configured else Path(__file__).resolve().parents[2] / "server" / "target" / "release" / "rika-server"
+    return path if path.is_file() and os.access(path, os.X_OK) else None
+
+
+def _launch_front(args: argparse.Namespace, static_dir: Path) -> None:
+    """Plain `kitty-web`: become rika-server, with this module behind it as its worker."""
+    binary = rika_server()
+    if binary is None:
+        raise SystemExit(f"rika-server is not built; build it with: {RIKA_SERVER_BUILD}\n"
+                         "or set KITTY_RIKA_SERVER to a built rika-server.")
+    command = [str(binary), "--port", str(args.port), "--static-dir", str(static_dir)]
+    if args.root:
+        command += ["--root", str(args.root.expanduser().resolve())]
+    if args.demo:
+        command.append("--demo")
+    if args.safe:
+        command.append("--safe")
+    # As the `kitty-web` console script runs it: `python -m kitty.web_server` would load the
+    # module twice (as __main__ too). rika-server adds --worker and its own origin.
+    command += ["--worker-program", sys.executable, "--worker-arg", "-c",
+                "--worker-arg", "from kitty.web_server import main; main()"]
+    sys.stdout.flush()
+    os.execv(command[0], command)
 
 
 def main() -> None:
@@ -884,28 +843,56 @@ def main() -> None:
     parser.add_argument("--demo", action="store_true", help="Disposable synthetic workspace; no live discovery")
     parser.add_argument("--safe", action="store_true",
                         help="Safe mode: open every window without the build's custom CSS and theme overrides")
+    parser.add_argument("--worker", action="store_true",
+                        help="Serve behind rika-server: read its secret from stdin, print a readiness line")
+    parser.add_argument("--public-origin", help="With --worker: rika-server's origin, the address pages and paired programs use")
+    parser.add_argument("--demo-workspace", type=Path,
+                        help="With --worker --demo: the disposable workspace rika-server made and migrated")
+    parser.add_argument("--migrate-database", type=Path,
+                        help="Apply the pending migrations with the Python runner and exit (rika-server runs this"
+                             " only for a workspace from rika! 0.3.33 or older whose notes must be converted)")
     args = parser.parse_args()
-    if not 1 <= args.port <= 65535:
-        parser.error("--port must be between 1 and 65535")
+    if args.migrate_database:
+        migrate_database(args.migrate_database)
+        return
+    if not 0 <= args.port <= 65535:
+        parser.error("--port must be between 0 and 65535")
+    static_dir = (args.static_dir or Path(__file__).resolve().parents[2] / "web" / "dist").resolve()
+    if not args.worker:
+        _launch_front(args, static_dir)
+        return
+    # The packs rika-server installed join this process before anything reads $KITTY_HERDR
+    # or imports a pack's library.
+    packs.state()
     root = (args.root or find_project_root()).expanduser().resolve()
-    static_dir = args.static_dir or Path(__file__).resolve().parents[2] / "web" / "dist"
     try:
+        front = front_handshake(args.public_origin)
         if args.demo:
-            with TemporaryDirectory(prefix="kitty-web-demo-") as folder:
-                demo_root = Path(folder)
-                config_dir = demo_root / "config"
-                config_dir.mkdir()
-                example_dir = root / "config"
-                if not (example_dir / "tracks.yaml.example").is_file():
-                    example_dir = Path(__file__).resolve().parents[2] / "config"
-                for name in ("profile", "tracks", "sources", "watchlist", "answers", "views", "resume_terms"):
-                    shutil.copyfile(example_dir / f"{name}.yaml.example", config_dir / f"{name}.yaml")
-                settings = Settings(root=demo_root, db_path=demo_root / "data" / "demo.db", demo=True)
-                _serve(settings, static_dir, args.port, safe=args.safe)
+            if args.demo_workspace is None:
+                raise ValueError("--demo behind rika-server needs its --demo-workspace")
+            demo_root = args.demo_workspace.resolve()
+            config_dir = demo_root / "config"
+            config_dir.mkdir()
+            example_dir = root / "config"
+            if not (example_dir / "tracks.yaml.example").is_file():
+                example_dir = Path(__file__).resolve().parents[2] / "config"
+            for name in ("profile", "tracks", "sources", "watchlist", "answers", "views", "resume_terms"):
+                shutil.copyfile(example_dir / f"{name}.yaml.example", config_dir / f"{name}.yaml")
+            # The demo shows every module, the Brain too: a source checkout's website carries
+            # its pack, and without it the home says how to download it.
+            (config_dir / BUILD_FILE).write_text(json.dumps({"schema": 1, "modules": list(MODULE_IDS)}), encoding="utf-8")
+            settings = Settings(root=demo_root, db_path=demo_root / "data" / "demo.db", demo=True)
+            _serve(settings, static_dir, safe=args.safe, front=front)
         else:
-            _serve(Settings.load(root=root), static_dir, args.port, safe=args.safe)
+            _serve(Settings.load(root=root), static_dir, safe=args.safe, front=front)
     except (ConfigError, OSError, ValueError):
         parser.exit(1, "Unable to open the local website. Check the port, workspace configuration and public example files with the CLI.\n")
+
+
+def migrate_database(path: Path) -> None:
+    """The Python runner on one database, for the conversions only it has (server/src/startup.rs)."""
+    with closing(connect(path)) as conn:
+        migrate(conn)
 
 
 if __name__ == "__main__":

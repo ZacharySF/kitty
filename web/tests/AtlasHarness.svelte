@@ -20,4 +20,4 @@
   }
 </script>
 
-<GraphNavigator bind:this={atlas} workspace={null} revision={0} onview={opened} onopenjob={() => {}} onguide={() => {}} />
+<GraphNavigator bind:this={atlas} revision={0} onview={opened} />

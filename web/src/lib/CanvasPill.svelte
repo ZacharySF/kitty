@@ -193,13 +193,13 @@
   :global(.pill-menu .pill-menu-item:hover:not(:disabled)),
   :global(.pill-menu .pill-menu-item[aria-pressed="true"]) { color: var(--ink); background: var(--wash); }
   :global(.pill-menu .pill-menu-item:disabled) { opacity: 0.45; cursor: not-allowed; }
-  :global(.pill-menu kbd) { margin-left: auto; padding: 0; border: 0; background: none; box-shadow: none; color: var(--subtle); font: 10px var(--font-mono); text-decoration: none; }
+  :global(.pill-menu kbd) { margin-left: auto; padding: 0; border: 0; background: none; box-shadow: none; color: var(--subtle); font: 10px var(--font-ui); text-decoration: none; }
   :global(.pill-menu .pill-menu-row) { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
   :global(.pill-menu .pill-range) { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 12px; }
   :global(.pill-menu .pill-range span) { display: flex; align-items: center; gap: 6px; }
   :global(.pill-menu .pill-range input[type="range"]) { width: 110px; padding: 0; accent-color: var(--accent); }
   :global(.pill-menu .pill-range input[type="number"]) { width: 64px; padding: 4px 6px; }
-  :global(.pill-menu output) { min-width: 36px; text-align: center; color: var(--muted); font: 11px var(--font-mono); }
+  :global(.pill-menu output) { min-width: 36px; text-align: center; color: var(--muted); font: 11px var(--font-ui); }
   @media (prefers-reduced-motion: reduce) {
     .pill-bar { animation: none; }
     .canvas-pill :global(.pill-btn), .pill-handle span { transition: none; }

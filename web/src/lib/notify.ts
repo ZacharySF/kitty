@@ -7,12 +7,12 @@
 export type Source = "calendar" | "job" | "rika";
 export type CalendarReminder = { event_id: string; occurrence: string; minutes: number; title: string; due: string };
 export type JobReminder = { id: number; kind: string; due_at: string; note: string | null; job_id: number | null; label: string };
-/** An urgent (strong and time-sensitive) goal match from `GET /api/rika/alerts` (docs/rika-design.md Q15 A). */
-export type RikaAlert = { id: number | string; key: string; title: string; body: string; due_at: string | null; goal_id: number | string; view: string | null; created_at: string };
+/** An urgent (strong and time-sensitive) goal match from `GET /api/rika/alerts` (docs/rika-design.md Q15 A), or, with no goal, a problem with the GitHub backup. */
+export type RikaAlert = { id: number | string; key: string; title: string; body: string; due_at: string | null; goal_id: number | string | null; view: string | null; created_at: string };
 export type Target =
   | { kind: "calendar"; event_id: string; occurrence: string; minutes: number }
   | { kind: "job"; id: number; job_id: number | null }
-  | { kind: "rika"; id: number | string; goal_id: number | string; view: string | null };
+  | { kind: "rika"; id: number | string; goal_id: number | string | null; view: string | null };
 export type Notice = { key: string; source: Source; title: string; body: string; due: string; target: Target };
 
 /** Quiet hours as minutes of the local day; `from === to` is an empty window. */
@@ -23,7 +23,7 @@ export const LEDGER_KEY = "kitty.notify.ledger";
 export const SYSTEM_KEY = "kitty.notify.system";
 /** Fired on `window` when quiet hours change, so the running notifier re-checks at once. */
 export const QUIET_EVENT = "kitty:quiet-hours";
-export const SOURCE_LABEL: Record<Source, string> = { calendar: "Calendar", job: "Job search", rika: "Rika" };
+export const SOURCE_LABEL: Record<Source, string> = { calendar: "Calendar", job: "Career", rika: "Rika" };
 
 /**
  * What has happened to each notice key. `snoozed` maps a key to the ISO time it returns;
@@ -99,7 +99,7 @@ export function rikaNotice(alert: RikaAlert): Notice {
   };
 }
 
-/** "2 calendar · 1 job search · 1 rika" */
+/** "2 calendar · 1 career · 1 rika" */
 export function digestLine(notices: Notice[]): string {
   return (["calendar", "job", "rika"] as const)
     .map(source => [source, notices.filter(n => n.source === source).length] as const)

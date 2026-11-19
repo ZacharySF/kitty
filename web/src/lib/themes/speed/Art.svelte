@@ -93,11 +93,10 @@
     animation-direction: reverse;
     animation-duration: calc(var(--motion-ms) * 180);
   }
-  /* Above the Rika bar, which covers the window's foot. */
   .stamp {
     position: absolute;
     left: 26px;
-    bottom: calc(14px + var(--rika-space, 0px));
+    bottom: 14px;
     width: 220px;
     height: auto;
     transform: rotate(-4deg);

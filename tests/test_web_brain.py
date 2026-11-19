@@ -9,15 +9,18 @@ import uuid
 import pytest
 
 from kitty import web_brain
-from kitty.core import blocks, flashcards
+from kitty.core import blocks, calendar, documents, flashcards, quick_notes, record_events
 from kitty.web_server import APIError, WebApplication
+from terminal_support import front_site
 
 NODE_KEYS = {"id", "kind", "section", "type", "label", "at", "parent"}
 
 
 @pytest.fixture
 def app(workspace, tmp_path):
-    application = WebApplication(workspace.settings, workspace.config, tmp_path)
+    # /api/brain is the brain module's (kitty.web_server.ROUTE_MODULES).
+    config = dataclasses.replace(workspace.config, modules=(*workspace.config.modules, "brain"))
+    application = WebApplication(workspace.settings, config, tmp_path, ui_session="ui-test")
     yield application
     application.close()
 
@@ -28,6 +31,42 @@ def brain(app, conn, **query):
 
 def by_id(result):
     return {node["id"]: node for node in result["nodes"]}
+
+
+def calendar_event(conn, title):
+    """A calendar event as rika-server makes one (server/src/calendar/): the event and its
+    history through the same core function, and the `record_events` row the front appends."""
+    event = calendar.create_event(conn, {"title": title, "start": "2030-01-02T09:00:00Z", "end": "2030-01-02T10:00:00Z",
+                                         "timezone": "UTC", "all_day": False})
+    record_events.append(conn, record_events.Event("calendar", "event", event["id"], "create"), "/api/calendar/events")
+    return event
+
+
+def study_mutation(conn, path, body):
+    """A study record as rika-server writes it (tests/test_study_parity.py): the same core
+    function, and the `record_events` row the front appends."""
+    from kitty.core import study
+
+    route = path.removeprefix("/api/study/")
+    result = study.save_session(conn, body) if route == "sessions" else study.save_entity(conn, route, body)
+    record_events.capture(conn, path, body, result)
+    return result
+
+
+def notes_mutation(conn, path, body):
+    """A Notes write as rika-server makes it (server/src/notes/, tests/test_notes_parity.py): the
+    same core function, and the `record_events` row the front appends (none when op_log has it)."""
+    from kitty.core import notes
+
+    before = record_events.op_log_mark(conn)
+    if path == "/api/notes/notebooks":
+        result = notes.create_notebook(conn, body["title"])
+    elif path == "/api/notes/pages":
+        result = notes.create_page(conn, body["notebook_id"], body["title"])
+    else:
+        result = notes.save_page(conn, int(path.rsplit("/", 1)[1]), body["revision"], body["document"], body["title"])
+    record_events.capture(conn, path, body, result, op_log_before=before)
+    return result
 
 
 def assert_contract(result):
@@ -51,15 +90,13 @@ def assert_contract(result):
 
 
 def seed(app, conn):
-    notebook = app.mutate(conn, "/api/notes/notebooks", {"title": "Physics"})
-    page = app.mutate(conn, "/api/notes/pages", {"notebook_id": notebook["id"], "title": "Waves"})
-    app.mutate(conn, f"/api/notes/pages/{page['id']}", {
+    notebook = notes_mutation(conn, "/api/notes/notebooks", {"title": "Physics"})
+    page = notes_mutation(conn, "/api/notes/pages", {"notebook_id": notebook["id"], "title": "Waves"})
+    notes_mutation(conn, f"/api/notes/pages/{page['id']}", {
         "revision": page["revision"], "title": "Standing waves", "document": page["document"]})
-    note = app.mutate(conn, "/api/quick-notes/create", {"body": "Private scratch body"})
-    event = app.mutate(conn, "/api/calendar/events", {
-        "title": "Lab session", "start": "2030-01-02T09:00:00Z", "end": "2030-01-02T10:00:00Z",
-        "timezone": "UTC", "all_day": False})
-    subject = app.mutate(conn, "/api/study/subjects", {"name": "Chemistry"})["item"]
+    note = quick_notes.create(conn, "Private scratch body")
+    event = calendar_event(conn, "Lab session")
+    subject = study_mutation(conn, "/api/study/subjects", {"name": "Chemistry"})["item"]
     job = app.mutate(conn, "/api/jobs/add", {"company": "Acme", "title": "Intern",
                                              "url": "https://example.invalid/acme"})
     return {"notebook": notebook, "page": page, "note": note, "event": event, "subject": subject, "job": job}
@@ -98,8 +135,8 @@ def test_records_and_captured_edits_form_a_valid_tree(app, workspace):
 
 def test_edits_are_newest_first_and_deleted_records_read_as_deleted(app, workspace):
     conn = workspace.conn
-    note = app.mutate(conn, "/api/quick-notes/create", {"body": "gone soon"})
-    app.mutate(conn, "/api/quick-notes/delete", {"id": note["id"], "revision": note["revision"]})
+    note = quick_notes.create(conn, "gone soon")
+    quick_notes.delete(conn, note["id"], note["revision"])
     result = brain(app, conn)
     assert_contract(result)
     edits = [node for node in result["nodes"] if node["kind"] == "edit"]
@@ -111,19 +148,23 @@ def test_edits_are_newest_first_and_deleted_records_read_as_deleted(app, workspa
 
 def test_historical_logs_become_edits(app, workspace):
     conn = workspace.conn
-    state = flashcards.overview(conn)
-    basic = next(item for item in state["types"] if item["kind"] == "basic")
-    note = flashcards.save_note(conn, {"deck_id": state["decks"][0]["id"], "type_id": basic["id"],
+    flashcards.bootstrap(conn)
+    deck = conn.execute("SELECT id FROM flash_decks WHERE name='Default'").fetchone()[0]
+    basic = conn.execute("SELECT id FROM flash_types WHERE kind='basic' ORDER BY id LIMIT 1").fetchone()[0]
+    note = flashcards.save_note(conn, {"deck_id": deck, "type_id": basic,
                                        "fields": {"Front": "front-secret", "Back": "back-secret"}, "tags": []})
-    card = flashcards.start_review(conn)["card"]
-    flashcards.reveal(conn, card["token"])
-    flashcards.grade(conn, card["token"], 3, 1000)
+    card = conn.execute("SELECT id FROM flash_cards WHERE note_id=?", (note["id"],)).fetchone()[0]
+    # A graded review, as rika-server's /api/flashcards/grade logs it (server/src/flashcards).
+    conn.execute("INSERT INTO flash_reviews(card_id,deck_id,rating,reviewed_at,local_day,duration_ms,mode,before_state) "
+                 "VALUES(?,?,3,?,?,1000,'regular','{}')", (card, deck, "2026-01-01T09:00:00+00:00", "2026-01-01"))
     job = app.mutate(conn, "/api/jobs/add", {"company": "Acme", "title": "Intern",
                                              "url": "https://example.invalid/acme"})
-    app.mutate(conn, f"/api/jobs/{job['id']}", {"action": "applied", "value": True})
+    # Job status writes are rika-server's (server/src/jobs/).
+    with front_site(workspace.settings) as site:
+        assert site.request(f"/api/jobs/{job['id']}", {"action": "applied", "value": True})[0] == 200
     application = conn.execute("SELECT id FROM applications").fetchone()[0]
-    subject = app.mutate(conn, "/api/study/subjects", {"name": "Chemistry"})["item"]
-    session = app.mutate(conn, "/api/study/sessions", {
+    subject = study_mutation(conn, "/api/study/subjects", {"name": "Chemistry"})["item"]
+    session = study_mutation(conn, "/api/study/sessions", {
         "subject_id": subject["id"], "started_at": "2026-01-01T09:00:00Z", "duration_seconds": 1500,
         "timezone": "UTC", "request_id": uuid.uuid4().hex})["item"]
     result = brain(app, conn)
@@ -144,9 +185,7 @@ def test_historical_logs_become_edits(app, workspace):
 
 def test_calendar_history_before_capture_began_is_kept_without_double_counting(app, workspace):
     conn = workspace.conn
-    event = app.mutate(conn, "/api/calendar/events", {
-        "title": "Lab", "start": "2030-01-02T09:00:00Z", "end": "2030-01-02T10:00:00Z",
-        "timezone": "UTC", "all_day": False})
+    event = calendar_event(conn, "Lab")
     conn.execute("INSERT INTO calendar_history(entity, entity_id, before_json, after_json, created_at)"
                  " VALUES ('event', ?, '{}', '{}', '2001-01-01T00:00:00+00:00')", (event["id"],))
     result = brain(app, conn)
@@ -159,13 +198,13 @@ def test_calendar_history_before_capture_began_is_kept_without_double_counting(a
 
 def test_disabled_modules_are_neither_listed_nor_returned(workspace, tmp_path):
     conn = workspace.conn
-    full = WebApplication(workspace.settings, workspace.config, tmp_path)
+    full = WebApplication(workspace.settings, workspace.config, tmp_path, ui_session="ui-test")
     try:
         seed(full, conn)
     finally:
         full.close()
-    config = dataclasses.replace(workspace.config, modules=("workspace",))
-    app = WebApplication(workspace.settings, config, tmp_path)
+    config = dataclasses.replace(workspace.config, modules=("workspace", "brain"))
+    app = WebApplication(workspace.settings, config, tmp_path, ui_session="ui-test")
     try:
         result = brain(app, conn)
     finally:
@@ -181,7 +220,7 @@ def test_truncation_keeps_records_before_edits(app, workspace):
     conn = workspace.conn
     seeded = brain(app, conn)["total"]["records"]  # e.g. the default calendar
     for index in range(4):
-        app.mutate(conn, "/api/quick-notes/create", {"body": f"note {index}"})
+        quick_notes.create(conn, f"note {index}")
     records = seeded + 4
     for limit in (2, records + 2):
         result = brain(app, conn, limit=limit)
@@ -205,8 +244,8 @@ def test_rejects_invalid_queries(app, workspace, query):
 
 def test_block_backend_pages_blocks_op_log_and_compacted_days(app, workspace):
     conn = workspace.conn
-    notebook = app.mutate(conn, "/api/notes/notebooks", {"title": "Physics"})
-    page = app.mutate(conn, "/api/notes/pages", {"notebook_id": notebook["id"], "title": "Optics"})
+    notebook = notes_mutation(conn, "/api/notes/notebooks", {"title": "Physics"})
+    page = notes_mutation(conn, "/api/notes/pages", {"notebook_id": notebook["id"], "title": "Optics"})
     root = conn.execute("SELECT block_id FROM note_page_index WHERE id=?", (page["id"],)).fetchone()[0]
     child, nested, gone = (str(uuid.uuid4()) for _ in range(3))
     # The editor's live transactions never pass through WebApplication.mutate: op_log has them.
@@ -214,7 +253,7 @@ def test_block_backend_pages_blocks_op_log_and_compacted_days(app, workspace):
                            {"op": "insert", "id": nested, "type": "text", "parent": child, "text": "nested"},
                            {"op": "insert", "id": gone, "type": "text", "parent": root, "text": "trashed"}])
     blocks.transact(conn, [{"op": "delete", "id": gone}])
-    quick = app.mutate(conn, "/api/quick-notes/create", {"body": "quick private body"})
+    quick = quick_notes.create(conn, "quick private body")
     # History older than the retention window survives as one snapshot per page per day.
     seq = conn.execute("SELECT MAX(seq) FROM op_log").fetchone()[0]
     conn.execute("INSERT INTO page_snapshots(page_id, day, seq, state) VALUES (?, '2001-01-01', ?, x'00')", (root, seq))
@@ -291,15 +330,15 @@ def test_records_created_after_the_block_migration_come_from_blocks(app, workspa
     conn = workspace.conn
     legacy = {table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
               for table in ("note_pages", "note_blocks", "quick_notes", "documents")}
-    notebook = app.mutate(conn, "/api/notes/notebooks", {"title": "Chemistry"})
-    page = app.mutate(conn, "/api/notes/pages", {"notebook_id": notebook["id"], "title": "Acids"})
+    notebook = notes_mutation(conn, "/api/notes/notebooks", {"title": "Chemistry"})
+    page = notes_mutation(conn, "/api/notes/pages", {"notebook_id": notebook["id"], "title": "Acids"})
     root = conn.execute("SELECT block_id FROM note_page_index WHERE id=?", (page["id"],)).fetchone()[0]
     item = str(uuid.uuid4())
     blocks.transact(conn, [{"op": "insert", "id": item, "type": "text", "parent": root, "text": "pH"}])
     blocks.transact(conn, [{"op": "text", "id": item, "text": "pH scale"}])
-    quick = app.mutate(conn, "/api/quick-notes/create", {"body": "later"})
-    document = app.mutate(conn, "/api/documents", {"title": "Lab report", "content": "Body", "format": "text",
-                                                   "notebook_id": notebook["id"]})
+    quick = quick_notes.create(conn, "later")
+    document = documents.save(conn, {"title": "Lab report", "content": "Body", "format": "text",
+                                     "notebook_id": notebook["id"]})
     # The frozen legacy tables never see them: only the block backend does.
     assert legacy == {table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in legacy}
     result = brain(app, conn)

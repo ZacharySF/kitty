@@ -59,6 +59,15 @@ jobs:
         run: |
           uv sync --locked --group dev
           bash scripts/build-desktop.sh --prepare-only
+      - name: Sign the module pack index
+        # scripts/build-packs.py (run by build-desktop.sh) built every module pack (the Brain's web
+        # code, the Python packs, LearnHarness and herdr) into desktop/.build/packs; its index is
+        # signed with the updater key, which the app embeds and rika-server verifies it against
+        # (server/src/packs.rs).
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: web/node_modules/.bin/tauri signer sign desktop/.build/packs/packs.json
       - name: Check frontend and isolated application runtime
         run: |
           npm --prefix web run check
@@ -69,22 +78,21 @@ jobs:
             tests/test_learnharness_runtime.py \
             tests/test_external_modules.py tests/test_web_external_modules.py \
             tests/test_web_server.py tests/test_web_jobs.py tests/test_web_tasks.py \
-            tests/test_web_profile.py tests/test_web_resumes.py tests/test_web_insights.py \
-            tests/test_web_terminal.py tests/test_herdr_bundle.py tests/test_workshop_render.py
+            tests/test_web_terminal.py tests/test_herdr_bundle.py \
+            tests/test_packs.py tests/test_base_packs.py tests/test_workshop_render.py
           cargo test --manifest-path desktop/Cargo.toml --locked
-          cargo test --manifest-path workshop-engine/Cargo.toml --locked
       - name: Build signed installers
         uses: tauri-apps/tauri-action@v1
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # linuxdeploy's rpath rewrite crashes the static-pie herdr sidecar; see the wrapper.
+          # linuxdeploy's rpath rewrite crashes static-pie executables; see the wrapper.
           PATCHELF: ${{ github.workspace }}/desktop/appimage_patchelf.py
         with:
           projectPath: desktop
           tauriScript: ${{ github.workspace }}/web/node_modules/.bin/tauri
           args: --bundles appimage,deb -- --locked
-      - name: Upload installers to the draft public release
+      - name: Upload installers and module packs to the draft public release
         # tauri-action reported large uploads as successful while none reached the release
         # (v0.3.31); scripts/publish-desktop-release.py uploads with gh and checks every asset.
         env:
@@ -92,43 +100,66 @@ jobs:
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
         run: |
           cat > release-notes.md <<'NOTES'
-          Download the .deb for Ubuntu 22.04+ / compatible Debian-based desktops, or the AppImage for other compatible Linux desktops.
+          Download the .deb for Ubuntu 22.04+ / compatible Debian-based desktops, or the AppImage for other compatible Linux desktops. Linux x86_64 only: there is no Windows, macOS or ARM build.
           Install once, then launch rika! from your application menu. The native tray menu checks for signed updates.
           Application updates preserve the separate local workspace; do not delete that workspace when replacing the application.
           AppImage users: keep the file in a writable directory and enable its executable permission in your file manager.
-          Only installers, signatures and updater metadata are published here; rika! source remains private. Bundles include LearnHarness's corresponding source and licenses.
+          Only installers, signatures, module packs and updater metadata are published here; rika!'s source is public at https://github.com/ZacharySF/kitty (MIT). The LearnHarness download includes its corresponding source and licenses.
           NOTES
           uv run --no-project python scripts/publish-desktop-release.py --tag "$RELEASE_TAG" \
             --notes release-notes.md --title "rika! $RELEASE_TAG (Linux x86_64)"
-      - name: Validate actual uploaded installers and updater metadata
+      - name: Validate actual uploaded installers, module packs and updater metadata
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
         run: |
           mkdir release-assets
-          gh release download "$RELEASE_TAG" --repo ZacharySF/kitty-releases --dir release-assets
+          gh release download "$RELEASE_TAG" --repo ZacharySF/rika --dir release-assets
           # Draft releases are not addressable by tag; select from the authenticated list.
-          gh api repos/ZacharySF/kitty-releases/releases \
+          gh api repos/ZacharySF/rika/releases \
             --jq "map(select(.tag_name == \"$RELEASE_TAG\"))[0]" > release-assets-info.json
-          uv run --no-project python scripts/validate-desktop-release.py \
+          # The project environment: the pack index's signature is checked with cryptography.
+          uv run --locked python scripts/validate-desktop-release.py \
             --tag "$RELEASE_TAG" --assets release-assets --release release-assets-info.json
           test "$(dpkg-deb --field release-assets/*.deb Version)" = "${RELEASE_TAG#v}"
           test "$(dpkg-deb --field release-assets/*.deb Architecture)" = amd64
           # Never replace the unrelated kitty terminal package; Tauri names the package after productName,
           # and it Conflicts/Replaces the pre-rename kitty-workspace package (desktop/tauri.conf.json).
           test "$(dpkg-deb --field release-assets/*.deb Package)" = rika-workspace
-          # The Terminal module ships exactly the pinned herdr, with its Apache-2.0 licence.
+          # The Terminal module's herdr pack carries exactly the pinned herdr, with its Apache-2.0
+          # licence; the installers carry no herdr.
           pinned="$(uv run --no-project python -c 'import runpy; print(runpy.run_path("desktop/fetch_herdr.py")["PINS"]["x86_64-unknown-linux-gnu"][1])')"
+          mkdir release-herdr && tar -xzf release-assets/rika-pack-herdr-*.tar.gz -C release-herdr
+          test "$(sha256sum release-herdr/bin/herdr | cut -d ' ' -f 1)" = "$pinned"
+          cmp release-herdr/licenses/herdr/LICENSE desktop/third_party/herdr/LICENSE
           dpkg-deb -x release-assets/*.deb release-deb
-          test "$(sha256sum release-deb/usr/bin/kitty-herdr | cut -d ' ' -f 1)" = "$pinned"
-          cmp release-deb/usr/lib/rika!\ Workspace/licenses/herdr/LICENSE desktop/third_party/herdr/LICENSE
+          test ! -e release-deb/usr/bin/kitty-herdr
+          # The base's own bundled licences sit in the productName folder.
+          cmp release-deb/usr/lib/rika!\ Workspace/licenses/grinstead-snell/LICENSE third_party/grinstead-snell/LICENSE
+          # The backend ships unpacked (desktop/package_backend.py), where the shell looks for it
+          # (desktop/src/main.rs BACKEND), and starts from there; the old onefile location is gone.
+          backend=usr/libexec/kitty-workspace/kitty-web
+          test -x "release-deb/$backend/kitty-web"
+          test ! -e release-deb/usr/bin/kitty-web
+          test -f "release-deb/$backend/_internal/website/index.html"
+          # The Brain is a pack: the base website lists its files (for rika-server) but carries none.
+          uv run --no-project python -c 'import json, pathlib, sys; site = pathlib.Path(sys.argv[1]); files = [name for pack in json.loads((site / "pack-files.json").read_text()).values() for name in pack]; assert files and not any((site / name).exists() for name in files)' "release-deb/$backend/_internal/website"
+          # LearnHarness and the Python packs' libraries are downloads, not in the base backend.
+          test ! -e "release-deb/$backend/_internal/learnharness"
+          uv run --locked python -c 'import importlib.util, pathlib, sys; spec = importlib.util.spec_from_file_location("b", "scripts/build-packs.py"); b = importlib.util.module_from_spec(spec); spec.loader.exec_module(b); found = [m for m in b.backend_excludes() if (pathlib.Path(sys.argv[1]) / m).exists()]; assert not found, found' "release-deb/$backend/_internal"
+          "release-deb/$backend/kitty-web" agent-launch --help >/dev/null
+          # The shell starts rika-server (server/) beside itself, which starts that backend.
+          test -x release-deb/usr/bin/rika-server
           chmod +x release-assets/*.AppImage
           appimage="$(realpath release-assets/*.AppImage)"
           (mkdir release-appimage && cd release-appimage && "$appimage" --appimage-extract >/dev/null)
-          test "$(sha256sum release-appimage/squashfs-root/usr/bin/kitty-herdr | cut -d ' ' -f 1)" = "$pinned"
-          cmp release-appimage/squashfs-root/usr/lib/rika!\ Workspace/licenses/herdr/LICENSE desktop/third_party/herdr/LICENSE
+          test ! -e release-appimage/squashfs-root/usr/bin/kitty-herdr
+          # linuxdeploy rewrites libraries under usr/lib only; the AppImage's backend is the deb's, byte for byte.
+          test ! -e release-appimage/squashfs-root/usr/bin/kitty-web
+          diff -r "release-deb/$backend" "release-appimage/squashfs-root/$backend"
+          test -x release-appimage/squashfs-root/usr/bin/rika-server
       - name: Publish validated release and updater feed
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
-        run: gh release edit "$RELEASE_TAG" --repo ZacharySF/kitty-releases --draft=false --latest
+        run: gh release edit "$RELEASE_TAG" --repo ZacharySF/rika --draft=false --latest

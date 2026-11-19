@@ -1,0 +1,3 @@
+TeX Gyre Heros (regular, bold) by GUST e-foundry, an open font based on URW Nimbus Sans (a Helvetica design).
+Distributed under the GUST Font License: https://www.gust.org.pl/projects/e-foundry/licenses
+Source: https://www.gust.org.pl/projects/e-foundry/tex-gyre/heros

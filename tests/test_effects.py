@@ -1,16 +1,18 @@
-"""The effects kernel: digest binding, single use, expiry, who approves, and a kind with no executor."""
+"""The effects kernel: digest binding, single use, expiry, who approves, and a kind with no executor.
+
+The pending-approvals list (`/api/effects`) is answered by rika-server (server/src/effects/):
+its tests run through the front, with kitty.core.effects and effect_kinds as the reference."""
 from __future__ import annotations
 
+import re
 import sqlite3
 from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
 
-from kitty import web_effects
 from kitty.core import block_api, effect_kinds, effects
 from kitty.core.blocks.actor import Actor, acting
-from kitty.web_server import APIError, WebApplication
 
 USER = Actor("user", None, "ui-window")
 AGENT = Actor("agent", "omp", "agent-session-1")
@@ -257,13 +259,16 @@ def test_submit_application_has_no_executor_and_none_can_be_registered():
     assert isinstance(error.value, TypeError)
 
 
-# --------------------------------------------------------------------- the review list
+# --------------------------------------------------------------------- the review list (rika-server)
 
 
 @pytest.fixture
-def app(workspace):
-    return SimpleNamespace(ui_session="ui-test-window", config=workspace.config, settings=workspace.settings,
-                           _no_query=WebApplication._no_query)
+def window(workspace):
+    """rika!'s window: the front on the synthetic workspace, with the worker behind it."""
+    from terminal_support import front_site
+
+    with front_site(workspace.settings) as running:
+        yield running
 
 
 def _page(conn):
@@ -271,57 +276,108 @@ def _page(conn):
     return made["page_id"], [made["blocks"][0]["id"], made["blocks"][1]["id"], made["blocks"][2]["id"]]
 
 
-def _agent_proposes(conn, kind, payload, config=None):
-    return effects.propose(conn, kind, payload, actor=AGENT, ctx=effect_kinds.Context(conn, config))
+def _agent_proposes(conn, kind, payload, config=None, **extra):
+    return effects.propose(conn, kind, payload, actor=AGENT, ctx=effect_kinds.Context(conn, config), **extra)
 
 
-def test_an_agent_proposed_block_delete_is_approved_in_the_window_and_executes(workspace, app):
+def _reference(conn, effect_id):
+    """What Python's pending-approvals view showed for an effect."""
+    effect = effects.get(conn, effect_id)
+    kind = effects.REGISTRY.get(effect.kind)
+    return {**effect.as_dict(), "executable": isinstance(kind, effects.Executable),
+            "handoff": getattr(kind, "handoff", None), "events": effects.events(conn, effect.id)}
+
+
+def _decide(window, action, effect, **body):
+    fields = {"id": effect.id} if action == "deny" else {"id": effect.id, "digest": effect.digest}
+    return window.request(f"/api/effects/{action}", {**fields, **body})
+
+
+def test_an_agent_proposed_block_delete_is_approved_in_the_window_and_executes(workspace, window):
     conn = workspace.conn
     page, (keep, drop, child) = _page(conn)
     effect = _agent_proposes(conn, "delete_block", {"block": drop, "reason": "duplicate"})
-    listed = web_effects.get(app, conn, "/api/effects", {})["pending"]
+    status, listing = window.request("/api/effects")
+    assert status == 200 and listing == {"pending": [_reference(conn, effect.id)], "recent": []}
+    listed = listing["pending"]
     assert [item["id"] for item in listed] == [effect.id]
     assert listed[0]["preview"]["text"] == "drop this" and listed[0]["preview"]["child_count"] == 1
     assert listed[0]["actor"]["kind"] == "agent" and listed[0]["executable"] is True
-    approved = web_effects.post(app, conn, "/api/effects/approve", {"id": effect.id, "digest": effect.digest})
-    assert approved["effect"]["state"] == "approved" and approved["pending"] == []
-    done = web_effects.post(app, conn, "/api/effects/execute", {"id": effect.id, "digest": effect.digest})
-    assert done["effect"]["state"] == "executed"
+    status, approved = _decide(window, "approve", effect)
+    assert status == 200, approved
+    assert approved["effect"]["state"] == "approved" and approved["pending"] == [] and approved["notice"] is None
+    assert approved["effect"] == _reference(conn, effect.id) and approved["recent"] == [approved["effect"]]
+    # Bound to this launch's window session, which the worker executes with too.
+    approval = approved["effect"]["events"][-1]
+    assert approval["actor"]["kind"] == "user" and re.fullmatch(r"ui-[0-9a-f]{24}", approval["actor"]["session"])
+    status, done = _decide(window, "execute", effect)
+    assert status == 200, done
+    assert done["effect"]["state"] == "executed" and done["effect"] == _reference(conn, effect.id)
+    assert done["result"]["page_id"] == page and done["effect"]["events"][-1]["actor"] == approval["actor"]
     assert [block["text"] for block in block_api.get_page(conn, page)["blocks"]] == ["keep this"]
     actor = conn.execute("SELECT actor, actor_session FROM op_log ORDER BY seq DESC LIMIT 1").fetchone()
     assert tuple(actor) == ("agent", AGENT.session)
+    assert _decide(window, "execute", effect) == (409, {"error": "This effect is already executed"})
 
 
 @pytest.mark.parametrize("change", ["text", "child"])
-def test_a_block_delete_whose_target_changed_after_approval_is_refused(workspace, app, change):
+def test_a_block_delete_whose_target_changed_after_approval_is_refused(workspace, window, change):
     conn = workspace.conn
     page, (keep, drop, child) = _page(conn)
     effect = _agent_proposes(conn, "delete_block", {"block": drop})
-    web_effects.post(app, conn, "/api/effects/approve", {"id": effect.id, "digest": effect.digest})
+    assert _decide(window, "approve", effect)[0] == 200
     with acting(Actor("user")):
         if change == "text":
             block_api.update_block(conn, drop, text="drop this? no, keep it")
         else:
             block_api.append_blocks(conn, page, ["new child"], parent=drop)
-    with pytest.raises(APIError) as refused:
-        web_effects.post(app, conn, "/api/effects/execute", {"id": effect.id, "digest": effect.digest})
-    assert refused.value.status == 409
-    assert refused.value.problems == [{"precondition": "subtree" if change == "child" else "target"}]
+    status, refused = _decide(window, "execute", effect)
+    assert status == 409
+    assert refused["problems"] == [{"precondition": "subtree" if change == "child" else "target"}]
     assert len(block_api.get_page(conn, page)["blocks"]) == 2
     assert effects.get(conn, effect.id).state == "refused"
 
 
-def test_agents_cannot_approve_and_inline_kinds_stay_in_their_view(workspace, app):
+def test_a_change_before_approval_refuses_it_for_good_with_the_changed_names(workspace, window):
+    conn = workspace.conn
+    page, (keep, drop, child) = _page(conn)
+    effect = _agent_proposes(conn, "delete_block", {"block": drop})
+    with acting(Actor("user")):
+        block_api.update_block(conn, child, text="edited child")
+    status, refused = _decide(window, "approve", effect)
+    assert (status, refused) == (409, {"error": "Something this effect depends on changed since it was proposed; review it"
+                                                " again", "problems": [{"precondition": "subtree"}]})
+    events = effects.events(conn, effect.id)
+    assert [event["state"] for event in events] == ["proposed", "refused"]
+    assert events[-1]["detail"] == {"reason": refused["error"], "changed": ["subtree"]}
+    assert _decide(window, "approve", effect) == (409, {"error": "This effect is already refused"})
+    # A different digest is refused (and recorded) before any precondition is read.
+    other = _agent_proposes(conn, "delete_block", {"block": keep})
+    status, wrong = window.request("/api/effects/approve", {"id": other.id, "digest": "0" * 64})
+    assert (status, wrong["error"]) == (409, "The reviewed effect differs from this one; review it again")
+    assert effects.get(conn, other.id).state == "refused"
+    # An expired proposal is recorded as expired and no longer listed.
+    late = _agent_proposes(conn, "delete_block", {"block": child}, at=effects.now() - timedelta(hours=2))
+    assert window.request("/api/effects")[1]["pending"] == []
+    assert _decide(window, "approve", late) == (409, {"error": "This proposal expired; propose it again"})
+    assert effects.get(conn, late.id).state == "expired"
+
+
+def test_agents_cannot_approve_and_inline_kinds_stay_in_their_view(workspace, window):
     conn = workspace.conn
     page, (keep, drop, child) = _page(conn)
     effect = _agent_proposes(conn, "delete_block", {"block": drop})
     with pytest.raises(effects.Forbidden):
         effects.approve(conn, effect.id, effect.digest, kinds={"delete_block"}, actor=AGENT, ctx=effect_kinds.Context(conn))
-    denied = web_effects.post(app, conn, "/api/effects/deny", {"id": effect.id})
-    assert denied["effect"]["state"] == "denied" and denied["recent"][0]["id"] == effect.id
-    with pytest.raises(APIError) as unknown:
-        web_effects.post(app, conn, "/api/effects/approve", {"id": "0" * 32, "digest": "x"})
-    assert unknown.value.status == 404
+    assert window.request("/api/effects/deny", {"id": effect.id, "digest": effect.digest}) == (
+        400, {"error": "Unknown effect request field"})
+    assert window.request("/api/effects?view=all")[0] == 400
+    status, denied = _decide(window, "deny", effect)
+    assert status == 200 and denied["effect"]["state"] == "denied" and denied["recent"][0]["id"] == effect.id
+    assert denied["effect"] == _reference(conn, effect.id)
+    assert _decide(window, "deny", effect) == (409, {"error": "This effect is already denied"})
+    status, unknown = window.request("/api/effects/approve", {"id": "0" * 32, "digest": "x"})
+    assert (status, unknown) == (404, {"error": "Effect not found"})
     # An effect reviewed in its own view (here, a paid AI request) is refused by the list's routes.
     from kitty import web_ai
 
@@ -330,12 +386,27 @@ def test_agents_cannot_approve_and_inline_kinds_stay_in_their_view(workspace, ap
     inline.register(effects.Executable(name="ai_request", title="Paid AI request", proposers=frozenset({"user"}),
                                        preconditions=lambda ctx, payload: {}, run=lambda ctx, effect: None))
     request = effects.propose(conn, "ai_request", {"prompt": "synthetic"}, actor=USER, registry=inline)
-    for path in ("/api/effects/approve", "/api/effects/execute", "/api/effects/deny"):
-        with pytest.raises(APIError) as elsewhere:
-            web_effects.post(app, conn, path, {"id": request.id, **({} if path.endswith("deny") else
-                                                                    {"digest": request.digest})})
-        assert elsewhere.value.status == 403 and "own view" in str(elsewhere.value)
+    for action in ("approve", "execute", "deny"):
+        status, elsewhere = _decide(window, action, request)
+        assert status == 403 and "own view" in elsewhere["error"]
     assert effects.get(conn, request.id).state == "proposed"
+    assert window.request("/api/effects")[1]["pending"] == []
+    # The worker's internal routes are never a page's.
+    for path in ("/api/internal/effects/execute", "/api/internal/effects/preconditions", "/api/internal/effects"):
+        assert window.request(path, {"id": request.id, "digest": request.digest}) == (404, {"error": "API route not found"})
+        assert window.request(path) == (404, {"error": "API route not found"})
+
+
+def test_an_approval_belongs_to_this_launchs_window_session(workspace, window):
+    conn = workspace.conn
+    page, (keep, drop, child) = _page(conn)
+    effect = _agent_proposes(conn, "delete_block", {"block": drop})
+    effects.approve(conn, effect.id, effect.digest, kinds={"delete_block"}, actor=Actor("user", None, "ui-" + "0" * 24),
+                    ctx=effect_kinds.Context(conn))
+    status, refused = _decide(window, "execute", effect)
+    assert (status, refused) == (403, {"error": "This approval belongs to another rika! window session"})
+    assert effects.get(conn, effect.id).state == "approved"
+    assert [block["text"] for block in block_api.get_page(conn, page)["blocks"]] == ["keep this", "drop this"]
 
 
 def _job(workspace):
@@ -347,27 +418,83 @@ def _job(workspace):
     return job.id
 
 
-def test_submit_application_shows_what_would_be_submitted_and_approving_only_records_the_decision(workspace, app):
+def test_submit_application_shows_what_would_be_submitted_and_approving_only_records_the_decision(workspace, window):
     conn = workspace.conn
     job_id = _job(workspace)
     effect = _agent_proposes(conn, "submit_application", {"job_id": job_id}, workspace.config)
-    listed = web_effects.get(app, conn, "/api/effects", {})["pending"][0]
+    listed = window.request("/api/effects")[1]["pending"][0]
+    assert listed == _reference(conn, effect.id)
     assert listed["executable"] is False and "never submits" in listed["handoff"]
     assert listed["preview"]["company"] == "Synthetic Labs"
     assert listed["preview"]["apply_url"] == "https://example.com/jobs/1/apply"
-    approved = web_effects.post(app, conn, "/api/effects/approve", {"id": effect.id, "digest": effect.digest})
+    # Its preconditions (the job and the resume choose_resume picks) are read by the worker.
+    status, approved = _decide(window, "approve", effect)
+    assert status == 200, approved
     assert approved["effect"]["state"] == "approved" and "press submit yourself" in approved["notice"].lower()
-    with pytest.raises(APIError) as typed:
-        web_effects.post(app, conn, "/api/effects/execute", {"id": effect.id, "digest": effect.digest})
-    assert typed.value.status == 400 and "no executor" in str(typed.value)
+    assert approved["notice"] == effect_kinds.SUBMIT_HANDOFF
+    status, typed = _decide(window, "execute", effect)
+    assert status == 400 and "no executor" in typed["error"]
+    assert typed["error"] == f"submit_application has no executor: {effect_kinds.SUBMIT_HANDOFF}"
     assert effects.get(conn, effect.id).state == "approved"
     assert conn.execute("SELECT COUNT(*) FROM applications").fetchone()[0] == 0
+
+
+def test_a_submit_application_whose_posting_changed_is_refused(workspace, window):
+    conn = workspace.conn
+    job_id = _job(workspace)
+    effect = _agent_proposes(conn, "submit_application", {"job_id": job_id}, workspace.config)
+    conn.execute("UPDATE jobs SET apply_url='https://example.com/jobs/1/elsewhere' WHERE id=?", (job_id,))
+    status, refused = _decide(window, "approve", effect)
+    assert status == 409 and refused["problems"] == [{"precondition": "job"}]
+    assert effects.get(conn, effect.id).state == "refused"
+
+
+def test_the_front_reads_delete_preconditions_and_digests_as_python_does(workspace, window):
+    """Parity: every approval the front grants recomputed Python's digest from its own reading
+    of the preconditions; every refusal names what `effects.changed_names` names."""
+    conn = workspace.conn
+    texts = ["plain", "é ü 😀 \u2028 \u00a0 漢字", 'quote " backslash \\ newline \n tab \t bell \x07 del \x7f', "", "x" * 5000]
+    made = block_api.create_page(conn, "Parity ✓ é", blocks=[
+        {"text": text, "children": [{"text": text[::-1], "children": [text, "leaf"]}, "sibling"]} for text in texts])
+    ids = [block["id"] for block in made["blocks"]]
+    reasons = ["", "naïve “quotes” 😀", "tab\tnew\nline \\ \""]
+    for index, block in enumerate(ids):
+        effect = _agent_proposes(conn, "delete_block", {"block": block, "reason": reasons[index % len(reasons)]})
+        status, approved = _decide(window, "approve", effect)
+        assert status == 200, (block, approved)
+
+    def python_changes(effect):
+        current = effect_kinds._delete_preconditions(effect_kinds.Context(conn), effect.payload)
+        return effects.changed_names(effect.preconditions, current)
+
+    page = made["page_id"]
+    top, nested, grandchild = ids[0], ids[1], ids[2]
+    other = ids[-1]
+    changes = {
+        "text": (lambda: block_api.update_block(conn, top, text="plain, edited"), top),
+        "type": (lambda: block_api.update_block(conn, nested, kind="to_do"), nested),
+        "grandchild": (lambda: block_api.update_block(conn, grandchild, text="edited deep"), top),
+        "child added": (lambda: block_api.append_blocks(conn, page, ["new"], parent=nested), nested),
+        "moved": (lambda: block_api.move_block(conn, ids[5], parent=other), ids[5]),
+        "deleted": (lambda: block_api.delete_block(conn, ids[10]), ids[10]),
+        "page trashed": (lambda: conn.execute("UPDATE blocks SET deleted_at='2026-01-01T00:00:00+00:00' WHERE id=?",
+                                              (page,)), ids[15]),
+    }
+    for name, (change, block) in changes.items():
+        effect = _agent_proposes(conn, "delete_block", {"block": block})
+        with acting(Actor("user")):
+            change()
+        expected = python_changes(effect)
+        assert expected, name
+        status, refused = _decide(window, "approve", effect)
+        assert status == 409 and refused["problems"] == [{"precondition": item} for item in expected], (name, refused)
+        assert effects.events(conn, effect.id)[-1]["detail"]["changed"] == expected
 
 
 # --------------------------------------------------------------------- agent surfaces
 
 
-def test_an_mcp_agent_proposes_but_has_no_way_to_approve(workspace, app):
+def test_an_mcp_agent_proposes_but_has_no_way_to_approve(workspace, window):
     import asyncio
     import json
 
@@ -391,8 +518,8 @@ def test_an_mcp_agent_proposes_but_has_no_way_to_approve(workspace, app):
     assert proposed["state"] == state["state"] == "proposed" and proposed["actor"]["kind"] == "agent"
     assert [block["text"] for block in block_api.get_page(workspace.conn, page)["blocks"]] == ["keep this", "drop this"]
     effect = effects.get(workspace.conn, proposed["id"])
-    web_effects.post(app, workspace.conn, "/api/effects/approve", {"id": effect.id, "digest": effect.digest})
-    web_effects.post(app, workspace.conn, "/api/effects/execute", {"id": effect.id, "digest": effect.digest})
+    assert _decide(window, "approve", effect)[0] == 200
+    assert _decide(window, "execute", effect)[0] == 200
     assert [block["text"] for block in block_api.get_page(workspace.conn, page)["blocks"]] == ["keep this"]
 
 
@@ -400,10 +527,11 @@ def test_kitty_effects_propose_records_an_agent_session_proposal(workspace, monk
     from typer.testing import CliRunner
 
     from kitty import cli
+    from kitty.cli import common as cli_common
 
     page, (keep, drop, child) = _page(workspace.conn)
     job_id = _job(workspace)
-    monkeypatch.setattr(cli, "_open", lambda: SimpleNamespace(
+    monkeypatch.setattr(cli_common, "open_workspace", lambda _settings: SimpleNamespace(
         settings=workspace.settings, config=workspace.config, conn=workspace.conn, close=lambda: None))
     monkeypatch.setenv("KITTY_AGENT_NAME", "omp")
     deleted = CliRunner().invoke(cli.app, ["effects", "propose-delete", drop, "--reason", "duplicate"])
@@ -473,7 +601,7 @@ def test_an_agent_tab_proposes_over_http_mcp_and_cli_and_only_the_window_approve
     from contextlib import closing
 
     from mcp import Client
-    from terminal_support import make_root, site
+    from terminal_support import front_site, make_root
     from test_agent_mediation import _agent_token
     from test_web_clients import call as ingress_call
     from typer.testing import CliRunner
@@ -484,7 +612,7 @@ def test_an_agent_tab_proposes_over_http_mcp_and_cli_and_only_the_window_approve
     from kitty.mcp_server import build_server
 
     settings = make_root(tmp_path, ("workspace",))
-    with site(settings) as running:
+    with front_site(settings) as running:
         with closing(connect(settings.db_path)) as conn:
             with acting(Actor("user")):
                 page, (keep, drop, _child) = _page(conn)

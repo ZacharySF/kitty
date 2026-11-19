@@ -11,9 +11,12 @@ Public shapes, shared by ``GET /api/rika/history`` and the stream's events:
   status:'done'|'undone'|'failed', created_at}``; its undo payload stays private;
 * approval ``{kind:'approval', id, message_id, tool, summary, detail, cost_usd,
   status:'pending'|'approved'|'rejected'|'expired', created_at}``;
-* plan ``{kind:'plan', id, message_id, request_id, items, duration,
-  note:{page_id, title}|null, status:'pending'|'running'|'applied'|'dismissed'|'failed',
-  created_at, decided_at}``; items are :func:`kitty.core.rika.dumps.public_items`.
+* plan ``{kind:'plan', plan_kind:'dump'|'confirm'|'checkin', id, message_id, request_id,
+  items, duration, note:{page_id, title}|null,
+  status:'pending'|'running'|'applied'|'dismissed'|'failed', created_at, decided_at}``;
+  items are :func:`kitty.core.rika.dumps.public_items`. ``plan_kind`` (migration 057) is
+  a brain dump's plan, a question about a date (:mod:`~kitty.core.rika.slots`) or a
+  check-in (:mod:`~kitty.core.rika.followups`).
 """
 from __future__ import annotations
 
@@ -210,19 +213,19 @@ def _plan(row: sqlite3.Row, conn: sqlite3.Connection) -> dict[str, Any]:
     if row["note_page_id"] is not None:
         page = conn.execute("SELECT id,title FROM note_page_index WHERE id=?", (row["note_page_id"],)).fetchone()
         note = {"page_id": page["id"], "title": page["title"]} if page else None
-    return {"kind": "plan", "id": row["id"], "message_id": row["message_id"], "request_id": row["request_id"],
-            "items": public_items(json.loads(row["items_json"])), "duration": row["duration_s"], "note": note,
+    return {"kind": "plan", "plan_kind": row["kind"], "id": row["id"], "message_id": row["message_id"],
+            "request_id": row["request_id"], "items": public_items(json.loads(row["items_json"])), "duration": row["duration_s"], "note": note,
             "status": row["status"], "created_at": row["created_at"], "decided_at": row["decided_at"]}
 
 
 def add_plan(conn: sqlite3.Connection, *, message_id: str, request_id: str, items: list[dict], segments: list[dict],
-             duration: float, note_page_id: int | None, note_block_id: str | None) -> dict[str, Any]:
+             duration: float, note_page_id: int | None, note_block_id: str | None, kind: str = "dump") -> dict[str, Any]:
     ident = new_id()
     with transaction(conn):
         conn.execute("INSERT INTO rika_plans(id,message_id,request_id,items_json,segments_json,duration_s,note_page_id,"
-                     "note_block_id,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                     "note_block_id,created_at,kind) VALUES(?,?,?,?,?,?,?,?,?,?)",
                      (ident, message_id, request_id, json.dumps(items), json.dumps(segments), duration, note_page_id,
-                      note_block_id, now()))
+                      note_block_id, now(), kind))
     return plan(conn, ident)
 
 
@@ -238,7 +241,7 @@ def plan_record(conn: sqlite3.Connection, ident: str) -> dict[str, Any]:
     row = conn.execute("SELECT * FROM rika_plans WHERE id=?", (ident,)).fetchone()
     if row is None:
         raise LookupError("Plan not found")
-    return {"id": row["id"], "message_id": row["message_id"], "request_id": row["request_id"],
+    return {"id": row["id"], "kind": row["kind"], "message_id": row["message_id"], "request_id": row["request_id"],
             "items": json.loads(row["items_json"]), "status": row["status"], "note_page_id": row["note_page_id"],
             "note_block_id": row["note_block_id"]}
 

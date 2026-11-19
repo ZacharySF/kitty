@@ -1,81 +1,39 @@
 <script lang="ts">
   import { onMount, untrack, tick } from "svelte";
-  import { Button, Panel } from "@nunera/bracket";
+  import { Button } from "@nunera/bracket";
   import { api, safeUrl, type TaskRecord } from "./api";
   import TaskMapAction from "./TaskMapAction.svelte";
   import CalendarDateTime from "./CalendarDateTime.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
   import { currentTheme, THEME_EVENT } from "./themes";
   import { getTheme } from "./themes/catalog";
-  import { blockText, calendarPaint, itemPaint, nextSlot, subjectOf, type Subject } from "./calendar/palette";
+  import { calendarPaint, itemPaint, nextSlot, subjectOf, type Subject } from "./calendar/palette";
   import ColorField from "./calendar/ColorField.svelte";
-  import DayAgenda, { type AgendaItem } from "./calendar/DayAgenda.svelte";
-  import RangePill, { VIEWS, type CalendarView } from "./calendar/RangePill.svelte";
+  import RangeBar, { VIEWS, type CalendarView } from "./calendar/RangeBar.svelte";
   import YearHeatmap from "./calendar/YearHeatmap.svelte";
   import MiniMonth from "./calendar/MiniMonth.svelte";
   import DayPlan from "./calendar/DayPlan.svelte";
-  import { nextFreeGap, PLAN_END, PLAN_LENGTH, PLAN_START, type DayLoad } from "./calendar/plan";
+  import { nextFreeGap, PLAN_END, PLAN_LENGTH, PLAN_START } from "./calendar/plan";
+  import { addDays, dateAt, dayLoad, localInput, placeTimed, shiftWall, slot, wallParts, weekStart,
+    type TimedPlacement } from "./calendar/dates";
   import EditDrawer from "./ui/EditDrawer.svelte";
   import Select from "./ui/Select.svelte";
+  import Popover from "./ui/Popover.svelte";
+  import ToastStack from "./ui/ToastStack.svelte";
   import CalendarQuickAdd from "./calendar/CalendarQuickAdd.svelte";
   import { wallAt, type QuickKind, type QuickPlan, type QuickSlot } from "./calendar/quickAdd";
   import QuickUnderstood from "./calendar/QuickUnderstood.svelte";
   import { parseQuickEvent, type QuickEvent } from "./calendar/quickParse";
   import { notifier } from "./notifications.svelte";
-  import GoogleConflict, { type ConflictEvent } from "./GoogleConflict.svelte";
+  import CalendarIntegrations from "./calendar/CalendarIntegrations.svelte";
+  import EventDelete from "./calendar/EventDelete.svelte";
+  import { deleteBody, deleteTarget, eventKey, lockedCalendars } from "./calendar/eventDelete";
+  import type { Cal, CalendarEvent as Event } from "./calendar/types";
   let { revision = 0, demo = false, active = true }: {
     revision?: number; demo?: boolean; active?: boolean;
   } = $props();
   const pane = useWorkspaceContext();
   const isActive = $derived(active && pane.active);
-  type Cal = {
-    id: string;
-    name: string;
-    /** Theme palette slot `c1`..`c6`, or a #rrggbb kept from before slots or from Google. */
-    color: string;
-    subject_id?: number | null;
-    timezone: string;
-    visible: number;
-    revision: number;
-    google_id?: string;
-  };
-  type Attendee = {
-    email: string;
-    name: string;
-    response: string;
-    optional?: boolean;
-  };
-  type Event = {
-    id: string;
-    revision: number;
-    title: string;
-    calendar_id: string;
-    start: string;
-    end: string;
-    timezone: string;
-    all_day: boolean;
-    occurrence: string;
-    series_start?: string;
-    series_end?: string;
-    rrule: string;
-    exdates: string[];
-    description: string;
-    location: string;
-    url: string;
-    source_key?: string;
-    source_url?: string;
-    busy: boolean;
-    privacy: string;
-    reminders: number[];
-    attendees: Attendee[];
-    attachments: { title: string; url: string }[];
-    event_type: string;
-    google_options: Record<string, unknown>;
-    subject_id?: number | null;
-    /** Picked palette slot; null follows the calendar. Ignored while a subject is linked. */
-    color?: string | null;
-    undo_id?: number;
-  };
   type Task = {
     id?: string;
     revision?: number;
@@ -109,39 +67,6 @@
     }[];
     free: { start: string; end: string }[];
   };
-  type GoogleStatus = {
-    client_present: boolean;
-    authorized: boolean;
-    tasks_authorized: boolean;
-    steps: string[];
-    selected: Cal[];
-    notice: string;
-    limits: string[];
-    public_operations: Record<string, string[]>;
-    calendar_conflicts: {
-      calendar_id: string;
-      local: {
-        name: string;
-        timezone: string;
-        color: string;
-        revision: number;
-      };
-      remote: { values: { name: string; timezone: string; color: string } };
-    }[];
-    capabilities: {
-      google: string[];
-      account_dependent: string[];
-      unsupported: Record<string, string>;
-    };
-  };
-  type Preview = {
-    row?: number;
-    event?: Record<string, unknown>;
-    exceptions?: unknown[];
-    duplicate?: boolean;
-    error?: string;
-    selected?: boolean;
-  };
   let data = $state<Snapshot>({
     calendars: [],
     events: [],
@@ -152,7 +77,50 @@
     free: [],
   });
   let view = $state<CalendarView>("week");
-  let section = $state("calendar");
+  /** The calendar's pages, opened from the title; each has an address, `#calendar/<slug>`. */
+  const SECTIONS = [
+    { id: "calendar", label: "Calendar", slug: "" },
+    { id: "tasks", label: "Tasks", slug: "tasks" },
+    { id: "activity", label: "Activity", slug: "activity" },
+    { id: "availability", label: "Availability", slug: "availability" },
+    { id: "integrations", label: "Imports & Google", slug: "imports" },
+  ] as const;
+  type Section = (typeof SECTIONS)[number]["id"];
+  const isSection = (value: unknown): value is Section => SECTIONS.some((s) => s.id === value);
+  /** The page a hash names: `undefined` when it is another view, `null` for bare `#calendar`. */
+  function sectionIn(hash: string): Section | null | undefined {
+    const [name, slug] = hash.slice(1).split("/");
+    if (name !== "calendar") return undefined;
+    return SECTIONS.find((s) => s.slug && s.slug === slug)?.id ?? null;
+  }
+  let section = $state<Section>(untrack(() => (pane.active && sectionIn(location.hash)) || "calendar"));
+  const sectionLabel = $derived(SECTIONS.find((s) => s.id === section)?.label ?? "Calendar");
+  let pagesOpen = $state(false);
+  /** Opens a page and records it, so Back returns to the previous one. */
+  function showSection(next: Section) {
+    const slug = SECTIONS.find((s) => s.id === next)?.slug;
+    const hash = slug ? `#calendar/${slug}` : "#calendar";
+    if (pane.active && location.hash !== hash) history.pushState({ ...history.state, calendarSection: next }, "", hash);
+    section = next;
+  }
+  /** Back, Forward or a typed address; a bare `#calendar` keeps the page unless its history entry names one. */
+  function followSection() {
+    if (!pane.active) return;
+    const named = sectionIn(location.hash);
+    if (named === undefined) return;
+    const remembered = history.state?.calendarSection;
+    section = named ?? (isSection(remembered) ? remembered : section);
+  }
+  /** Arrow keys, Home and End move through the pages menu. */
+  function pagesKey(event: KeyboardEvent) {
+    const items = [...(event.currentTarget as HTMLElement).querySelectorAll<HTMLElement>('[role="menuitemradio"]')];
+    const at = items.indexOf(document.activeElement as HTMLElement);
+    const moves: Record<string, number> = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: items.length - 1 };
+    const next = moves[event.key];
+    if (next === undefined) return;
+    event.preventDefault();
+    items[(next + items.length) % items.length]?.focus();
+  }
   const initialDate = new Date();
   const initialDay = `${initialDate.getFullYear()}-${String(initialDate.getMonth() + 1).padStart(2, "0")}-${String(initialDate.getDate()).padStart(2, "0")}`;
   let anchor = $state(initialDay);
@@ -167,6 +135,14 @@
   let editor = $state<Event | null>(null);
   let originalEditor: Event | null = null;
   let editBase: Event | null = null;
+  /** The event a click selected (`eventKey`): Delete or Backspace removes it; Escape or a click elsewhere lets go. */
+  let pickedEvent = $state<string | null>(null);
+  /** Whether the event drawer takes focus when it opens: not after a pointer click, which leaves it on the event. */
+  let drawerFocus = $state(true);
+  const locked = $derived(lockedCalendars(data.calendars));
+  /** How long a deleted event's Undo toast stays. */
+  const UNDO_MS = 8000;
+  let removed = $state<{ id: number; left: number; title: string }[]>([]);
   let taskEditor = $state<Task | null>(null);
   let editScope = $state("this");
   let startInput = $state("");
@@ -201,7 +177,8 @@
   let dragMessage = $state("");
   let suppressClickUntil = 0;
   let taskTrayOpen = $state(true);
-  /** Q20: the pill's quick add; a clicked slot or range prefills its time, else the selected day. */
+  let calendarsOpen = $state(false);
+  /** Q20: the header's quick add; a clicked slot or range prefills its time, else the selected day. */
   let quickOpen = $state(false);
   let quickKind = $state<QuickKind>("event");
   let quickPick = $state<QuickSlot | null>(null);
@@ -222,110 +199,10 @@
     pane.setStatus(error ? { state: "failed", detail: error } : pending > 0 ? { state: "unsaved", detail: "Saving…" } : { state: "saved" });
     return () => pane.setStatus(null);
   });
+  /** Open tasks without a time yet (undated or dated only); a task with a time is on the grid, so scheduled. */
   const trayTasks = $derived(data.tasks.filter((task) =>
-    task.status !== "done" && task.status !== "cancelled" &&
-    (!task.due || task.due.length === 10 || parts(task.due).date === selectedDate),
+    task.status !== "done" && task.status !== "cancelled" && (!task.due || task.due.length <= 10),
   ));
-  let importRows = $state<Preview[]>([]);
-  let importNotice = $state("");
-  let googleStatus = $state<GoogleStatus | null>(null);
-  let googleResult = $state<unknown>(null);
-  let googleTask = $state<TaskRecord | null>(null);
-  let linked = $state<string[]>([]);
-  let includeTasks = $state(false);
-  let syncDirection = $state("pull");
-  let sendUpdates = $state("none");
-  let syncApproved = $state(false);
-  /** A proposed Google write (kitty effects kernel): approving sends back exactly this id and digest. */
-  type ProposedEffect = { id: string; digest: string; expires_at: string };
-  type SyncPreview = {
-    calendars: Record<string, unknown>[];
-    events: Record<string, unknown>[];
-    effect: ProposedEffect;
-  };
-  let syncPreview = $state<SyncPreview | null>(null);
-  let pendingGoogle = $state<{
-    resource?: string;
-    action?: string;
-    calendar_id?: string;
-    id?: string;
-  }>({});
-  let pendingPath = $state("");
-  let remoteCalendars = $state<Record<string, unknown>[]>([]);
-  let googleConflicts = $state<
-    {
-      id: number;
-      local_revision: number;
-      local: Event & { deleted?: boolean };
-      remote: ConflictEvent | null;
-    }[]
-  >([]);
-  let resource = $state("calendarList");
-  let action = $state("list");
-  let remoteCalendarId = $state("primary");
-  let remoteId = $state("");
-  let remoteEtag = $state("");
-  let remoteData = $state("{}");
-  let remoteParams = $state("{}");
-  let meet = $state(false);
-  let notifySharing = $state(false);
-  let webhookConfirmed = $state(false);
-  type OperationReview = {
-    resource: string;
-    action: string;
-    method: string;
-    url: string;
-    params: Record<string, unknown>;
-    body: unknown;
-    if_match: string | null;
-    current: Record<string, unknown> | null;
-    recipients: string[];
-    items: Record<string, unknown>[];
-    notes: string[];
-    effect: ProposedEffect;
-  };
-  let operationRequest = $state<Record<string, unknown> | null>(null);
-  let operationReview = $state<OperationReview | null>(null);
-  let operationApproved = $state(false);
-  let clearConfirmed = $state(false);
-  const resourceActions: Record<string, string[]> = $derived(
-    googleStatus?.public_operations || {
-      calendarList: ["list", "get", "create", "update", "delete"],
-      calendars: ["get", "create", "update", "delete"],
-      events: [
-        "list",
-        "get",
-        "create",
-        "update",
-        "delete",
-        "rsvp",
-        "instances",
-      ],
-      colors: ["list", "get"],
-      settings: ["list", "get"],
-      acl: ["list", "get", "create", "update", "delete"],
-      freebusy: ["freebusy"],
-      tasklists: ["list", "get", "create", "update", "delete"],
-      tasks: ["list", "get", "create", "update", "delete"],
-    },
-  );
-  const actionLabels: Record<string, string> = {
-    list: "List resources",
-    get: "Read resource + ETag",
-    create: "Create resource",
-    update: "Patch selected fields",
-    replace: "Replace full resource (PUT)",
-    delete: "Delete resource",
-    rsvp: "Update reviewed RSVP responses",
-    instances: "List recurring instances",
-    freebusy: "Check provider availability",
-    move: "Move event/task (explicit source & target)",
-    import: "Import a private event copy (iCalUID)",
-    quickAdd: "Create event from Google-parsed text",
-    watch: "Register a public HTTPS change channel",
-    clear: "Clear primary events / completed tasks",
-    stop: "Stop a registered change channel",
-  };
   let taskDueInput = $state("");
   let taskDueTimed = $state(false);
   function modal(node: HTMLDialogElement) {
@@ -343,21 +220,15 @@
   const hours = Array.from({ length: 48 }, (_, i) => i);
   let focusedSlot = $state(18);
   let clock = $state(new Date().toISOString());
-  function scrollToMorning(node: HTMLDivElement) {
-    const frame = requestAnimationFrame(() => (node.scrollTop = 8 * 72));
+  /** Height of a half-hour row in px: an hour is 58px. */
+  const SLOT = 29;
+  /** The time grid opens with now in view (a little day above it), or 08:00 when today is not shown. */
+  function scrollToNow(node: HTMLDivElement) {
+    const minute = days.includes(today) ? Math.max(0, currentMinute - 90) : 7 * 60 + 40;
+    const frame = requestAnimationFrame(() => (node.scrollTop = Math.round((minute / 30) * SLOT)));
     return { destroy: () => cancelAnimationFrame(frame) };
   }
   let loadCounter = 0;
-  const dateAt = (value: string) => new Date(`${value}T12:00:00Z`);
-  function addDays(value: string, count: number) {
-    const d = dateAt(value);
-    d.setUTCDate(d.getUTCDate() + count);
-    return d.toISOString().slice(0, 10);
-  }
-  function weekStart(value: string) {
-    const d = dateAt(value);
-    return addDays(value, -((d.getUTCDay() + 6) % 7));
-  }
   let firstDay = $derived(
     view === "month"
       ? weekStart(anchor.slice(0, 8) + "01")
@@ -384,8 +255,20 @@
         ? anchor.slice(0, 4)
         : view === "day" || view === "plan"
           ? dateTitle(anchor, { weekday: "long", month: "long", day: "numeric", year: "numeric" })
-          : `${dateTitle(firstDay, { month: "short", day: "numeric" })} – ${dateTitle(days[days.length - 1], { month: "short", day: "numeric", year: "numeric" })}`,
+          : spanTitle(firstDay, days[days.length - 1]),
   );
+  /** "Nov 9 – 15, 2026", naming the month and the year again only where they change. */
+  function spanTitle(from: string, to: string) {
+    const start = dateTitle(from, { month: "short", day: "numeric", ...(from.slice(0, 4) === to.slice(0, 4) ? {} : { year: "numeric" }) });
+    const end = from.slice(0, 7) === to.slice(0, 7)
+      ? `${dateTitle(to, { day: "numeric" })}, ${to.slice(0, 4)}`
+      : dateTitle(to, { month: "short", day: "numeric", year: "numeric" });
+    return `${start} – ${end}`;
+  }
+  /** The display zone on one line: its UTC offset ("GMT-6"). */
+  const zoneShort = $derived(new Intl.DateTimeFormat("en", { timeZone: tz, timeZoneName: "shortOffset" })
+    .formatToParts(new Date(clock)).find((part) => part.type === "timeZoneName")?.value ?? tz);
+  const shortDay = (value: string) => dateTitle(value.slice(0, 10), { month: "short", day: "numeric" });
   function chooseDate(day: string) {
     if (!day) return;
     anchor = day;
@@ -393,29 +276,9 @@
   }
   const today = $derived(parts(clock).date);
   const currentMinute = $derived(parts(clock).hour * 60 + parts(clock).minute);
+  /** Wall parts in the display timezone unless another zone is given. */
   function parts(value: string, zoneName = tz) {
-    const values = new Intl.DateTimeFormat("en-CA", {
-      timeZone: zoneName,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      hourCycle: "h23",
-    }).formatToParts(new Date(value));
-    const get = (key: string) =>
-      values.find((p) => p.type === key)?.value || "";
-    return {
-      date: `${get("year")}-${get("month")}-${get("day")}`,
-      time: `${get("hour")}:${get("minute")}`,
-      hour: Number(get("hour")),
-      minute: Number(get("minute")),
-    };
-  }
-  function localInput(value: string, allDay: boolean, zoneName: string) {
-    if (allDay) return value;
-    const p = parts(value, zoneName);
-    return `${p.date}T${p.time}`;
+    return wallParts(value, zoneName);
   }
   async function resolveTime(value: string, zoneName = tz) {
     return (
@@ -446,9 +309,6 @@
           !(parts(e.end).date === day && parts(e.end).time === "00:00"),
     );
   }
-  /** Wall time "YYYY-MM-DDTHH:MM" moved by `minutes`. */
-  const shiftWall = (wall: string, minutes: number) =>
-    new Date(Date.parse(`${wall}:00Z`) + minutes * 60000).toISOString().slice(0, 16);
   /** Events as drawn: the one open in the drawer shows its unsaved title, calendar, place and times. */
   const shownEvents = $derived.by(() => {
     const open = editor;
@@ -496,55 +356,15 @@
         (t.due.length === 10 ? t.due : parts(t.due).date) === day,
     );
   }
-  type TimedPlacement = {
-    event: Event;
-    start: number;
-    end: number;
-    column: number;
-    columns: number;
-  };
-  function timedEvents(day: string): TimedPlacement[] {
-    const events = eventsOn(day)
-      .filter((event) => !event.all_day)
-      .map((event) => {
-        const start = parts(event.start);
-        const end = parts(event.end);
-        return {
-          event,
-          start: start.date < day ? 0 : start.hour * 60 + start.minute,
-          end: end.date > day ? 1440 : end.hour * 60 + end.minute,
-          column: 0,
-          columns: 1,
-        };
-      })
-      .sort((a, b) => a.start - b.start || b.end - a.end);
-    let group: TimedPlacement[] = [];
-    let laneEnds: number[] = [];
-    let groupEnd = 0;
-    function finishGroup() {
-      for (const placement of group) placement.columns = laneEnds.length;
-      group = [];
-      laneEnds = [];
-    }
-    for (const placement of events) {
-      if (placement.start >= groupEnd) finishGroup();
-      let column = laneEnds.findIndex((end) => end <= placement.start);
-      if (column === -1) column = laneEnds.length;
-      placement.column = column;
-      const visibleEnd = Math.min(1440, Math.max(placement.end, placement.start + 30));
-      laneEnds[column] = visibleEnd;
-      groupEnd = group.length ? Math.max(groupEnd, visibleEnd) : visibleEnd;
-      group.push(placement);
-    }
-    finishGroup();
-    return events;
+  function timedEvents(day: string): TimedPlacement<Event>[] {
+    return placeTimed(eventsOn(day).filter((event) => !event.all_day), day, tz);
   }
   const weekEvents = $derived.by(() =>
     Object.fromEntries(
       view === "week" || view === "day"
         ? days.map((day) => [day, timedEvents(day)])
         : [],
-    ) as Record<string, TimedPlacement[]>,
+    ) as Record<string, TimedPlacement<Event>[]>,
   );
   const weekTasks = $derived.by(() => {
     const slots: Record<string, Task[][]> = {};
@@ -563,11 +383,8 @@
   const calendarColor = (c: Cal) => calendarPaint(c, data.subjects).color;
   /** A task's colour when it is linked to a study subject; unlinked tasks stay muted. */
   const taskColor = (t: Task) => subjectOf(t, data.subjects)?.color;
-  /** Filled-block colours for an event and the text that reads on them. */
-  function blockStyle(e: Event) {
-    const fill = paint(e);
-    return `--block:${fill};--block-ink:${blockText(theme, fill)}`;
-  }
+  /** An event block's colour: its bar, and the tint of its fill. */
+  const blockStyle = (e: Event) => `--block:${paint(e)}`;
   const editorCalendar = $derived(editor ? data.calendars.find((c) => c.id === editor?.calendar_id) : undefined);
   /** The drawer's "Calendar colour" default: the event's calendar paint. */
   const calendarDefault = $derived(editorCalendar ? { ...calendarPaint(editorCalendar, data.subjects), name: editorCalendar.name } : null);
@@ -593,29 +410,8 @@
     }
   }
   let loadVersion = $state(0);
-  /** Event counts and booked minutes per local date; timed events split across midnight, all-day ones book no time. */
-  function dayLoad(events: Event[]): DayLoad {
-    const result: DayLoad = {};
-    const add = (day: string, minutes: number, count: number) => {
-      const entry = (result[day] ??= { minutes: 0, events: 0 });
-      entry.minutes += minutes;
-      entry.events += count;
-    };
-    for (const event of events) {
-      if (event.all_day) { add(event.start, 0, 1); continue; }
-      const start = parts(event.start);
-      const end = parts(event.end);
-      const startMinute = start.hour * 60 + start.minute;
-      const endMinute = end.hour * 60 + end.minute;
-      if (start.date === end.date) { add(start.date, endMinute - startMinute, 1); continue; }
-      add(start.date, 1440 - startMinute, 1);
-      for (let day = addDays(start.date, 1); day < end.date; day = addDays(day, 1)) add(day, 1440, 0);
-      if (endMinute) add(end.date, endMinute, 0);
-    }
-    return result;
-  }
   const yearMinutes = $derived(view === "year"
-    ? Object.fromEntries(Object.entries(dayLoad(data.events)).map(([day, load]) => [day, load.minutes]))
+    ? Object.fromEntries(Object.entries(dayLoad(data.events, tz)).map(([day, load]) => [day, load.minutes]))
     : {});
   async function loadBusy(from: string, to: string) {
     const start = await resolveTime(from + "T00:00");
@@ -623,7 +419,7 @@
     const result = await api<Snapshot>(
       `/calendar?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&timezone=${encodeURIComponent(tz)}`,
     );
-    return dayLoad(result.events);
+    return dayLoad(result.events, tz);
   }
   /** Open tasks on the plan day (undated, dated that day, or timed that day), with planned start minute. */
   const planTasks = $derived(view === "plan"
@@ -695,12 +491,24 @@
     view = next;
     anchor = selectedDate;
   }
-  let shortcutFlash = $state("");
-  let flashTimer: ReturnType<typeof setTimeout> | undefined;
   let calendarLayout = $state<HTMLDivElement>();
+  let eventDrawer = $state<EditDrawer>();
+  /**
+   * A clicked event keeps focus while its drawer is open, so Delete reaches it. Typing (or Enter) there
+   * still goes to the drawer's title, as it did when the click focused that field.
+   */
+  function typeInDrawer(event: KeyboardEvent, target: HTMLElement) {
+    if (!editor || event.ctrlKey || event.metaKey || event.altKey || (event.key.length !== 1 && event.key !== "Enter") ||
+        !target.matches("[data-event] > :first-child") || target.parentElement?.dataset.event !== eventKey(editor)) return false;
+    // Enter would press the event again and reopen the drawer over what was typed.
+    if (event.key === "Enter") event.preventDefault();
+    eventDrawer?.focusField();
+    return true;
+  }
   /** Single-key shortcuts while focus is inside the calendar: D/W/M/A/Y/P views, J/K step, T today, N add. */
   function calendarKey(event: KeyboardEvent) {
     const target = event.target as HTMLElement;
+    if (typeInDrawer(event, target)) return;
     if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || event.defaultPrevented ||
         target.isContentEditable || target.closest("input, textarea, select")) return;
     const key = event.key.toLowerCase();
@@ -716,26 +524,25 @@
     }
     else return;
     event.preventDefault();
-    shortcutFlash = key.toUpperCase();
     // The focused cell may vanish with the old view; keep focus in the calendar so keys keep working.
     void tick().then(() => {
       if (calendarLayout && !calendarLayout.contains(document.activeElement)) calendarLayout.focus({ preventScroll: true });
     });
-    clearTimeout(flashTimer);
-    flashTimer = setTimeout(() => (shortcutFlash = ""), 700);
   }
-  /** Opens the pill's quick add at `start` (a day or a wall time), ending at `end` when a range was picked. */
+  /** Opens the header's quick add at `start` (a day or a wall time), ending at `end` when a range was picked. */
   async function openQuick(start: string, end?: string) {
     if (!isActive) return;
     error = "";
     if (section !== "calendar") {
-      section = "calendar";
+      showSection("calendar");
       await tick();
     }
     selectedDate = start.slice(0, 10);
     quickPick = { start, end };
     quickOpen = true;
   }
+  /** A new timed event's length: a quick add without an end, or an all-day event dropped on a time. */
+  const EVENT_MINUTES = 60;
   /** Creates the typed event or task; `more` then opens it in the drawer. */
   async function quickSave(plan: QuickPlan, kind: QuickKind, more: boolean) {
     const calendar_id = (data.calendars.find((c) => c.visible) || data.calendars[0])?.id || "personal";
@@ -749,7 +556,7 @@
       : api<Event>("/calendar/events", {
           title: plan.title, calendar_id, timezone: tz, all_day: plan.start === null,
           start: plan.start === null ? plan.day : await at(plan.start),
-          end: plan.start === null ? plan.endDay : await at(plan.end ?? plan.start + 60),
+          end: plan.start === null ? plan.endDay : await at(plan.end ?? plan.start + EVENT_MINUTES),
           description: "", location: plan.where, url: "", rrule: plan.rrule, exdates: [], privacy: "default", busy: true,
           reminders: [10], attendees: [], attachments: [], event_type: "default", google_options: {}, subject_id: null, color: null,
         }));
@@ -774,14 +581,22 @@
     foldChanged = false;
     googleOptionsText = JSON.stringify(e.google_options, null, 2);
   }
-  function openEvent(e: Event) {
+  function openEvent(e: Event, focus = true) {
     if (!isActive || Date.now() < suppressClickUntil) return;
+    drawerFocus = focus;
     originalEditor = $state.snapshot(e);
     editBase = structuredClone(originalEditor);
     editor = structuredClone(originalEditor);
     editScope = e.rrule ? "this" : "all";
     fold = 0;
     editorFields(e);
+  }
+  /** A click selects the event for Delete and Backspace and opens its drawer; only a keyboard press moves focus there. */
+  function pickEvent(e: Event, click: MouseEvent) {
+    if (!isActive || Date.now() < suppressClickUntil) return;
+    pickedEvent = eventKey(e);
+    openEvent(e, click.detail === 0);
+    if (click.detail) (click.currentTarget as HTMLElement).focus({ preventScroll: true });
   }
   async function changeScope() {
     if (!editor || !originalEditor) return;
@@ -896,11 +711,48 @@
       return result;
     });
   }
-  async function deleteEventAtPointer(event: MouseEvent, item: Event) {
+  /**
+   * Deletes an event straight from the grid (its x, Delete or Backspace, a right-click). A single event goes
+   * at once and leaves an Undo toast; a repeating one asks, then loses this occurrence. Read-only calendars
+   * are left alone.
+   */
+  async function removeEvent(item: Event, ask = !!item.rrule) {
+    if (!isActive || pending || locked.has(item.calendar_id)) return;
+    if (ask && !confirm(`Delete ${item.rrule ? "this occurrence of " : ""}“${item.title}”?`)) return;
+    const result = (await changed(() => api<Event>(`/calendar/events/${item.id}`, deleteBody(item)))) as Event | undefined;
+    if (!result) return;
+    if (editor?.id === item.id) editor = null;
+    if (pickedEvent === eventKey(item)) pickedEvent = null;
+    if (result.undo_id) removed = [...removed, { id: result.undo_id, left: UNDO_MS, title: item.title }].slice(-3);
+    // The deleted event held focus: keep it in the calendar so its keys keep working.
+    await tick();
+    if (document.activeElement === document.body) calendarLayout?.focus({ preventScroll: true });
+  }
+  async function undo(id: number) {
+    removed = removed.filter((item) => item.id !== id);
+    await run(async () => {
+      await api("/calendar/undo", { id });
+      if (undoId === id) undoId = null;
+      await load();
+    });
+  }
+  /** Delete or Backspace removes the focused event, else the selected one; never while typing or inside a dialog. */
+  function deleteKey(event: KeyboardEvent) {
+    if ((event.key !== "Delete" && event.key !== "Backspace") || event.defaultPrevented || event.repeat ||
+        event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+    const target = event.target as HTMLElement;
+    if (!calendarLayout || !(target === document.body || calendarLayout.contains(target)) || target.isContentEditable ||
+        target.closest("input, textarea, select, dialog, [role=dialog]")) return;
+    const focused = target.closest<HTMLElement>("[data-event]")?.dataset.event;
+    if (!focused && !pickedEvent) return;
+    // Taken even when nothing is deleted (a read-only event), so Backspace never turns into Back.
     event.preventDefault();
-    if (pending || !confirm(`Delete ${item.rrule ? "this occurrence of " : ""}“${item.title}”?`)) return;
-    openEvent(item);
-    await saveEvent(true);
+    const item = deleteTarget(data.events, locked, focused, pickedEvent);
+    if (item) void removeEvent(item);
+  }
+  function deleteEventAtPointer(event: MouseEvent, item: Event) {
+    event.preventDefault();
+    void removeEvent(item, true);
   }
   async function deleteTaskAtPointer(event: MouseEvent, item: Task) {
     event.preventDefault();
@@ -930,10 +782,6 @@
     } else void openQuick(a, a === b ? undefined : shiftWall(b, 30));
     rangeStart = null;
     rangeEnd = null;
-  }
-  function slot(day: string, halfHour: number) {
-    const offset = halfHour % 48;
-    return `${addDays(day, Math.floor(halfHour / 48))}T${String(Math.floor(offset / 2)).padStart(2, "0")}:${offset % 2 ? "30" : "00"}`;
   }
   function slotKey(day: string, halfHour: number, event: KeyboardEvent) {
     const shifts: Record<string, number> = {
@@ -980,6 +828,15 @@
       }
     }
   }
+  /** Whether the dragged event may land here: anywhere, except a resize leaving its own row or grid. */
+  const eventFits = (selected: Event | null, mode: string, allDay: boolean) =>
+    !!selected && (mode !== "resize" || selected.all_day === allDay);
+  /** Calendar days a timed event touches in the display zone: an end at midnight ends the day before. */
+  function daysTouched(e: Event) {
+    const end = parts(e.end);
+    const last = end.time === "00:00" ? addDays(end.date, -1) : end.date;
+    return Math.max(1, Math.round((dateAt(last).getTime() - dateAt(parts(e.start).date).getTime()) / 86400000) + 1);
+  }
   async function dropOn(value: string, allDay: boolean, event: DragEvent) {
     event.preventDefault();
     event.stopPropagation();
@@ -987,7 +844,7 @@
     const mode = dragMode;
     const taskId = event.dataTransfer?.getData("application/kitty-task");
     const task = taskId && data.tasks.find((item) => item.id === taskId);
-    const valid = isActive && !pending && (!!task || (!!selected && allDay === selected.all_day));
+    const valid = isActive && !pending && (!!task || eventFits(selected, mode, allDay));
     finishDrag();
     if (!valid) return;
     selectedDate = value.slice(0, 10);
@@ -1005,10 +862,18 @@
     await changed(async () => {
       let start = selected.start;
       let end: string;
-      if (allDay) {
+      if (allDay && !selected.all_day) {
+        // A timed event dropped on the all-day row becomes all-day over the days it touched.
+        start = value;
+        end = addDays(value, daysTouched(selected));
+      } else if (allDay) {
         const duration = Math.round((dateAt(selected.end).getTime() - dateAt(selected.start).getTime()) / 86400000);
         if (mode === "resize") end = addDays(value, 1);
         else { start = value; end = addDays(value, duration); }
+      } else if (selected.all_day) {
+        // An all-day event dropped on a time becomes a timed event of the default length there.
+        start = await resolveTime(value, tz);
+        end = await resolveTime(shiftWall(value, EVENT_MINUTES), tz);
       } else {
         // Slots are wall-clock times in the displayed timezone, not the event's timezone.
         const target = await resolveTime(value, tz);
@@ -1024,7 +889,7 @@
         revision: selected.revision,
         scope: selected.rrule ? "this" : "all",
         occurrence: selected.occurrence,
-        changes: { start, end },
+        changes: allDay === selected.all_day ? { start, end } : { all_day: allDay, start, end },
       });
       return result;
     });
@@ -1043,16 +908,23 @@
     event.stopPropagation();
     const task = event.dataTransfer?.types.includes("application/kitty-task");
     if (!dragEvent && !task) return;
-    const valid = isActive && !pending && (task || dragEvent?.all_day === allDay);
+    const valid = isActive && !pending && (task || eventFits(dragEvent, dragMode, allDay));
     event.preventDefault();
     if (event.dataTransfer) event.dataTransfer.dropEffect = valid ? "move" : "none";
     const target = `${allDay ? "day" : "time"}:${value}`;
     dragTarget = valid ? target : "";
     invalidDropTarget = valid ? "" : target;
-    dragMessage = valid
-      ? `Drop to ${dragMode === "resize" && !task ? "resize" : "schedule"} at ${value.replace("T", " ")} (${tz})`
-      : pending ? "Wait for the current save to finish." : "Keep timed events in timed slots and all-day events in the all-day row.";
+    dragMessage = !valid
+      ? pending ? "Wait for the current save to finish." : "Resize within the same row."
+      : !task && dragMode === "resize" ? `Drop to resize at ${value.replace("T", " ")} (${tz})`
+      : !task && dragEvent && dragEvent.all_day !== allDay
+        ? allDay ? `Drop to make it all-day on ${value}` : `Drop to schedule at ${value.replace("T", " ")} for ${EVENT_MINUTES} minutes (${tz})`
+      : `Drop to schedule at ${value.replace("T", " ")} (${tz})`;
   }
+  /** A month cell is a date: a timed event dropped there keeps its time of day; anything else lands all-day. */
+  const monthDrop = (day: string): [string, boolean] =>
+    dragEvent && !dragEvent.all_day ? [`${day}T${parts(dragEvent.start).time}`, false] : [day, true];
+  const onDay = (target: string, day: string) => target === `day:${day}` || target.startsWith(`time:${day}T`);
   function leaveDrop(event: DragEvent) {
     if (event.relatedTarget instanceof Node && (event.currentTarget as HTMLElement).contains(event.relatedTarget)) return;
     dragTarget = "";
@@ -1186,355 +1058,6 @@
       await load();
     });
   }
-  async function exportFile() {
-    await run(async () => {
-      const result = await api<{ content: string; filename: string }>(
-        "/calendar/export",
-      );
-      const url = URL.createObjectURL(
-        new Blob([result.content], { type: "text/calendar" }),
-      );
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = result.filename;
-      a.click();
-      URL.revokeObjectURL(url);
-    });
-  }
-  async function importFile(event: EventTarget | null, format: string) {
-    const input = event as HTMLInputElement;
-    if (!input.files?.[0]) return;
-    await run(async () => {
-      const result = await api<{ items: Preview[]; notice: string }>(
-        "/calendar/import/preview",
-        { content: await input.files![0].text(), format, timezone: tz },
-      );
-      importRows = result.items.map((v) => ({
-        ...v,
-        selected: !!v.event && !v.duplicate && !v.error,
-      }));
-      importNotice = result.notice;
-    });
-    input.value = "";
-  }
-  async function applyImport() {
-    await run(async () => {
-      const result = await api<{
-        created: string[];
-        duplicates: string[];
-        undo_ids: number[];
-      }>("/calendar/import", {
-        confirmed: true,
-        items: importRows.filter((v) => v.selected),
-      });
-      notice = `Imported ${result.created.length}; skipped ${result.duplicates.length} duplicates.`;
-      undoId = result.undo_ids.at(-1) || null;
-      importRows = [];
-      await load();
-    });
-  }
-  async function refreshSources() {
-    await run(async () => {
-      const result = await api<{ changed: number; review_errors: unknown[] }>(
-        "/calendar/import-jobs",
-        {},
-      );
-      notice = `Refreshed ${result.changed} linked dates. ${result.review_errors.length} source dates need review.`;
-      if (result.review_errors.length) googleResult = result.review_errors;
-      await load();
-    });
-  }
-  async function loadGoogle() {
-    await run(async () => {
-      googleStatus = await api<GoogleStatus>("/calendar/google/status");
-      googleConflicts = (
-        await api<{ items: typeof googleConflicts }>(
-          "/calendar/google/conflicts",
-        )
-      ).items;
-      linked = googleStatus.selected.map((c) => c.id);
-    });
-  }
-  async function googleWork(path: string, body: unknown) {
-    pendingGoogle =
-      body && typeof body === "object" ? (body as typeof pendingGoogle) : {};
-    pendingPath = path;
-    await run(async () => {
-      const result = await api<{ task: TaskRecord }>(path, body);
-      googleTask = result.task;
-      syncApproved = false;
-      syncPreview = null;
-      googleResult = null;
-    });
-  }
-  /** A sync request; a push approves the frozen preview's proposal by its id and digest (single use). */
-  function syncRequest(full = false) {
-    return {
-      calendar_ids: linked,
-      direction: syncDirection,
-      send_updates: sendUpdates,
-      confirmed: true,
-      external_approved: syncApproved,
-      ...(syncDirection === "both" && syncPreview
-        ? { effect_id: syncPreview.effect.id, digest: syncPreview.effect.digest }
-        : {}),
-      ...(full ? { full: true } : {}),
-    };
-  }
-  async function pollTask() {
-    if (!googleTask || googleTask.status !== "running") return;
-    await run(async () => {
-      const result = await api<TaskRecord>(`/tasks/${googleTask!.id}`);
-      googleTask = result;
-      if (
-        result.status === "completed" &&
-        pendingPath === "/calendar/google/operation/preview"
-      ) {
-        operationReview = result.result as OperationReview;
-        operationApproved = false;
-        clearConfirmed = false;
-      } else if (result.status === "completed") {
-        googleResult = result.result;
-        const items = (result.result as { items?: Record<string, unknown>[] })
-          ?.items;
-        if (
-          pendingGoogle.resource === "calendarList" &&
-          pendingGoogle.action === "list" &&
-          items
-        )
-          remoteCalendars = items;
-        await loadGoogle();
-        await load();
-      }
-      if (result.status === "failed")
-        error = result.error || "Google operation failed";
-    });
-  }
-  async function uploadClient(target: EventTarget | null) {
-    const input = target as HTMLInputElement;
-    if (!input.files?.[0]) return;
-    await run(async () => {
-      await api("/calendar/google/client", {
-        confirmed: true,
-        client: await input.files![0].text(),
-      });
-      await loadGoogle();
-    });
-    input.value = "";
-  }
-  function template() {
-    const allowed = resourceActions[resource];
-    if (!allowed.includes(action)) action = allowed[0];
-    meet = false;
-    notifySharing = false;
-    if (resource === "calendars" && !remoteId) remoteId = "primary";
-    if (resource === "settings" && action === "get" && !remoteId)
-      remoteId = "timezone";
-    if (resource === "tasks" && remoteCalendarId === "primary")
-      remoteCalendarId = "@default";
-    const values: Record<string, unknown> = {
-      calendarList:
-        action === "create"
-          ? { id: "calendar-id@example.com" }
-          : action === "update"
-            ? { selected: true }
-            : {},
-      calendars:
-        action === "create" || action === "update"
-          ? { summary: "My calendar", timeZone: tz }
-          : {},
-      events:
-        action === "create" || action === "import"
-          ? {
-              summary: "New event",
-              start: { date: anchor },
-              end: { date: addDays(anchor, 1) },
-              ...(action === "import"
-                ? {
-                    iCalUID: `${crypto.randomUUID()}@kitty.local`,
-                    eventType: "default",
-                  }
-                : {}),
-            }
-          : action === "rsvp"
-            ? {
-                attendees: [
-                  { email: "you@example.com", responseStatus: "accepted" },
-                ],
-              }
-            : {},
-      acl:
-        action === "create" || action === "update"
-          ? {
-              scope: { type: "user", value: "person@example.com" },
-              role: "reader",
-            }
-          : {},
-      freebusy: {
-        timeMin: new Date().toISOString(),
-        timeMax: new Date(Date.now() + 86400000).toISOString(),
-        timeZone: tz,
-        items: [{ id: "primary" }],
-      },
-      tasks:
-        action === "create"
-          ? { title: "New task", due: anchor + "T00:00:00Z" }
-          : {},
-      tasklists: action === "create" ? { title: "New task list" } : {},
-    };
-    remoteData = JSON.stringify(values[resource] || {}, null, 2);
-    if (action === "watch")
-      remoteData = JSON.stringify(
-        {
-          id: crypto.randomUUID(),
-          type: "web_hook",
-          address: "",
-          params: { ttl: "604800" },
-        },
-        null,
-        2,
-      );
-    if (resource === "events" && action === "quickAdd") {
-      remoteData = JSON.stringify(
-        { text: `Study block on ${anchor} from 9am to 10am` },
-        null,
-        2,
-      );
-      sendUpdates = "none";
-    }
-    if (resource === "channels")
-      remoteData = JSON.stringify({ id: "", resourceId: "" }, null, 2);
-    remoteParams = JSON.stringify(
-      action === "move"
-        ? resource === "events"
-          ? { destination: "" }
-          : { destinationTasklist: remoteCalendarId }
-        : {},
-      null,
-      2,
-    );
-    operationRequest = null;
-    operationReview = null;
-    operationApproved = false;
-    clearConfirmed = false;
-    webhookConfirmed = false;
-  }
-  async function reviewOperation() {
-    let request: Record<string, unknown>;
-    try {
-      const data = JSON.parse(remoteData);
-      const params = JSON.parse(remoteParams);
-      if (
-        !data ||
-        typeof data !== "object" ||
-        Array.isArray(data) ||
-        !params ||
-        typeof params !== "object" ||
-        Array.isArray(params)
-      )
-        throw new Error("Expected JSON objects");
-      if (action === "watch" && !webhookConfirmed)
-        throw new Error(
-          "Configure and confirm your own public HTTPS receiver before preparing a watch.",
-        );
-      if (resource === "events" && action === "move" && !params.destination)
-        throw new Error(
-          "Enter the exact target calendar ID in params.destination.",
-        );
-      if (
-        resource === "events" &&
-        action === "quickAdd" &&
-        sendUpdates !== "none"
-      )
-        throw new Error(
-          "Safe quick add requires notification policy none; use structured create for reviewed attendees.",
-        );
-      request = {
-        resource,
-        action,
-        calendar_id: remoteCalendarId,
-        id: remoteId,
-        etag: remoteEtag || undefined,
-        data,
-        params: {
-          ...params,
-          ...(resource === "events" &&
-          [
-            "create",
-            "update",
-            "replace",
-            "delete",
-            "rsvp",
-            "move",
-            "quickAdd",
-          ].includes(action)
-            ? { sendUpdates }
-            : {}),
-        },
-        meet,
-        notify: notifySharing,
-        webhook_confirmed: webhookConfirmed,
-      };
-    } catch (e) {
-      error =
-        e instanceof SyntaxError
-          ? "Resource data and query parameters must be valid JSON objects."
-          : e instanceof Error
-            ? e.message
-            : String(e);
-      return;
-    }
-    operationReview = null;
-    operationApproved = false;
-    clearConfirmed = false;
-    if (["list", "get", "instances", "freebusy"].includes(action)) {
-      operationRequest = null;
-      await googleWork("/calendar/google/operation", request);
-      return;
-    }
-    operationRequest = request;
-    // The server reads the live target and returns the exact frozen request to approve.
-    await googleWork("/calendar/google/operation/preview", request);
-  }
-  async function sendReviewedOperation() {
-    if (!operationRequest || !operationReview) return;
-    // The server sends the reviewed request only if this proposal is unchanged and unused.
-    const body = {
-      ...operationRequest,
-      effect_id: operationReview.effect.id,
-      digest: operationReview.effect.digest,
-      confirmed: true,
-      external_approved: true,
-      clear_confirmed: clearConfirmed,
-    };
-    operationRequest = null;
-    operationReview = null;
-    operationApproved = false;
-    clearConfirmed = false;
-    await googleWork("/calendar/google/operation", body);
-  }
-  function useGoogleResult() {
-    if (
-      !googleResult ||
-      typeof googleResult !== "object" ||
-      Array.isArray(googleResult) ||
-      resource !== pendingGoogle.resource
-    )
-      return;
-    const result = googleResult as Record<string, unknown>;
-    if (typeof result.id !== "string" || typeof result.etag !== "string")
-      return;
-    remoteId = result.id;
-    remoteEtag = result.etag;
-    if (pendingGoogle.calendar_id) remoteCalendarId = pendingGoogle.calendar_id;
-    if (resource === "calendars" || resource === "tasklists")
-      remoteCalendarId = result.id;
-    operationRequest = null;
-    operationReview = null;
-    operationApproved = false;
-    notice =
-      "Copied the returned ID and ETag. Prepare the operation to review the exact request and live recipients.";
-  }
   $effect(() => {
     revision;
     anchor;
@@ -1578,32 +1101,6 @@
     notice = `Added to ${map.title}.`;
   }
   $effect(() => {
-    syncDirection;
-    sendUpdates;
-    linked;
-    untrack(() => {
-      syncApproved = false;
-      syncPreview = null;
-    });
-  });
-  $effect(() => {
-    if (!isActive) return;
-    const labels: Record<string, string> = {
-      tasks: "Task list",
-      activity: "Activity",
-      availability: "Availability",
-      integrations: "Imports & Google",
-    };
-    pane.setTrail("calendar", [
-      ...(section === "calendar" ? [] : [{ label: labels[section], onclick: () => (section = "calendar") }]),
-      { label: dateTitle(selectedDate, { month: "short", day: "numeric", year: "numeric" }) },
-    ], () => {
-      section = "calendar";
-      view = "week";
-      chooseDate(parts(new Date().toISOString()).date);
-    });
-  });
-  $effect(() => {
     if (!isActive) {
       rangeStart = null;
       rangeEnd = null;
@@ -1612,19 +1109,19 @@
   });
   onMount(() => {
     window.addEventListener("click", blockDragClick, true);
+    if (pane.active && sectionIn(location.hash) === null) history.replaceState({ ...history.state, calendarSection: section }, "");
+    window.addEventListener("popstate", followSection);
+    window.addEventListener("hashchange", followSection);
     const syncTheme = () => (theme = getTheme(currentTheme()));
     window.addEventListener(THEME_EVENT, syncTheme);
-    void loadGoogle();
     void loadTaskMaps();
-    const timer = setInterval(() => void pollTask(), 1200);
     const clockTimer = setInterval(() => (clock = new Date().toISOString()), 60000);
     return () => {
       window.removeEventListener("click", blockDragClick, true);
+      window.removeEventListener("popstate", followSection);
+      window.removeEventListener("hashchange", followSection);
       window.removeEventListener(THEME_EVENT, syncTheme);
-      clearInterval(timer);
       clearInterval(clockTimer);
-      clearTimeout(flashTimer);
-      pane.clearTrail("calendar");
     };
   });
 </script>
@@ -1632,6 +1129,10 @@
 <svelte:window
   onpointerup={finishRange}
   onpointercancel={() => { rangeStart = null; rangeEnd = null; }}
+  onpointerdown={(e) => {
+    // A press anywhere but an event or an open drawer or popover lets the selected event go.
+    if (pickedEvent && !(e.target as Element).closest?.("[data-event], [role=dialog]")) pickedEvent = null;
+  }}
   onkeydown={(e) => {
     if (!isActive) return;
     if (e.key === "Escape") {
@@ -1639,8 +1140,9 @@
       taskEditor = null;
       calendarEditor = null;
       rangeStart = null;
-      operationReview = null;
+      pickedEvent = null;
     }
+    deleteKey(e);
     if (
       (e.ctrlKey || e.metaKey) &&
       e.key === "z" &&
@@ -1651,85 +1153,84 @@
       )
     ) {
       e.preventDefault();
-      void run(async () => {
-        await api("/calendar/undo", { id: undoId });
-        undoId = null;
-        await load();
-      });
+      void undo(undoId);
     }
   }}
 />
 
+<!-- An event's x; a read-only calendar's events have none. -->
+{#snippet eventX(e: Event)}
+  {#if !locked.has(e.calendar_id)}<EventDelete title={e.title} ondelete={() => void removeEvent(e)} />{/if}
+{/snippet}
+
 <section class="calendar-workspace" class:drawer-open={!!editor} aria-label="Calendar workspace">
+  <!-- One row, like the rest of the app: the title (it opens the calendar's pages), then search; the grid sits on the page under a hairline. -->
   <header class="toolbar">
-    <h1 title={`Times in ${tz}`}>Calendar</h1>
+    <h1>
+      <Popover label="Calendar pages" role="menu" focus="none" bind:open={pagesOpen}
+        onopen={(node) => node.querySelector<HTMLElement>('[aria-checked="true"]')?.focus()}>
+        {#snippet trigger(props)}
+          <button type="button" class="title-button" title={`Times in ${tz}`} {...props}>{sectionLabel}</button>
+        {/snippet}
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div class="pages" onkeydown={pagesKey}>
+          {#each SECTIONS as page (page.id)}
+            <button type="button" role="menuitemradio" tabindex="-1" class="page-item" aria-checked={section === page.id}
+              onclick={() => { pagesOpen = false; showSection(page.id); }}>{page.label}</button>
+          {/each}
+        </div>
+      </Popover>
+    </h1>
     <div class="header-actions">
-      {#if undoId}<Button size="sm" disabled={pending > 0}
-        onclick={() =>
-          run(async () => {
-            await api("/calendar/undo", { id: undoId });
-            undoId = null;
-            await load();
-          })}>Undo last change</Button>{/if}
+      {#if undoId}{@const id = undoId}<Button size="sm" disabled={pending > 0} onclick={() => undo(id)}>Undo last change</Button>{/if}
+      <label class="calendar-search"><span class="sr-only">Search</span><input type="search" bind:value={search}
+        aria-label="Search" placeholder="Search events, tasks or tags" /></label>
     </div>
   </header>
-  <nav class="tabs" aria-label="Calendar sections">
-    {#each [["calendar", "Calendar"], ["tasks", "Tasks"], ["activity", "Activity"], ["availability", "Availability"], ["integrations", "Imports & Google"]] as [key, title]}
-      <Button size="sm" intent={section === key ? "primary" : "neutral"}
-        aria-pressed={section === key}
-        onclick={() => (section = key)}>{title}</Button>
-    {/each}
-  </nav>
   {#if error}<div role="alert" class="error">
       {error}<button aria-label="Dismiss error" onclick={() => (error = "")}
         >×</button
       >
     </div>{/if}
   {#if notice}<p role="status" class="notice">{notice}</p>{/if}
-  <div class="search-toolbar">
-    <label class="calendar-search"><span>Search</span><input type="search" bind:value={search}
-      placeholder="Search events, tasks or tags" /></label>
-    <Button size="sm" onclick={load} disabled={loading}>{loading ? "Refreshing…" : "Refresh"}</Button>
-  </div>
   {#if dragMessage}<p class="drop-status" role="status">{dragMessage}</p>{/if}
-  <details class="display-options">
-    <summary>Calendars & display settings</summary>
-    <div class="controls">
-      <label>Display timezone<Select kind="timezone" label="Display timezone" bind:value={tz} /></label>
-    </div>
-  <div class="calendars">
-    {#each data.calendars as c}<label style={`--calendar-color:${calendarColor(c)}`}
-        ><input
-          type="checkbox"
-          checked={!!c.visible}
-          onchange={() => toggleCalendar(c)}
-        /><span class="dot"></span>{c.name}<button
-          aria-label={`Edit ${c.name}`}
-          onclick={() => (calendarEditor = { ...c })}>⚙</button
-        ></label
-      >{/each}<button
-      onclick={() =>
-        (calendarEditor = {
-          name: "",
-          color: nextSlot(data.calendars.length),
-          subject_id: null,
-          timezone: tz,
-          visible: 1,
-        })}>＋ Calendar</button
-    >
-  </div>
-  </details>
   {#if section === "calendar"}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="calendar-layout" bind:this={calendarLayout} tabindex="-1" onkeydown={calendarKey}>
+    <RangeBar heading={rangeHeading} {view} date={anchor}
+      onview={setView} onstep={navigate} ontoday={() => chooseDate(today)} ondate={chooseDate}>
+      {#snippet tools()}
+        <Popover label="Calendars" placement="bottom-end" bind:open={calendarsOpen}>
+          {#snippet trigger(props)}
+            <button type="button" class="quiet-button" {...props}>Calendars</button>
+          {/snippet}
+          <div class="calendars">
+            {#each data.calendars as c (c.id)}
+              <div class="calendar-row" style={`--calendar-color:${calendarColor(c)}`}>
+                <label><input type="checkbox" checked={!!c.visible} onchange={() => toggleCalendar(c)} /><span class="dot"></span>{c.name}</label>
+                <button class="quiet-button" aria-label={`Edit ${c.name}`}
+                  onclick={() => { calendarsOpen = false; calendarEditor = { ...c }; }}>Edit</button>
+              </div>
+            {/each}
+            <button class="quiet-button" onclick={() => {
+              calendarsOpen = false;
+              calendarEditor = { name: "", color: nextSlot(data.calendars.length), subject_id: null, timezone: tz, visible: 1 };
+            }}>New calendar</button>
+            <label class="zone">Time zone<Select kind="timezone" label="Display timezone" bind:value={tz} /></label>
+          </div>
+        </Popover>
+      {/snippet}
+      {#snippet add()}
+        <CalendarQuickAdd label="New event" shortcut="N" {today} at={quickSlot} bind:kind={quickKind} bind:open={quickOpen} onsave={quickSave} />
+      {/snippet}
+    </RangeBar>
     <div class="calendar-main">
     {#if view === "month"}
-      <div class="month-layout">
       <div class="month-grid" role="grid" aria-label="Month calendar">
         {#each days.slice(0, 7) as day}
           <div class="weekday-label" role="columnheader">{dateTitle(day, { weekday: "short" })}</div>
         {/each}
-        {#each days as day}{@const dayEvents = eventsOn(day)}<div
+        {#each days as day}{@const dayEvents = eventsOn(day)}{@const dayTasks = tasksOn(day)}{@const more = dayEvents.length + dayTasks.length - 3}<div
             class="day-cell"
             class:selected={day === selectedDate}
             class:today={day === today}
@@ -1747,50 +1248,44 @@
             }}
             onpointerdown={(e) => { if (e.target === e.currentTarget) beginRange(day, true, e); }}
             onpointerenter={() => extendRange(day)}
-            class:drop-target={dragTarget === `day:${day}`}
-            class:invalid-drop={invalidDropTarget === `day:${day}`}
+            class:drop-target={onDay(dragTarget, day)}
+            class:invalid-drop={onDay(invalidDropTarget, day)}
             ondragleave={leaveDrop}
-            ondragover={(e) => allowDrop(day, true, e)}
-            ondrop={(e) => dropOn(day, true, e)}
+            ondragover={(e) => allowDrop(...monthDrop(day), e)}
+            ondrop={(e) => dropOn(...monthDrop(day), e)}
           >
-            <button class="day-head" onclick={() => (selectedDate = day)}
-              aria-label={`Select ${day}`} aria-pressed={day === selectedDate}>{dateTitle(day, { day: "numeric" })}</button>
-            <span class="dots" aria-hidden="true">{#each dayEvents.slice(0, 4) as e (e.id + e.occurrence)}<i style:background={paint(e)}></i>{/each}</span>
+            <div class="day-top">
+              <button class="day-head" onclick={() => (selectedDate = day)}
+                aria-label={`Select ${day}`} aria-pressed={day === selectedDate}>{dateTitle(day, { day: "numeric" })}</button>
+              {#if more > 0}<button class="day-more" onclick={() => (selectedDate = day)}>+{more} more</button>{/if}
+            </div>
+            {#each dayEvents.slice(0, 3) as e (e.id + e.occurrence)}
+              <div class="event-row" class:picked={pickedEvent === eventKey(e)} data-event={eventKey(e)}>
+                <button class="month-chip" style={`--calendar-color:${paint(e)}`} title={e.title}
+                  draggable="true" ondragstart={(event) => drag(e, event)} ondragend={finishDrag}
+                  oncontextmenu={(event) => deleteEventAtPointer(event, e)}
+                  aria-current={pickedEvent === eventKey(e) ? "true" : undefined}
+                  onclick={(click) => { selectedDate = day; pickEvent(e, click); }}>
+                  <i class="dot"></i><span class="what">{e.title}</span>{#if !e.all_day}<span class="when">{parts(e.start).time}</span>{/if}
+                </button>
+                {@render eventX(e)}
+              </div>
+            {/each}
+            {#each dayTasks.slice(0, Math.max(0, 3 - dayEvents.length)) as t (t.id)}
+              <button class="month-chip" class:completed={t.status === "done"} style:--task-color={taskColor(t)} title={t.title}
+                draggable="true" ondragstart={(event) => dragTask(t, event)} ondragend={finishDrag}
+                oncontextmenu={(event) => void deleteTaskAtPointer(event, t)}
+                onclick={() => { selectedDate = day; taskEditor = { ...t }; }}>
+                <i class="ring"></i><span class="what">{t.title}</span>{#if t.due.length > 10}<span class="when">{parts(t.due).time}</span>{/if}
+              </button>
+            {/each}
           </div>{/each}
       </div>
-      <DayAgenda
-        eyebrow={`${selectedDate === today ? "Today · " : ""}${dateTitle(selectedDate, { weekday: "short", month: "short", day: "numeric" })}`}
-        items={[
-          ...eventsOn(selectedDate).map((e): AgendaItem => ({
-            key: `event:${e.id}:${e.occurrence}`,
-            start: e.all_day ? "All day" : parts(e.start).time,
-            end: e.all_day ? "" : parts(e.end).time,
-            title: e.title + (e.rrule ? " ↻" : ""),
-            place: e.location || data.calendars.find((c) => c.id === e.calendar_id)?.name || "",
-            color: paint(e),
-            open: () => openEvent(e),
-            drag: (event) => drag(e, event),
-            dragend: finishDrag,
-          })),
-          ...tasksOn(selectedDate).map((t): AgendaItem => ({
-            key: `task:${t.id}`,
-            start: t.due.length > 10 ? parts(t.due).time : "Task",
-            end: "",
-            title: t.title,
-            place: t.status === "done" ? "Completed" : t.priority,
-            color: taskColor(t) ?? "var(--muted)",
-            task: true,
-            open: () => (taskEditor = { ...t }),
-            drag: (event) => dragTask(t, event),
-            dragend: finishDrag,
-          })),
-        ]} />
-      </div>
     {:else if view === "week" || view === "day"}
-      <div class="time-scroll" use:scrollToMorning role="region" aria-label={view === "week" ? "Week calendar" : "Day calendar"}>
-        <div class="time-grid" style={`--days:${days.length}`}>
+      <div class="time-scroll" use:scrollToNow role="region" aria-label={view === "week" ? "Week calendar" : "Day calendar"}>
+        <div class="time-grid" style={`--days:${days.length};--slot-height:${SLOT}px`}>
           <div class="time-header">
-            <div class="time-zone" title={tz}>{tz}</div>
+            <div class="time-zone" title={tz}>{zoneShort}</div>
             {#each days as day}
               <div class="time-heading" class:today={day === today} class:selected={day === selectedDate}>
                 <button class="time-date" aria-pressed={day === selectedDate}
@@ -1799,11 +1294,10 @@
                   onclick={() => (selectedDate = day)}>
                   <span>{dateTitle(day, { weekday: "short" })}</span>
                   <strong>{dateTitle(day, { day: "numeric" })}</strong>
-                  {#if day === today}<small>Today</small>{/if}
                 </button>
               </div>
             {/each}
-            <div class="all-day-label">All day<br /><span>& tasks</span></div>
+            <div class="all-day-label">All day</div>
             {#each days as day}
               <div class="all-day-cell" class:selected={day === selectedDate}
                 class:drop-target={dragTarget === `day:${day}`}
@@ -1812,30 +1306,37 @@
                 role="group" aria-label={`All-day events and tasks on ${day}`}
                 ondragover={(event) => allowDrop(day, true, event)}
                 ondrop={(event) => dropOn(day, true, event)}>
-                <button class="all-day-add" onclick={() => void openQuick(day, addDays(day, 1))}
-                  aria-label={`Create all-day event on ${day}`}>＋</button>
                 <div class="all-day-items">
                   {#each eventsOn(day).filter((e) => e.all_day) as e}
-                    <button class="event-chip all-day-event" style={`--calendar-color:${paint(e)}`}
-                      draggable="true" ondragstart={(event) => drag(e, event)} ondragend={finishDrag}
-                      oncontextmenu={(event) => void deleteEventAtPointer(event, e)}
-                      onclick={() => { selectedDate = day; openEvent(e); }} title={e.title}>{e.title}</button>
+                    <div class="event-row" class:picked={pickedEvent === eventKey(e)} data-event={eventKey(e)}>
+                      <button class="event-chip all-day-event" style={blockStyle(e)}
+                        draggable="true" ondragstart={(event) => drag(e, event)} ondragend={finishDrag}
+                        oncontextmenu={(event) => deleteEventAtPointer(event, e)}
+                        aria-current={pickedEvent === eventKey(e) ? "true" : undefined}
+                        onclick={(click) => { selectedDate = day; pickEvent(e, click); }} title={e.title}>{e.title}</button>
+                      {@render eventX(e)}
+                    </div>
                   {/each}
                   {#each tasksOn(day).filter((task) => task.due.length === 10) as t}
                     <button class="task-chip" class:completed={t.status === "done"} style:--task-color={taskColor(t)}
                       draggable="true" ondragstart={(event) => dragTask(t, event)} ondragend={finishDrag}
                       oncontextmenu={(event) => void deleteTaskAtPointer(event, t)}
                       onclick={() => { selectedDate = day; taskEditor = { ...t }; }}
-                      title={t.title}>{t.status === "done" ? "✓" : "☐"} {t.title}</button>
+                      title={t.title}><i class="ring"></i><span class="what">{t.title}</span></button>
                   {/each}
                 </div>
+                <button class="all-day-add" onclick={() => void openQuick(day, addDays(day, 1))}
+                  aria-label={`Create all-day event on ${day}`}>+</button>
               </div>
             {/each}
           </div>
           <div class="time-axis" aria-hidden="true">
-            {#each hours as halfHour}
-              <div class="time-label">{halfHour % 2 === 0 ? `${String(halfHour / 2).padStart(2, "0")}:00` : ""}</div>
+            {#each Array(24) as _, hour}
+              <div class="time-label" class:hidden={hour === 0 || (days.includes(today) && Math.abs(hour * 60 - currentMinute) < 25)}>{String(hour).padStart(2, "0")}:00</div>
             {/each}
+            {#if days.includes(today)}
+              <div class="now-time" style={`top:${currentMinute / 1440 * 100}%`}>{parts(clock).time}</div>
+            {/if}
           </div>
           {#each days as day}
             <div class="time-day" class:today={day === today} class:selected={day === selectedDate}
@@ -1871,30 +1372,33 @@
                       onclick={() => (taskEditor = { ...task })}
                       oncontextmenu={(event) => void deleteTaskAtPointer(event, task)}
                       title={`${task.title} · ${parts(task.due).time}`}>
-                      {parts(task.due).time} · ☐ {task.title}
+                      <i class="ring"></i><span class="what">{task.title}</span><span class="when">{parts(task.due).time}</span>
                     </button>
                   {/each}
                 </div>
               {/each}
               {#if day === today}
                 <div class="now-line" style={`top:${currentMinute / 1440 * 100}%`} role="img"
-                  aria-label={`Now ${parts(clock).time}`}><span class="bloom" aria-hidden="true">✿</span></div>
+                  aria-label={`Now ${parts(clock).time}`}></div>
               {/if}
               {#each weekEvents[day] as placement}
                 {@const e = placement.event}
-                <div class="event-chip timed" draggable="true" role="group" aria-label={e.title}
-                  style={`${blockStyle(e)};top:${placement.start / 1440 * 100}%;height:${Math.min(1440 - placement.start, Math.max(30, placement.end - placement.start)) / 1440 * 100}%;left:${placement.column / placement.columns * 100}%;width:${100 / placement.columns}%`}
+                <div class="event-chip timed" class:short={placement.end - placement.start < 50} draggable="true" role="group" aria-label={e.title}
+                  class:picked={pickedEvent === eventKey(e)} data-event={eventKey(e)}
+                  style={`${blockStyle(e)};top:${placement.start / 1440 * 100}%;height:calc(${Math.min(1440 - placement.start, Math.max(30, placement.end - placement.start)) / 1440 * 100}% - 2px);left:calc(${placement.column / placement.columns * 100}% + 1px);width:calc(${100 / placement.columns}% - 4px)`}
                   ondragstart={(event) => drag(e, event)} ondragend={finishDrag}>
                   <button class="timed-content" title={`${e.title} · ${label(e.start)} – ${label(e.end)}`}
-                    oncontextmenu={(event) => void deleteEventAtPointer(event, e)}
+                    oncontextmenu={(event) => deleteEventAtPointer(event, e)}
                     aria-label={`Edit ${e.title}, ${label(e.start)} – ${label(e.end)}`}
-                    onclick={() => { selectedDate = day; openEvent(e); }}>
+                    aria-current={pickedEvent === eventKey(e) ? "true" : undefined}
+                    onclick={(click) => { selectedDate = day; pickEvent(e, click); }}>
                     <strong>{e.title}</strong>
                     <span>{parts(e.start).time}–{parts(e.end).time}</span>
                   </button>
+                  {@render eventX(e)}
                   <button class="resize" draggable="true"
                     ondragstart={(event) => { event.stopPropagation(); drag(e, event, "resize"); }}
-                    aria-label={`Resize ${e.title}`}>↔</button>
+                    aria-label={`Resize ${e.title}`}></button>
                 </div>
               {/each}
             </div>
@@ -1906,11 +1410,12 @@
         onopen={(day) => { chooseDate(day); view = "day"; }} />
     {:else if view === "plan"}
       <DayPlan
-        eyebrow={`${anchor === today ? "Today · " : ""}${dateTitle(anchor, { weekday: "short", month: "short", day: "numeric" })}`}
         now={anchor === today ? currentMinute : null}
         busy={pending > 0}
-        events={timedEvents(anchor).map((p) => ({ key: `${p.event.id}:${p.event.occurrence}`, title: p.event.title,
-          start: p.start, end: p.end, column: p.column, columns: p.columns, style: blockStyle(p.event), open: () => openEvent(p.event) }))}
+        events={timedEvents(anchor).map((p) => ({ key: eventKey(p.event), title: p.event.title,
+          start: p.start, end: p.end, column: p.column, columns: p.columns, style: blockStyle(p.event),
+          picked: pickedEvent === eventKey(p.event), open: (click: MouseEvent) => pickEvent(p.event, click),
+          ondelete: locked.has(p.event.calendar_id) ? undefined : () => void removeEvent(p.event) }))}
         tasks={planTasks.map(({ task, at }) => ({ id: task.id!, title: task.title, priority: task.priority,
           done: task.status === "done", at, color: taskColor(task), open: () => (taskEditor = { ...task }) }))}
         onplan={(id) => void planTask(id)}
@@ -1918,69 +1423,55 @@
         ontoggle={(id) => { const task = data.tasks.find((t) => t.id === id); if (task) void taskStatus(task, task.status === "done" ? "todo" : "done"); }} />
     {:else}
       <div class="agenda" role="region" aria-label="Agenda">
-        {#each days as day}{#if eventsOn(day).length || tasksOn(day).length}<section
-            >
-              <h2><button class="agenda-date" onclick={() => (selectedDate = day)}>{dateTitle(day, { weekday: "long", month: "short", day: "numeric" })}</button></h2>
-              {#each eventsOn(day) as e}<button
-                  class="agenda-event"
-                  style={`--calendar-color:${paint(e)}`}
-                  onclick={() => openEvent(e)}
-                  ><span
-                    >{e.all_day
-                      ? "All day"
-                      : `${label(e.start)} → ${label(e.end)}`}</span
-                  ><strong>{e.title}</strong><span>{e.location}</span></button
-                >{/each}{#each tasksOn(day) as t}<button
-                  class="agenda-event"
-                  style:--calendar-color={taskColor(t)}
-                  onclick={() => (taskEditor = { ...t })}
-                  ><span>Task · {t.priority} · {t.status}</span><strong
-                    >{t.title}</strong
-                  ></button
-                >{/each}
-            </section>{/if}{/each}{#if !data.events.length && !data.tasks.some((t) => t.due)}<p
-          >
-            Nothing scheduled.
-          </p>{/if}
+        {#each days as day}{#if eventsOn(day).length || tasksOn(day).length}
+          <section class:today={day === today}>
+            <h2><button class="agenda-date" onclick={() => (selectedDate = day)}
+              aria-label={dateTitle(day, { weekday: "long", month: "short", day: "numeric" })}>
+              <strong>{dateTitle(day, { day: "numeric" })}</strong>
+              <span>{dateTitle(day, { weekday: "short" })}, {dateTitle(day, { month: "short" })}</span>
+            </button></h2>
+            <div class="agenda-items">
+              {#each eventsOn(day) as e}
+                <div class="event-row" class:picked={pickedEvent === eventKey(e)} data-event={eventKey(e)}>
+                  <button class="agenda-event" style={`--calendar-color:${paint(e)}`}
+                    aria-current={pickedEvent === eventKey(e) ? "true" : undefined} onclick={(click) => pickEvent(e, click)}>
+                    <span class="when">{e.all_day ? "All day" : `${parts(e.start).time} – ${parts(e.end).time}`}</span>
+                    <i class="dot"></i>
+                    <strong>{e.title}</strong>
+                    {#if e.location}<span class="where">{e.location}</span>{/if}
+                  </button>
+                  {@render eventX(e)}
+                </div>
+              {/each}
+              {#each tasksOn(day) as t}
+                <button class="agenda-event" class:completed={t.status === "done"} style:--task-color={taskColor(t)} onclick={() => (taskEditor = { ...t })}>
+                  <span class="when">{t.due.length > 10 ? parts(t.due).time : "Task"}</span>
+                  <i class="ring"></i>
+                  <strong>{t.title}</strong>
+                </button>
+              {/each}
+            </div>
+          </section>
+        {/if}{/each}
+        {#if !data.events.length && !data.tasks.some((t) => t.due)}<p class="hint">Nothing scheduled.</p>{/if}
       </div>
     {/if}
-    <RangePill heading={rangeHeading} {view} date={anchor} flash={shortcutFlash}
-      onview={setView} onstep={navigate} ontoday={() => chooseDate(today)} ondate={chooseDate}>
-      {#snippet add()}
-        <CalendarQuickAdd label="Add event or task" round {today} at={quickSlot} bind:kind={quickKind} bind:open={quickOpen} onsave={quickSave} />
-      {/snippet}
-    </RangePill>
     </div>
     <aside class="selected-plan" aria-label="Selected date plan">
       <MiniMonth selected={selectedDate} {today} refresh={loadVersion} {loadBusy} onpick={chooseDate} />
-      <Button size="sm" aria-expanded={taskTrayOpen} aria-controls={`${pane.id}-calendar-task-tray`}
-        onclick={() => (taskTrayOpen = !taskTrayOpen)}>{taskTrayOpen ? "Hide task tray" : "Open task tray"} · {trayTasks.length}</Button>
-      {#if taskTrayOpen}
-        <section id={`${pane.id}-calendar-task-tray`} class="task-tray" aria-label="Tasks to schedule"
-          title="Drag a task onto a time slot to schedule it">
-          <h3>Tasks to schedule</h3>
-          <div class="tray-list">
-            {#each trayTasks as task}
-              <button class="tray-task" draggable="true" style:--task-color={taskColor(task)}
-                ondragstart={(event) => dragTask(task, event)} ondragend={finishDrag}
-                onclick={() => (taskEditor = { ...task })}>
-                <strong>{task.title}</strong>
-                <span>{task.due ? label(task.due, task.due.length === 10) : "Unscheduled"} · {task.priority}</span>
-              </button>
-            {:else}<p class="hint">No unscheduled or selected-day tasks.</p>{/each}
-          </div>
-        </section>
-      {/if}
-      <Panel title={dateTitle(selectedDate, { weekday: "long", month: "short", day: "numeric" })}
-        readout="DAY PLAN">
-        {#if view !== "month"}
+      <section class="rail-section" aria-label="Selected day">
+        <h3>{dateTitle(selectedDate, { weekday: "long", month: "short", day: "numeric" })}</h3>
         {#each eventsOn(selectedDate) as e}
-          <button class="plan-event" style={`--calendar-color:${paint(e)}`} onclick={() => openEvent(e)}
-            oncontextmenu={(event) => void deleteEventAtPointer(event, e)}>
-            <span>{e.all_day ? "All day" : `${parts(e.start).time} – ${parts(e.end).time}`}</span>
-            <strong>{e.title}</strong>
-            {#if e.location}<span>{e.location}</span>{/if}
-          </button>
+          <div class="event-row" class:picked={pickedEvent === eventKey(e)} data-event={eventKey(e)}>
+            <button class="plan-event" style={`--calendar-color:${paint(e)}`}
+              aria-current={pickedEvent === eventKey(e) ? "true" : undefined} onclick={(click) => pickEvent(e, click)}
+              oncontextmenu={(event) => deleteEventAtPointer(event, e)}>
+              <i class="dot"></i>
+              <strong>{e.title}</strong>
+              <span>{e.all_day ? "All day" : `${parts(e.start).time} – ${parts(e.end).time}`}{e.location ? ` · ${e.location}` : ""}</span>
+            </button>
+            {@render eventX(e)}
+          </div>
         {/each}
         {#each tasksOn(selectedDate) as t}
           <div class="plan-task" class:completed={t.status === "done"}>
@@ -1995,10 +1486,30 @@
           </div>
         {/each}
         {#if !eventsOn(selectedDate).length && !tasksOn(selectedDate).length}
-          <div class="day-empty"><p class="hint">Nothing planned.</p></div>
+          <p class="hint">Nothing planned.</p>
         {/if}
+      </section>
+      <section class="rail-section" aria-label="Tasks to schedule" title="Drag a task onto a time slot to schedule it">
+        <header>
+          <h3>Tasks to schedule</h3>
+          {#if trayTasks.length}<span class="count">{trayTasks.length}</span>{/if}
+          <button class="quiet-button" aria-expanded={taskTrayOpen} aria-controls={`${pane.id}-calendar-task-tray`}
+            onclick={() => (taskTrayOpen = !taskTrayOpen)}>{taskTrayOpen ? "Hide" : "Show"}</button>
+        </header>
+        {#if taskTrayOpen}
+          <div id={`${pane.id}-calendar-task-tray`} class="tray-list">
+            {#each trayTasks as task}
+              <button class="tray-task" draggable="true" style:--task-color={taskColor(task)}
+                ondragstart={(event) => dragTask(task, event)} ondragend={finishDrag}
+                onclick={() => (taskEditor = { ...task })}>
+                <i class="ring"></i>
+                <strong>{task.title}</strong>
+                <span>{task.due ? (task.due.length === 10 ? shortDay(task.due) : label(task.due)) : "No date"}{task.priority === "normal" ? "" : ` · ${task.priority}`}</span>
+              </button>
+            {:else}<p class="hint">Nothing to schedule.</p>{/each}
+          </div>
         {/if}
-      </Panel>
+      </section>
     </aside>
     </div>
   {:else if section === "tasks"}
@@ -2077,489 +1588,28 @@
           onclick={() => void openQuick(localInput(free.start, false, tz), localInput(free.end, false, tz))}>Schedule here</button
         >
       </div>{/each}
-  {:else if section === "integrations"}
-    <section class="panel">
-      <h2>Import / export</h2>
-      <div class="controls">
-        <label class="file"
-          >Preview ICS<input
-            type="file"
-            accept=".ics,text/calendar"
-            onchange={(e) => importFile(e.target, "ics")}
-          /></label
-        ><label class="file" title="CSV headers: title,date; optional job_id,kind,timezone,url,description"
-          >Preview CSV<input
-            type="file"
-            accept=".csv,text/csv"
-            onchange={(e) => importFile(e.target, "csv")}
-          /></label
-        ><button onclick={exportFile}>Export ICS</button><button
-          onclick={refreshSources}
-          >Refresh linked application / opportunity dates</button
-        >
-      </div>
-      {#if importRows.length}<p>{importNotice}</p>
-        <div class="import-review">
-          {#each importRows as row}<label
-              ><input
-                type="checkbox"
-                bind:checked={row.selected}
-                disabled={!!row.error || !!row.duplicate}
-              /><span
-                >{row.row ? `Row ${row.row}: ` : ""}{row.event?.title ||
-                  row.error}{row.duplicate
-                  ? " · existing UID/source, skipped"
-                  : ""}<small
-                  >{String(row.event?.start || "")} → {String(
-                    row.event?.end || "",
-                  )}
-                  {String(row.event?.timezone || "")}
-                  {String(row.event?.rrule || "")}</small
-                ></span
-              ></label
-            >{/each}
-        </div>
-        <button
-          onclick={applyImport}
-          disabled={!importRows.some((v) => v.selected)}
-          >Confirm selected import</button
-        ><button onclick={() => (importRows = [])}>Cancel</button>{/if}
-    </section>
-    <section class="panel">
-      <h2 title="Due reminders arrive as toasts and in the bell while rika! runs; quiet hours live in Settings">Reminder notifications</h2>
-      <label
-        ><input
-          type="checkbox"
-          checked={notifier.system}
-          onchange={(event) => {
-            event.currentTarget.checked = notifier.system;
-            void notifier.toggleSystem();
-          }}
-        />Also show system notifications</label
-      >
-    </section>
-    <section class="panel">
-      <h2>Google Calendar · optional</h2>
-      {#if demo}<p class="notice">Demo mode: Google calls are blocked.</p>{/if}{#if googleStatus}<p>{googleStatus.notice}</p>
-        <p>
-          Client: {googleStatus.client_present
-            ? "stored privately"
-            : "not configured"} · Account: {googleStatus.authorized
-            ? "authorized"
-            : "not authorized"} · Tasks: {googleStatus.tasks_authorized
-            ? "authorized"
-            : "not authorized"}
-        </p>
-        <ol>
-          {#each googleStatus.steps as step}<li>{step}</li>{/each}
-        </ol>
-        <div class="controls">
-          <label class="file"
-            >Upload Desktop client JSON<input
-              type="file"
-              accept=".json,application/json"
-              disabled={demo || googleStatus.authorized}
-              onchange={(e) => uploadClient(e.target)}
-            /></label
-          ><label
-            ><input type="checkbox" bind:checked={includeTasks} />Also request
-            Google Tasks scope</label
-          ><button
-            disabled={demo ||
-              !googleStatus.client_present ||
-              googleTask?.status === "running"}
-            onclick={() =>
-              googleWork("/calendar/google/authorize", {
-                confirmed: true,
-                include_tasks: includeTasks,
-              })}>Review browser consent & authorize</button
-          ><button
-            disabled={demo || !googleStatus.authorized}
-            onclick={() =>
-              run(async () => {
-                if (
-                  window.confirm(
-                    "Remove the separate Calendar token? Local data and Gmail token stay unchanged.",
-                  )
-                ) {
-                  await api("/calendar/google/disconnect", {
-                    confirmed: true,
-                    revoke: false,
-                  });
-                  await loadGoogle();
-                }
-              })}>Disconnect locally</button
-          ><button
-            disabled={demo || !googleStatus.authorized}
-            onclick={() =>
-              run(async () => {
-                if (
-                  window.confirm(
-                    "Revoke this separate Calendar authorization at Google and remove its token?",
-                  )
-                ) {
-                  await api("/calendar/google/disconnect", {
-                    confirmed: true,
-                    revoke: true,
-                  });
-                  await loadGoogle();
-                }
-              })}>Revoke access</button
-          >
-        </div>
-        <details>
-          <summary>Capability inventory & account blockers</summary>
-          <p>
-            Available API resources: {googleStatus.capabilities.google.join(
-              ", ",
-            )}.
-          </p>
-          <p>
-            Account/permission dependent: {googleStatus.capabilities.account_dependent.join(
-              ", ",
-            )}. Google denial is reported, never simulated.
-          </p>
-          {#each Object.entries(googleStatus.capabilities.unsupported) as [name, reason]}<p
-            >
-              <strong>{name}:</strong>
-              {reason}
-            </p>{/each}
-          {#each googleStatus.limits as limit}<p>{limit}</p>{/each}
-        </details>{/if}
-      <h3>Select calendars & synchronize</h3>
-      <button
-        disabled={demo ||
-          !googleStatus?.authorized ||
-          googleTask?.status === "running"}
-        onclick={() =>
-          googleWork("/calendar/google/operation", {
-            resource: "calendarList",
-            action: "list",
-          })}>List Google calendars</button
-      >{#each remoteCalendars as c}<div class="free-row">
-          <span>{String(c.summary)} · {String(c.accessRole || "")}</span><button
-            disabled={demo ||
-              !googleStatus?.authorized ||
-              googleTask?.status === "running" ||
-              googleStatus?.selected.some(
-                (selected) => selected.google_id === c.id,
-              )}
-            onclick={() =>
-              googleWork("/calendar/google/select", {
-                google_id: c.id,
-                confirmed: true,
-              })}>Link locally</button
-          >
-        </div>{/each}
-      <div class="controls">
-        {#each googleStatus?.selected || [] as c}<label
-            ><input
-              type="checkbox"
-              checked={linked.includes(c.id)}
-              onchange={() =>
-                (linked = linked.includes(c.id)
-                  ? linked.filter((id) => id !== c.id)
-                  : [...linked, c.id])}
-            />{c.name}</label
-          ><button
-            disabled={demo || googleTask?.status === "running"}
-            onclick={() =>
-              run(async () => {
-                if (
-                  !window.confirm(
-                    `Unlink ${c.name}? Local events remain; no Google deletion is made.`,
-                  )
-                )
-                  return;
-                await api("/calendar/google/unselect", {
-                  calendar_id: c.id,
-                  revision: c.revision,
-                  confirmed: true,
-                });
-                await loadGoogle();
-                await load();
-              })}>Unlink {c.name}</button
-          >{/each}
-      </div>
-      <div class="controls">
-        <label title="Pull reviews local conflicts; Pull + push also sends local changes"
-          >Direction<Select label="Direction" bind:value={syncDirection}
-            options={[{ value: "pull", label: "Pull from Google" }, { value: "both", label: "Pull + push" }]} /></label
-        ><label title="Google may still notify on its own"
-          >Attendee email updates<Select label="Attendee email updates" bind:value={sendUpdates}
-            options={[{ value: "none", label: "None" }, { value: "all", label: "All attendees" }, { value: "externalOnly", label: "External only" }]} /></label
-        >
-      </div>
-      <button
-        disabled={demo ||
-          !googleStatus?.authorized ||
-          !linked.length ||
-          googleTask?.status === "running"}
-        onclick={() =>
-          run(async () => {
-            syncPreview = await api<SyncPreview>("/calendar/google/preview", {
-              calendar_ids: linked,
-              send_updates: sendUpdates,
-            });
-            syncApproved = false;
-          })}>Prepare all pending writes & recipients for review</button
-      >
-      {#if syncPreview}<details open>
-          <summary
-            >Frozen sync preview · all dates, including deleted events</summary
-          >
-          <pre class="results">{JSON.stringify(
-              { calendars: syncPreview.calendars, events: syncPreview.events },
-              null,
-              2,
-            )}</pre>
-        </details>{/if}
-      <label
-        ><input
-          type="checkbox"
-          bind:checked={syncApproved}
-          disabled={syncDirection === "both" && !syncPreview}
-        />{syncDirection === "both"
-          ? "I reviewed every pending write/recipient above and approve this notification policy."
-          : "I approve fetching Google data. Local conflicts require review; no external changes are made."}</label
-      >
-      <div class="controls">
-        <button
-          disabled={demo ||
-            !googleStatus?.authorized ||
-            (syncDirection === "both" && !syncPreview) ||
-            !linked.length ||
-            !syncApproved ||
-            googleTask?.status === "running"}
-          onclick={() =>
-            googleWork("/calendar/google/sync", syncRequest())}
-          >Run reviewed sync</button
-        ><button
-          disabled={demo ||
-            !googleStatus?.authorized ||
-            (syncDirection === "both" && !syncPreview) ||
-            !linked.length ||
-            !syncApproved ||
-            googleTask?.status === "running"}
-          onclick={() =>
-            googleWork("/calendar/google/sync", syncRequest(true))}
-          >Full refresh</button
-        >
-      </div>
-      {#each googleStatus?.calendar_conflicts || [] as conflict}<article
-          class="conflict"
-        >
-          <h3>Calendar settings conflict</h3>
-          <ul class="setting-diff" aria-label="Settings that differ">
-            {#each [["Name", "name"], ["Timezone", "timezone"], ["Colour", "color"]] as const as [label, key]}
-              {#if conflict.local[key] !== conflict.remote.values[key]}<li>
-                  <span>{label}</span><span>kitty: {conflict.local[key]}</span><span>Google: {conflict.remote.values[key]}</span>
-                </li>{/if}
-            {/each}
-          </ul>
-          {#each [["local", "Keep local settings (push later)"], ["remote", "Use Google settings"]] as [choice, title]}
-            <button
-              disabled={demo || googleTask?.status === "running"}
-              onclick={() => {
-                if (window.confirm(`${title}?`))
-                  void googleWork("/calendar/google/resolve-calendar", {
-                    calendar_id: conflict.calendar_id,
-                    revision: conflict.local.revision,
-                    choice,
-                    confirmed: true,
-                  });
-              }}>{title}</button
-            >{/each}
-        </article>{/each}
-      {#if googleConflicts.length}<h3>
-          Conflicts · never silently overwritten
-        </h3>
-        {#each googleConflicts as c (c.id)}{@const fill = paint(c.local)}<GoogleConflict
-            conflict={c}
-            {fill}
-            ink={blockText(theme, fill)}
-            disabled={demo || googleTask?.status === "running"}
-            onresolve={(choice) =>
-              void googleWork("/calendar/google/resolve", {
-                id: c.id,
-                revision: c.local.revision,
-                choice,
-                confirmed: true,
-              })}
-          />{/each}{/if}
-      <details class="google-tools">
-        <summary title="List or get first, copy the returned ID and ETag, edit exact JSON, then review"
-          >Google resource editor</summary
-        >
-        <div class="controls">
-          <label
-            >Resource<Select kind="list" label="Resource" bind:value={resource} onchange={template}
-              options={Object.keys(resourceActions).map((r) => ({ value: r, label: r }))} /></label
-          ><label
-            >Action<Select kind="list" label="Action" bind:value={action} onchange={template}
-              options={(resourceActions[resource] ?? []).map((a) => ({ value: a, label: actionLabels[a] || a }))} /></label
-          ><button onclick={template}>Fill example for resource</button>
-        </div>
-        <div class="form-grid">
-          <label
-            >Source calendar ID / source Tasklist ID<input
-              bind:value={remoteCalendarId}
-            /></label
-          ><label
-            >Exact resource / event / task / ACL ID<input
-              bind:value={remoteId}
-            /></label
-          ><label>ETag from latest read<input bind:value={remoteEtag} /></label
-          ><label
-            ><input
-              type="checkbox"
-              bind:checked={meet}
-              disabled={resource !== "events" ||
-                !["create", "update", "replace", "import"].includes(action)}
-            />Generate Google Meet (event create/update/replace/import)</label
-          ><label
-            ><input
-              type="checkbox"
-              bind:checked={notifySharing}
-              disabled={resource !== "acl" || ["list", "get"].includes(action)}
-            />Send sharing notifications (ACL changes)</label
-          >
-        </div>
-        {#if googleResult && typeof googleResult === "object" && !Array.isArray(googleResult) && "etag" in googleResult && pendingGoogle.resource === resource}
-          <button onclick={useGoogleResult}
-            >Copy returned ID & ETag into this editor</button
-          >{/if}
-        <p class="hint">Changes are previewed against live Google and sent only after approval.</p>
-        {#if action === "watch"}<p class="hint">Needs your own public HTTPS webhook; channels expire unrenewed.</p>
-          <label
-            ><input type="checkbox" bind:checked={webhookConfirmed} />
-            I control and configured the public HTTPS receiver in data.address and
-            reviewed what Google may deliver.</label
-          >{/if}
-        {#if resource === "events" && action === "quickAdd"}<p class="hint">Google has no dry run; sent without attendees or notifications.</p>{/if}
-        <label title="Move: params.destination (Calendar) or destinationTasklist/parent/previous (Tasks). Import needs iCalUID, start and end. Clear is not undoable locally."
-          >Exact resource data (JSON)<textarea
-            rows="10"
-            bind:value={remoteData}
-            spellcheck="false"
-          ></textarea></label
-        ><label
-          >Query parameters (JSON)<textarea
-            rows="3"
-            bind:value={remoteParams}
-            spellcheck="false"
-          ></textarea></label
-        ><button
-          disabled={demo ||
-            !googleStatus?.authorized ||
-            googleTask?.status === "running"}
-          onclick={reviewOperation}
-          >{["list", "get", "instances", "freebusy"].includes(action)
-            ? "Run read-only request"
-            : "Prepare exact change for review"}</button
-        >{#if !googleStatus?.authorized}<p class="hint">
-            {demo
-              ? "External Google calls are disabled in demo mode."
-              : "Not connected: authorize Calendar above first."}
-          </p>{/if}{#if operationReview && operationRequest}<div
-            class="review"
-            role="group"
-            aria-labelledby={`${pane.id}-operation-review-title`}
-          >
-            <h4 id={`${pane.id}-operation-review-title`}>
-              Frozen request prepared from live Google state
-            </h4>
-            <dl>
-              <dt>Request</dt>
-              <dd>
-                <code>{operationReview.method} {operationReview.url}</code>
-              </dd>
-              <dt>Query parameters</dt>
-              <dd><code>{JSON.stringify(operationReview.params)}</code></dd>
-              <dt>If-Match ETag</dt>
-              <dd>
-                {operationReview.if_match ||
-                  "none (not an ETag-checked change)"}
-              </dd>
-              <dt>Target</dt>
-              <dd>
-                {operationReview.current
-                  ? JSON.stringify(operationReview.current)
-                  : "new resource"}
-              </dd>
-              <dt>
-                Recipients Google may notify ({operationReview.recipients
-                  .length})
-              </dt>
-              <dd>
-                {#if operationReview.recipients.length}<ul>
-                    {#each operationReview.recipients as email}<li>
-                        {email}
-                      </li>{/each}
-                  </ul>{:else}none listed{/if}
-              </dd>
-            </dl>
-            <p>Exact request body:</p>
-            <pre>{operationReview.body === null
-                ? "(empty body)"
-                : JSON.stringify(operationReview.body, null, 2)}</pre>
-            {#each operationReview.notes as note}<p class="hint">
-                {note}
-              </p>{/each}
-            {#if operationReview.action === "clear"}<p>
-                {operationReview.items.length}
-                {operationReview.resource === "calendars"
-                  ? "events"
-                  : "completed tasks"} affected:
-              </p>
-              {#if operationReview.items.length}<ol class="results">
-                  {#each operationReview.items as item}<li>
-                      {String(item.summary ?? item.title ?? "(untitled)")} ·
-                      <code>{String(item.id)}</code>
-                    </li>{/each}
-                </ol>
-                <label
-                  ><input type="checkbox" bind:checked={clearConfirmed} />I
-                  reviewed the full list above and confirm clearing all {operationReview
-                    .items.length} items.</label
-                >{/if}{/if}
-            <label
-              ><input type="checkbox" bind:checked={operationApproved} />I
-              approve this exact external request, recipients, sharing
-              role/scope and possible Google emails. Paid services/attachment
-              permissions remain provider-controlled.</label
-            ><button
-              disabled={!operationApproved ||
-                googleTask?.status === "running" ||
-                (operationReview.items.length > 0 && !clearConfirmed)}
-              onclick={() => void sendReviewedOperation()}
-              >Send reviewed request</button
-            >
-          </div>{/if}
-      </details>
-      {#if googleTask}<p role="status">
-          Google operation: {googleTask.kind} · {googleTask.status}{googleTask.status ===
-          "running"
-            ? " · waiting for Google / browser consent"
-            : ""}
-        </p>{/if}{#if googleResult}<details open>
-          <summary>Google / import operation result</summary>
-          <pre class="results">{JSON.stringify(googleResult, null, 2)}</pre>
-        </details>{/if}
-      <a
-        href="https://calendar.google.com/calendar/u/0/r"
-        target="_blank"
-        rel="noreferrer"
-      >
-        Open Google Calendar for consumer-only features such as appointment
-        schedules</a
-      >
-    </section>
   {/if}
+  <CalendarIntegrations visible={section === "integrations"} active={isActive} {demo} {tz} {anchor} {theme} {paint}
+    {run} {load} onerror={(message) => (error = message)} onnotice={(message) => (notice = message)}
+    onundo={(id) => (undoId = id)} />
 </section>
 
+{#if isActive}
+  <ToastStack items={removed} total={UNDO_MS} label="Calendar changes" offset="var(--rika-toasts, 0px)" publish="--calendar-toasts"
+    ondismiss={(item) => (removed = removed.filter((other) => other.id !== item.id))}>
+    {#snippet toast(item)}
+      <div class="top">
+        <span>Event deleted</span>
+        <button class="x" aria-label="Dismiss" onclick={() => (removed = removed.filter((other) => other.id !== item.id))}>×</button>
+      </div>
+      <strong>{item.title}</strong>
+      <div class="acts"><button class="pill primary" onclick={() => undo(item.id)}>Undo</button></div>
+    {/snippet}
+  </ToastStack>
+{/if}
+
 {#if editor && isActive}
-  <EditDrawer title="Event details" accent={paint(editor)} closeLabel="Close event editor"
+  <EditDrawer bind:this={eventDrawer} title="Event details" accent={paint(editor)} closeLabel="Close event editor" autofocus={drawerFocus}
     meta={`${data.calendars.find((c) => c.id === editor?.calendar_id)?.name ?? "Calendar"} · ${startInput ? dateTitle(startInput.slice(0, 10), { weekday: "short", month: "short", day: "numeric" }) : ""}`}
     onclose={() => (editor = null)}>
       {#if error}<p class="error" role="alert">{error}</p>{/if}
@@ -2878,7 +1928,6 @@
   h1,
   h2,
   h3,
-  h4,
   p {
     margin: 0 0 0.65rem;
   }
@@ -2926,16 +1975,12 @@
     max-width: 100%;
     box-sizing: border-box;
   }
-  input[type="checkbox"] {
-    accent-color: var(--accent);
-  }
   label {
     display: flex;
     align-items: center;
     gap: 0.5rem;
   }
-  form > label,
-  .google-tools > label {
+  form > label {
     display: flex;
     align-items: stretch;
     flex-direction: column;
@@ -2945,28 +1990,72 @@
     resize: vertical;
   }
   .toolbar,
-  .controls,
-  .tabs,
-  .calendars,
   footer {
     display: flex;
     align-items: center;
     gap: 0.55rem;
     flex-wrap: wrap;
   }
+  .toolbar {
+    flex-wrap: nowrap;
+    gap: 24px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--hairline, var(--border));
+  }
   .toolbar h1 {
-    margin-right: auto;
+    margin: 0;
   }
   .hint {
     color: var(--muted);
     font-size: 0.85rem;
   }
-  .tabs {
-    border-bottom: 1px solid var(--border);
-    padding-bottom: 0.6rem;
+  /* The title opens the calendar's pages: the heading's own words with a small chevron, no box until hovered. */
+  .title-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    margin-left: -10px;
+    padding: 2px 10px;
+    border: 0;
+    border-radius: var(--r-control);
+    background: transparent;
+    font: inherit;
+    white-space: nowrap;
   }
-  .header-actions,
-  .search-toolbar {
+  .title-button::after {
+    content: "";
+    width: 7px;
+    height: 7px;
+    margin-top: -5px;
+    border-right: 2px solid var(--muted);
+    border-bottom: 2px solid var(--muted);
+    transform: rotate(45deg);
+  }
+  .title-button:hover:not(:disabled),
+  .title-button[aria-expanded="true"] {
+    background: color-mix(in srgb, var(--ink) 8%, transparent);
+  }
+  .pages {
+    display: grid;
+    gap: 1px;
+    min-width: 190px;
+  }
+  .page-item {
+    height: var(--control-h);
+    padding: 0 9px;
+    border: 0;
+    border-radius: var(--r-item);
+    background: transparent;
+    font: 400 var(--fs-control) / 1 var(--font-ui);
+    text-align: left;
+    white-space: nowrap;
+  }
+  .page-item:hover,
+  .page-item:focus {
+    background: var(--wash);
+    outline: none;
+  }
+  .header-actions {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
@@ -2985,106 +2074,193 @@
     width: 100%;
     min-width: 0;
   }
-  .display-options {
-    margin: 0;
-    border-bottom: 1px solid var(--border);
-    padding-bottom: 0.75rem;
-    font-size: 0.85rem;
+  /* Quiet words for secondary actions: no box until hovered. */
+  .quiet-button {
+    padding: 4px 10px;
+    border: 0;
+    border-radius: var(--r-control);
+    background: transparent;
+    color: var(--muted);
+    font-size: 14px;
+    white-space: nowrap;
   }
-  .display-options > .controls,
-  .display-options > .calendars {
-    margin-top: 0.8rem;
+  .quiet-button:hover:not(:disabled),
+  .quiet-button[aria-haspopup][aria-expanded="true"] {
+    background: color-mix(in srgb, var(--ink) 8%, transparent);
+    color: var(--ink);
+  }
+  .calendars {
+    display: grid;
+    gap: 2px;
+    min-width: 250px;
+    padding: 6px;
+    font-size: 14px;
+  }
+  .calendar-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .calendar-row label {
+    flex: 1;
+    min-width: 0;
+    padding: 5px 0;
+  }
+  .calendar-row .quiet-button {
+    font-size: 13px;
+  }
+  .calendars > .quiet-button {
+    justify-self: start;
+    margin-left: -6px;
+  }
+  .calendars .zone {
+    display: grid;
+    gap: 6px;
+    margin-top: 8px;
+    padding-top: 10px;
+    border-top: 1px solid var(--hairline);
+    color: var(--muted);
+    font-size: 13px;
   }
   .calendar-layout {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 260px;
+    grid-template-columns: minmax(0, 1fr) 264px;
     align-items: start;
-    gap: 1rem;
+    gap: 16px 28px;
+  }
+  .calendar-layout:focus {
+    outline: none;
+  }
+  .calendar-layout > :global(.range-bar) {
+    grid-column: 1 / -1;
   }
   .calendar-main,
   .selected-plan {
     min-width: 0;
   }
-  .calendar-main {
-    border-radius: 0.7rem;
-    border: 1px solid var(--border);
+  /* The rail is plain sections under hairlines: the mini month, the picked day, the tasks to place. */
+  .rail-section {
+    padding: 16px 0 12px;
+    border-top: 1px solid var(--hairline);
   }
-  .plan-event {
+  .rail-section h3 {
+    margin: 0 0 8px;
+    font-size: 16px;
+    line-height: 1.3;
+  }
+  .rail-section header {
     display: flex;
-    flex-direction: column;
-    gap: 0.3rem;
-    text-align: left;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .rail-section header h3 {
+    margin: 0;
+  }
+  .rail-section .count {
+    color: var(--muted);
+    font-size: 14px;
+  }
+  .rail-section header .quiet-button {
+    margin-left: auto;
+    padding: 2px 8px;
+    font-size: 13px;
+  }
+  .rail-section .hint {
+    margin: 0;
+  }
+  .dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--calendar-color);
+  }
+  /* A task's mark: a small ring in its subject colour, filled once it is done. */
+  .ring {
+    flex: none;
+    box-sizing: border-box;
+    width: 11px;
+    height: 11px;
+    border: 1.5px solid var(--task-color, var(--muted));
+    border-radius: 50%;
+  }
+  .completed .ring {
+    background: var(--task-color, var(--muted));
+  }
+  .plan-event,
+  .tray-task {
+    display: grid;
+    grid-template-columns: 11px minmax(0, 1fr);
+    align-items: center;
+    gap: 1px 10px;
     width: 100%;
-    margin: 0.5rem 0;
-    padding: 0.75rem;
-    border-left: 3px solid var(--calendar-color);
+    padding: 6px 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    text-align: left;
+  }
+  .plan-event .dot {
+    justify-self: center;
+  }
+  .plan-event strong,
+  .tray-task strong,
+  .plan-task strong {
+    overflow: hidden;
+    font-size: 14px;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .plan-event span,
+  .tray-task span,
   .plan-task span {
     color: var(--muted);
-    font-size: 0.75rem;
+    font-size: 13px;
+  }
+  .plan-event span,
+  .tray-task span {
+    grid-column: 2;
+  }
+  .plan-event:hover strong,
+  .tray-task:hover strong,
+  .plan-task > button:hover strong {
+    text-decoration: underline;
+    text-underline-offset: 3px;
   }
   .plan-task {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
     align-items: start;
-    gap: 0.5rem;
-    margin-top: 0.75rem;
+    gap: 0 8px;
+    padding: 6px 0;
   }
   .plan-task-map { grid-column: 2; justify-self: start; }
   .plan-task input {
-    margin-top: 0.4rem;
+    margin-top: 2px;
   }
   .plan-task > button {
-    display: flex;
-    flex: 1;
-    flex-direction: column;
-    align-items: start;
-    gap: 0.3rem;
+    display: grid;
+    gap: 1px;
     min-width: 0;
-    text-align: left;
-    overflow-wrap: anywhere;
-  }
-  .completed strong,
-  .task-chip.completed {
-    text-decoration: line-through;
-    color: var(--muted);
-  }
-  .day-empty {
-    padding: 1.2rem 0 0.4rem;
-    font-size: 0.85rem;
-  }
-  .day-empty p {
-    margin-top: 0.4rem;
-    line-height: 1.6;
-  }
-  .time-date,
-  .agenda-date {
-    display: block;
+    padding: 0;
     border: 0;
     background: transparent;
     text-align: left;
-    padding: 0.25rem 0;
-    font-weight: 600;
   }
-  .dot {
-    width: 0.65rem;
-    height: 0.65rem;
-    border-radius: 50%;
-    background: var(--calendar-color);
+  .completed strong,
+  .completed .what {
+    text-decoration: line-through;
+    color: var(--muted);
   }
-  .calendars label {
-    background: var(--surface);
-    padding: 0.2rem 0.4rem;
-    border: 1px solid var(--border);
-    border-radius: 0.4rem;
-  }
-  .calendars button {
-    padding: 0.2rem 0.4rem;
+  .tray-list {
+    display: grid;
+    max-height: 320px;
+    overflow-y: auto;
   }
   .error,
-  .notice,
-  .panel {
+  .notice {
     padding: 1rem;
     border-radius: 0.65rem;
     border: 1px solid var(--border);
@@ -3095,132 +2271,162 @@
     display: flex;
     justify-content: space-between;
   }
-  .month-layout {
-    display: grid;
-    grid-template-columns: minmax(0, 1.25fr) minmax(220px, 1fr);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    overflow: hidden;
-  }
+  /* Month: seven columns across the whole width, cells split by hairlines. */
   .month-grid {
     display: grid;
     grid-template-columns: repeat(7, minmax(0, 1fr));
-    align-content: start;
-    gap: 2px;
-    padding: 4px 8px 8px;
-  }
-  .day-cell {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 4px;
-    min-height: 56px;
-    min-width: 0;
-    border-radius: 10px;
-    cursor: pointer;
-  }
-  .day-cell:hover {
-    background: color-mix(in srgb, var(--ink) 5%, transparent);
-  }
-  .day-cell.selected {
-    background: var(--ink);
-  }
-  .day-cell.selected .day-head {
-    color: var(--solid-void);
-  }
-  .day-cell.today .day-head {
-    color: var(--accent);
-    font-weight: 700;
-  }
-  .day-cell.selected.today .day-head {
-    color: var(--solid-void);
-  }
-  .day-head {
-    padding: 0.15rem 0.4rem;
-    border: 0;
-    background: transparent;
-    color: var(--ink);
-    font: 500 0.82rem var(--font-ui);
-  }
-  .dots {
-    display: flex;
-    gap: 3px;
-    height: 5px;
-    pointer-events: none;
-  }
-  .dots i {
-    width: 5px;
-    height: 5px;
-    border-radius: 999px;
-  }
-  .outside {
-    opacity: 0.45;
+    grid-template-rows: auto repeat(6, minmax(108px, 1fr));
+    min-height: max(420px, calc(100dvh - 232px));
   }
   .weekday-label {
-    padding: 0.55rem 0.4rem 0.3rem;
-    text-align: center;
-    font: 600 0.7rem var(--font-mono);
-    color: var(--subtle);
+    padding: 0 8px 8px;
+    color: var(--muted);
+    font-size: 13px;
   }
-  .selecting {
-    background: color-mix(
-      in srgb,
-      var(--accent) 22%,
-      var(--surface)
-    ) !important;
+  .day-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+    padding: 6px;
+    border-top: 1px solid var(--hairline);
+    border-left: 1px solid var(--hairline);
   }
-  .event-chip {
+  .day-cell:nth-child(7n + 1) {
+    border-left: 0;
+  }
+  /* The empty part of a cell belongs to the cell (drag to pick days); only its buttons take the pointer. */
+  .day-top {
     display: flex;
     align-items: center;
-    gap: 0.2rem;
-    background: color-mix(in srgb, var(--calendar-color) 14%, var(--surface));
-    border-left: 3px solid var(--calendar-color);
-    margin: 0.25rem 0;
-    border-radius: 0.3rem;
-    min-width: 0;
+    justify-content: space-between;
+    min-height: 26px;
+    margin-bottom: 2px;
+    pointer-events: none;
   }
-  .event-chip > button:first-child {
-    flex: 1;
+  .day-top button {
+    pointer-events: auto;
+  }
+  .day-head {
+    min-width: 26px;
+    height: 26px;
+    padding: 0 4px;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--ink);
+    font-size: 14px;
+    font-variant-numeric: tabular-nums;
+  }
+  .day-cell.selected .day-head {
+    background: color-mix(in srgb, var(--ink) 14%, transparent);
+  }
+  .day-cell.today .day-head {
+    background: var(--ink);
+    color: var(--solid-void, var(--canvas));
+    font-weight: 600;
+  }
+  .outside > * {
+    opacity: 0.4;
+  }
+  .day-more {
+    padding: 0 2px;
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .day-more:hover {
+    color: var(--ink);
+  }
+  .month-chip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    min-width: 0;
+    height: 22px;
+    padding: 0 4px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    font-size: 13px;
+    text-align: left;
+  }
+  .month-chip:hover {
+    background: color-mix(in srgb, var(--ink) 8%, transparent);
+  }
+  .month-chip .dot {
+    width: 7px;
+    height: 7px;
+  }
+  .what {
+    flex: 0 1 auto;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    background: transparent;
-    border: 0;
-    text-align: left;
-    padding: 0.25rem;
-    font-size: 0.78rem;
   }
-  .resize {
-    padding: 0.2rem;
-    border: 0;
-    background: transparent;
-    font-size: 0.75rem;
-  }
-  .task-chip {
-    display: block;
-    text-align: left;
-    width: 100%;
-    font-size: 0.75rem;
-    margin: 0.25rem 0;
+  .when {
+    flex: none;
     color: var(--muted);
-    /* A subject-linked task carries its subject colour as a left rule. */
-    box-shadow: inset 3px 0 0 var(--task-color, transparent);
+    font-variant-numeric: tabular-nums;
+  }
+  .selecting {
+    background: color-mix(in srgb, var(--ink) 12%, transparent) !important;
+  }
+  /* An event with its x (calendar/EventDelete.svelte). Selected, it carries a ring inside its edge until Escape or a press elsewhere. */
+  .event-row {
+    position: relative;
+    min-width: 0;
+    border-radius: var(--r-item);
+  }
+  .picked {
+    outline: 2px solid var(--ink);
+    outline-offset: -2px;
+  }
+  /* An event: a soft tint of its colour over the page, a bar in the full colour, no outline. */
+  .event-chip {
+    display: flex;
+    min-width: 0;
+    border: 0;
+    border-left: 3px solid var(--block);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--block) 22%, var(--canvas));
+    color: var(--ink);
+  }
+  .event-chip:hover {
+    background: color-mix(in srgb, var(--block) 30%, var(--canvas));
+  }
+  /* A task shares the shape and carries a ring instead of the bar. */
+  .task-chip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    padding: 0 8px;
+    border: 0;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--task-color, var(--ink)) 12%, var(--canvas));
+    color: var(--ink);
+    font-size: 13px;
+    text-align: left;
+  }
+  .task-chip:hover {
+    background: color-mix(in srgb, var(--task-color, var(--ink)) 18%, var(--canvas));
   }
   .time-scroll {
     overflow: auto;
-    max-height: 70vh;
-    min-height: 380px;
+    max-height: max(420px, calc(100dvh - 232px));
     overscroll-behavior: contain;
   }
   .time-grid {
-    --slot-height: 36px;
-    --time-columns: 64px repeat(var(--days), minmax(110px, 1fr));
+    --time-columns: 60px repeat(var(--days), minmax(110px, 1fr));
     display: grid;
     grid-template-columns: var(--time-columns);
-    min-width: calc(var(--days) * 110px + 64px);
-    background: var(--surface);
+    min-width: calc(var(--days) * 110px + 60px);
+    /* The theme's solid page colour: the sticky header and the event tints sit on the same surface. */
+    background: var(--canvas);
   }
   .time-header {
     display: grid;
@@ -3228,122 +2434,160 @@
     grid-column: 1 / -1;
     position: sticky;
     top: 0;
-    z-index: 4;
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-    box-shadow: 0 2px 4px color-mix(in srgb, var(--ink) 8%, transparent);
+    z-index: 5;
+    background: var(--canvas);
+    border-bottom: 1px solid var(--hairline);
+    /* Covers the sub-pixel seam a fractional scroll leaves above a sticky row. */
+    box-shadow: 0 -2px 0 var(--canvas);
   }
   .time-zone,
   .all-day-label {
-    padding: 0.5rem 0.4rem;
-    color: var(--muted);
-    font-size: 0.65rem;
-    text-align: right;
-    overflow-wrap: anywhere;
-    background: var(--canvas);
-  }
-  .time-zone {
     align-content: center;
-  }
-  .all-day-label span {
-    font-size: 0.6rem;
+    padding-right: 8px;
+    color: var(--subtle);
+    font-size: 13px;
+    text-align: right;
+    white-space: nowrap;
   }
   .time-heading {
-    border-left: 1px solid var(--border);
-    padding: 0.35rem;
     min-width: 0;
+    padding: 6px 4px 10px;
   }
-  .time-heading .time-date {
+  .time-date {
     display: flex;
     align-items: center;
     justify-content: center;
-    flex-direction: column;
+    gap: 4px;
     width: 100%;
-    padding: 0.25rem;
-    border: 1px solid transparent;
-    border-radius: 0.5rem;
-    line-height: 1.2;
+    padding: 0;
+    border: 0;
+    background: transparent;
   }
-  .time-date span,
-  .time-date small {
-    font-size: 0.7rem;
-    font-weight: 400;
+  .time-date span {
     color: var(--muted);
+    font-size: 14px;
   }
   .time-date strong {
     display: grid;
     place-items: center;
-    width: 1.9rem;
-    height: 1.9rem;
-    font-size: 1.15rem;
-    border-radius: 50%;
+    min-width: 32px;
+    height: 32px;
+    border-radius: 999px;
+    font-size: 20px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+  }
+  .time-heading.selected .time-date strong {
+    background: color-mix(in srgb, var(--ink) 14%, transparent);
+  }
+  .time-heading.today .time-date span {
+    color: var(--ink);
   }
   .time-heading.today .time-date strong {
-    background: var(--accent);
-    color: var(--surface);
-  }
-  .time-heading.selected .time-date {
-    border-color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 9%, var(--surface));
+    background: var(--ink);
+    color: var(--solid-void, var(--canvas));
+    font-weight: 600;
   }
   .all-day-cell {
-    display: flex;
-    align-items: flex-start;
+    position: relative;
     min-width: 0;
-    border-left: 1px solid var(--border);
-    border-top: 1px solid var(--border);
-    padding: 0.2rem;
-    gap: 0.2rem;
+    min-height: 30px;
+    padding: 3px 3px 1px 1px;
+    border-top: 1px solid var(--hairline);
+    border-left: 1px solid var(--hairline);
   }
-  .all-day-cell.selected {
-    background: color-mix(in srgb, var(--accent) 5%, var(--surface));
+  .all-day-label {
+    border-top: 1px solid var(--hairline);
   }
+  /* The add affordance appears with the pointer or the keyboard, over the cell's right end. */
   .all-day-add {
-    padding: 0.15rem;
-    font-size: 0.75rem;
-    line-height: 1.3;
-    border-color: transparent;
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: var(--canvas);
+    color: var(--muted);
+    font-size: 17px;
+    line-height: 1;
+    opacity: 0;
+  }
+  .all-day-cell:hover .all-day-add,
+  .all-day-add:focus-visible {
+    opacity: 1;
+  }
+  .all-day-add:hover {
+    color: var(--ink);
   }
   .all-day-items {
-    flex: 1;
     min-width: 0;
     max-height: 100px;
     overflow: auto;
   }
+  /* The cell's + sits in the same corner: an all-day event's x stands beside it. */
+  .all-day-items .event-row {
+    --event-x-right: 24px;
+  }
   .all-day-event,
   .all-day-items .task-chip {
-    display: block;
     width: 100%;
-    text-align: left;
-    padding: 0.25rem;
-    margin: 0 0 0.2rem;
-    font-size: 0.72rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    height: 24px;
+    margin: 0 0 2px;
+    font-size: 13px;
     white-space: nowrap;
   }
+  .all-day-event {
+    display: block;
+    padding: 0 8px;
+    overflow: hidden;
+    font-weight: 600;
+    text-align: left;
+    text-overflow: ellipsis;
+  }
+  /* Hour labels sit on their lines; the one under the now time steps aside for it. */
   .time-axis {
-    background: var(--canvas);
+    position: relative;
+  }
+  .time-label,
+  .now-time {
+    padding-right: 8px;
+    font-size: 13px;
+    line-height: 1;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
   }
   .time-label {
-    height: var(--slot-height);
     box-sizing: border-box;
-    text-align: right;
-    padding: 0.15rem 0.45rem;
-    color: var(--muted);
-    font-size: 0.68rem;
+    height: calc(2 * var(--slot-height));
+    color: var(--subtle);
+    transform: translateY(-0.5em);
+  }
+  .time-label.hidden {
+    visibility: hidden;
+  }
+  .now-time {
+    position: absolute;
+    right: 0;
+    color: var(--ink);
+    font-weight: 600;
+    transform: translateY(-50%);
   }
   .time-day {
     position: relative;
     height: calc(48 * var(--slot-height));
     min-width: 0;
-    border-left: 1px solid var(--border);
+    border-left: 1px solid var(--hairline);
   }
   .time-cell {
     box-sizing: border-box;
     height: var(--slot-height);
     position: relative;
-    border-top: 1px dashed color-mix(in srgb, var(--border) 55%, transparent);
+  }
+  .time-cell.hour-start {
+    border-top: 1px solid var(--hairline);
   }
   .drop-target {
     background: color-mix(in srgb, var(--accent) 20%, var(--surface));
@@ -3353,21 +2597,10 @@
     background: color-mix(in srgb, var(--danger, #d14b5a) 16%, var(--surface));
     box-shadow: inset 0 0 0 2px var(--danger, #d14b5a);
   }
-  .drop-status { position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%); z-index: 40; max-width: calc(100vw - 2rem); margin: 0; padding: 0.6rem 0.9rem; pointer-events: none; color: var(--ink); background: var(--surface-raised); border: 1px solid var(--accent); border-radius: 6px; box-shadow: var(--overlay-shadow); }
-  .task-tray { margin: 0.7rem 0 1rem; padding: 0.8rem; border: 1px solid var(--border); border-radius: 8px; }
-  .task-tray h3 { margin: 0; }
-  .tray-list { display: grid; gap: 0.4rem; max-height: 320px; overflow-y: auto; margin-top: 0.6rem; }
-  .tray-task { display: grid; gap: 0.25rem; text-align: left; width: 100%; padding: 0.6rem; box-shadow: inset 3px 0 0 var(--task-color, transparent); }
-  .tray-task span { font-size: 0.75rem; color: var(--muted); }
-  .timed-task { position: absolute; z-index: 4; left: 2px; right: 2px; max-width: calc(100% - 4px); text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.7rem; }
+  .drop-status { position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%); z-index: 40; max-width: calc(100vw - 2rem); margin: 0; padding: 0.6rem 0.9rem; pointer-events: none; color: var(--ink); background: var(--surface-raised); border: 1px solid var(--hairline); border-radius: 6px; font-size: 14px; }
+  .timed-task { position: absolute; z-index: 4; left: 1px; right: 3px; height: calc(var(--slot-height) - 2px); }
   [draggable="true"] { cursor: grab; }
   [draggable="true"]:active { cursor: grabbing; }
-  .time-cell.hour-start {
-    border-top: 1px solid var(--border);
-  }
-  .time-day.today {
-    background: color-mix(in srgb, var(--accent) 3%, var(--surface));
-  }
   .slot-button {
     position: absolute;
     inset: 0;
@@ -3379,7 +2612,7 @@
   }
   .slot-button:hover,
   .slot-button:focus-visible {
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    background: color-mix(in srgb, var(--ink) 6%, transparent);
   }
   .slot-button:focus-visible {
     outline-offset: -2px;
@@ -3388,83 +2621,165 @@
   .timed {
     position: absolute;
     z-index: 1;
-    margin: 0;
     box-sizing: border-box;
-    border: 0;
-    border-radius: 9px;
-    background: var(--block);
-    color: var(--block-ink);
-    box-shadow: 0 1px 0 color-mix(in srgb, var(--ink) 25%, transparent) inset;
     overflow: hidden;
-    align-items: stretch;
   }
   .timed > .timed-content {
     display: flex;
+    flex: 1;
     flex-direction: column;
     align-items: flex-start;
-    white-space: normal;
+    gap: 1px;
     min-width: 0;
-    padding: 0.15rem 0.25rem;
-    line-height: 1.15;
+    padding: 5px 8px;
     overflow: hidden;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
     color: inherit;
+    line-height: 1.25;
+    text-align: left;
   }
   .timed-content strong,
   .timed-content span {
-    display: block;
-    width: 100%;
+    max-width: 100%;
     overflow: hidden;
+    font-size: 13px;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 0.72rem;
+  }
+  .timed-content strong {
+    font-weight: 600;
   }
   .timed-content span {
-    font-size: 0.65rem;
-    margin-top: 0.1rem;
-    opacity: 0.72;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
   }
+  /* The block clips what lies outside it, the focus ring included: draw it inside. */
+  .timed > .timed-content:focus-visible {
+    outline-offset: -2px;
+  }
+  /* Under 50 minutes there is one line: the title, then the time. */
+  .timed.short > .timed-content {
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    padding: 0 8px;
+  }
+  .timed.short strong {
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+  .timed.short span {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  /* The bottom edge resizes. */
   .timed .resize {
-    align-self: flex-end;
-    font-size: 0.6rem;
-    padding: 0.1rem;
-    color: inherit;
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 6px;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    cursor: ns-resize;
   }
-  .timed:hover {
-    box-shadow: 0 6px 16px color-mix(in srgb, var(--block) 35%, transparent);
-  }
+  /* Now: one line across today with a dot where it starts; its time is in the gutter. */
   .now-line {
     position: absolute;
     left: 0;
     right: 0;
-    border-top: 1.5px dashed var(--c1);
     z-index: 3;
+    border-top: 2px solid var(--ink);
+    transform: translateY(-1px);
     pointer-events: none;
   }
-  .now-line .bloom {
+  .now-line::before {
+    content: "";
     position: absolute;
-    left: -6px;
-    top: -9px;
-    color: var(--c1);
-    font-size: 13px;
-    line-height: 1;
-    text-shadow: 0 0 6px var(--c1);
+    left: -5px;
+    top: -6px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--ink);
   }
   .agenda section {
-    padding: 0.8rem 0;
-    border-bottom: 1px solid var(--border);
+    display: grid;
+    grid-template-columns: 150px minmax(0, 1fr);
+    gap: 0 16px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .agenda h2 {
+    margin: 0;
+  }
+  .agenda-date {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+  .agenda-date strong {
+    display: grid;
+    place-items: center;
+    min-width: 32px;
+    height: 32px;
+    border-radius: 999px;
+    font-size: 20px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+  }
+  .agenda .today .agenda-date strong {
+    background: var(--ink);
+    color: var(--solid-void, var(--canvas));
+    font-weight: 600;
+  }
+  .agenda-date span {
+    color: var(--muted);
+    font-size: 14px;
+    font-weight: 400;
   }
   .agenda-event {
     display: flex;
-    gap: 0.8rem;
-    text-align: left;
     align-items: center;
+    gap: 10px;
     width: 100%;
-    margin: 0.4rem 0;
-    border-left: 3px solid var(--calendar-color, var(--accent));
+    min-height: 32px;
+    padding: 4px 8px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    font-size: 15px;
+    text-align: left;
   }
-  .agenda-event span {
-    font-size: 0.85rem;
+  .agenda-event:hover {
+    background: color-mix(in srgb, var(--ink) 6%, transparent);
+  }
+  .agenda-event .when {
+    width: 112px;
+    font-size: 14px;
+  }
+  .agenda-event strong {
+    min-width: 0;
+    overflow: hidden;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .agenda-event .where {
     color: var(--muted);
+    font-size: 14px;
+    white-space: nowrap;
+  }
+  .agenda > .hint {
+    margin: 0;
+    padding: 12px 0;
   }
   .task-columns {
     display: flex;
@@ -3498,7 +2813,7 @@
     margin-right: auto;
   }
   .task-card p {
-    font-size: 0.78rem;
+    font-size: 13px;
     color: var(--muted);
     margin: 0.5rem 0;
   }
@@ -3508,7 +2823,7 @@
     gap: 0.25rem;
   }
   .tags span {
-    font-size: 0.7rem;
+    font-size: 13px;
     padding: 0.15rem 0.3rem;
     background: var(--surface-raised);
     border-radius: 0.3rem;
@@ -3528,17 +2843,9 @@
     min-width: 8rem;
     background: var(--accent);
     color: var(--surface);
-    font-size: 0.75rem;
+    font-size: 13px;
     padding: 0.35rem;
     white-space: nowrap;
-  }
-  .free-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 0.7rem;
-    padding: 0.55rem 0;
-    border-bottom: 1px solid var(--border);
   }
   .conflict {
     padding: 0.8rem;
@@ -3546,75 +2853,12 @@
     border-radius: 0.5rem;
     margin: 0.6rem 0;
   }
-  .file {
-    border: 1px solid var(--border);
-    padding: 0.5rem;
-    border-radius: 0.4rem;
-    cursor: pointer;
-    flex-wrap: wrap;
-  }
-  .file input {
-    max-width: 15rem;
-    font-size: 0.8rem;
-  }
-  .import-review {
-    max-height: 24rem;
-    overflow: auto;
-  }
-  .import-review label {
-    padding: 0.5rem;
-    border-bottom: 1px solid var(--border);
-  }
-  small {
-    display: block;
-    color: var(--muted);
-    margin-top: 0.3rem;
-  }
-  .panel ol {
-    font-size: 0.9rem;
-    padding-left: 1.3rem;
-  }
-  .panel li {
-    margin: 0.45rem 0;
-  }
   details {
     margin: 0.8rem 0;
   }
   summary {
     cursor: pointer;
     font-weight: 600;
-  }
-  pre {
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    background: var(--canvas);
-    padding: 0.8rem;
-    border-radius: 0.4rem;
-    font-size: 0.75rem;
-    max-height: 28rem;
-    overflow: auto;
-  }
-  .setting-diff {
-    display: grid;
-    gap: 0.3rem;
-    margin: 0.5rem 0;
-    padding: 0;
-    list-style: none;
-  }
-  .setting-diff li {
-    display: grid;
-    grid-template-columns: 6rem 1fr 1fr;
-    gap: 0.6rem;
-    font-size: 0.85rem;
-  }
-  .review {
-    border: 1px solid var(--accent);
-    padding: 1rem;
-    margin-top: 1rem;
-    border-radius: 0.5rem;
-  }
-  .review button {
-    margin-top: 0.8rem;
   }
   .modal-backdrop {
     position: fixed;
@@ -3651,19 +2895,6 @@
   .dialog header button {
     font-size: 1.3rem;
     padding: 0.1rem 0.5rem;
-  }
-  .form-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.7rem;
-  }
-  .form-grid label {
-    flex-direction: column;
-    align-items: stretch;
-  }
-  .form-grid label:has(input[type="checkbox"]) {
-    flex-direction: row;
-    align-items: center;
   }
   .editor-options {
     border: 1px solid var(--border);
@@ -3763,7 +2994,7 @@
     color: var(--ink);
   }
   .stepper b {
-    font: 600 0.8rem var(--font-mono);
+    font: 600 13px var(--font-ui);
   }
   .steppers .arrow {
     color: var(--subtle);
@@ -3771,7 +3002,7 @@
   .drawer-dates {
     display: grid;
     gap: 6px;
-    font-size: 0.8rem;
+    font-size: 13px;
   }
   .drawer-dates .inline {
     display: flex;
@@ -3814,15 +3045,12 @@
     border-radius: 999px;
     background: transparent;
     color: var(--muted);
-    font-size: 0.75rem;
+    font-size: 13px;
   }
   .chips button[aria-pressed="true"] {
     border-color: var(--accent);
     background: color-mix(in srgb, var(--accent) 18%, transparent);
     color: var(--ink);
-  }
-  a {
-    color: var(--accent);
   }
   @media (max-width: 1200px) {
     .calendar-layout {
@@ -3830,19 +3058,12 @@
     }
   }
   @media (max-width: 760px) {
-    .month-layout {
+    .agenda section {
       grid-template-columns: minmax(0, 1fr);
+      gap: 6px;
     }
-    .form-grid {
-      grid-template-columns: 1fr;
-    }
-    .controls label {
-      flex-wrap: wrap;
-    }
-    .agenda-event {
-      align-items: start;
-      flex-direction: column;
-      gap: 0.2rem;
+    .agenda-event .where {
+      display: none;
     }
     .toolbar {
       align-items: start;
@@ -3850,8 +3071,8 @@
     .header-actions {
       margin-left: 0;
     }
-    .day-cell {
-      min-height: 44px;
+    .month-grid {
+      grid-template-rows: auto repeat(6, minmax(72px, 1fr));
     }
     .modal-backdrop {
       padding: 0.3rem;

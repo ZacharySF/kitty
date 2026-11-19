@@ -48,29 +48,29 @@ test('each group key maps to its header group and built-ins keep their order',()
   ];
   // The atlas home stays the Plan group's entry point: "first" means its first section.
   assert.deepEqual(groupViews(ALL,external,'Plan').slice(0,2),['today','m/plan-mod/demo']);
-  assert.equal(groupViews(ALL,external,'Job search').at(-1),'m/jobs-mod/demo');
+  assert.equal(groupViews(ALL,external,'Career').at(-1),'m/jobs-mod/demo');
   assert.equal(groupViews(ALL,external,'Settings').at(-1),'m/set-mod/demo');
   assert.deepEqual(groupViews(ALL,external,'Study'),groupViews(ALL,[],'Study'));
-  assert.equal(groupOf('m/jobs-mod/demo',external)?.label,'Job search');
+  assert.equal(groupOf('m/jobs-mod/demo',external)?.label,'Career');
   assert.equal(groupOf('notes',external)?.label,'Study');
   assert.equal(groupOf('m/unknown/x',external),undefined);
 });
 
 test('an add-on view opens its group even when every built-in module is off',()=>{
   const external=[view()];
-  assert.deepEqual(visibleGroups([],external).map(group=>group.label),['Plan','Study','Settings']);
+  assert.deepEqual(visibleGroups([],external).map(group=>group.label),['Plan','Study','Rika','Settings']);
   assert.deepEqual(groupViews([],external,'Study'),['m/demo-mod/demo']);
   assert.equal(viewEnabled('m/demo-mod/demo',[],external),true);
   assert.equal(viewEnabled('m/demo-mod/demo',ALL,[]),false);
   assert.equal(viewEnabled('study',[],external),false);
   const navigate=shortcutsFor([],external).find(group=>group.title==='Navigate').shortcuts;
-  assert.ok(navigate.some(([keys])=>keys==='Ctrl + Alt / Ctrl + X / Ctrl + V'));
+  assert.ok(navigate.some(([keys,what])=>keys==='Ctrl + Alt'&&what.startsWith('Plan')));
 });
 
 test('navigation items carry the label and fall back to a generic icon for unknown names',()=>{
   const external=[view({icon:'math'}),view({module:'odd-mod',icon:'not-an-icon'})];
   const items=visibleNavigation([],external);
-  assert.deepEqual(items.map(item=>item.id),['today','goals','ai','settings','m/demo-mod/demo','m/odd-mod/demo']);
+  assert.deepEqual(items.map(item=>item.id),['today','goals','rika','ai','settings','m/demo-mod/demo','m/odd-mod/demo']);
   assert.equal(navItem('m/demo-mod/demo',external)?.icon,'math');
   assert.equal(navItem('m/odd-mod/demo',external)?.icon,'atlas');
   assert.equal(navItem('m/odd-mod/demo',external)?.label,'Demo');
@@ -84,13 +84,17 @@ test('a hash names a built-in view or an add-on view; anything else names nothin
   assert.equal(viewFromHash('m/demo-mod/demo'),'m/demo-mod/demo');
   assert.equal(viewFromHash('m/demo-mod/demo/page/2'),'m/demo-mod/demo');
   for(const hash of ['','bogus','m','m/demo-mod','m/Demo/x']) assert.equal(viewFromHash(hash),null,hash);
+  // Merged pages keep their old links: Apply joined Find as its "Ready to apply" filter.
+  assert.equal(viewFromHash('apply'),'queue');
+  assert.equal(viewFromHash('find'),'jobs');
+  assert.equal(viewFromHash('constructor'),null);
 });
 
-test('the atlas lists add-on sections in their group, never hidden, including under Job search',()=>{
+test('the atlas lists add-on sections in their group, never hidden, including under Career',()=>{
   const external=[view({module:'jobs-mod',group:'jobs'}),view()];
   const lookup=id=>navItem(id,external);
   const sections=atlasSections(visibleGroups(ALL,external),lookup);
-  const jobs=sections.find(group=>group.label==='Job search').items.map(item=>item.id);
+  const jobs=sections.find(group=>group.label==='Career').items.map(item=>item.id);
   assert.deepEqual(jobs,['jobs','m/jobs-mod/demo']);
   assert.ok(sections.find(group=>group.label==='Study').items.some(item=>item.id==='m/demo-mod/demo'));
   assert.equal(hideableSection('m/demo-mod/demo'),false);

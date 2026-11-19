@@ -1,4 +1,9 @@
-"""record_events: the append-only history of browser mutations through WebApplication.mutate."""
+"""record_events: the append-only history of browser mutations through WebApplication.mutate.
+
+The calendar's, study's, the opportunities', the mind maps' (linking backlinks included) and
+the Notes' mutations are answered and recorded by rika-server (tests/test_calendar.py,
+tests/test_study_parity.py, tests/test_opportunities_parity.py, tests/test_schema_parity.py,
+tests/test_backlinks_parity.py, tests/test_notes_parity.py)."""
 from __future__ import annotations
 
 import logging
@@ -6,13 +11,14 @@ import sqlite3
 
 import pytest
 
-from kitty.core import record_events
+from kitty.core import documents, notes, quick_notes, record_events
 from kitty.web_server import ROUTE_MODULES, APIError, WebApplication
+from terminal_support import front_site
 
 
 @pytest.fixture
 def app(workspace, tmp_path):
-    application = WebApplication(workspace.settings, workspace.config, tmp_path)
+    application = WebApplication(workspace.settings, workspace.config, tmp_path, ui_session="ui-test")
     yield application
     application.close()
 
@@ -38,107 +44,70 @@ def test_migration_creates_an_append_only_table(workspace):
     assert events(conn) == [("notes", "page", "1", "save", "/api/notes/pages/1")]
 
 
-def _notes(app, conn):
-    notebook = app.mutate(conn, "/api/notes/notebooks", {"title": "Physics"})
-    return ("notes", "notebook", str(notebook["id"]), "create", "/api/notes/notebooks")
+def front_mutate(site, path, body):
+    """A mutation rika-server answers and records (server/src/jobs/)."""
+    status, data = site.request(path, body)
+    assert status == 200, (path, data)
+    return data
 
 
-def _flashcards(app, conn):
-    deck = app.mutate(conn, "/api/flashcards/deck", {"name": "Biology"})["deck"]
-    return ("flashcards", "deck", str(deck["id"]), "create", "/api/flashcards/deck")
-
-
-def _calendar(app, conn):
-    event = app.mutate(conn, "/api/calendar/events", {
-        "title": "Lab", "start": "2030-01-02T09:00:00Z", "end": "2030-01-02T10:00:00Z",
-        "timezone": "UTC", "all_day": False})
-    return ("calendar", "event", event["id"], "create", "/api/calendar/events")
-
-
-def _study(app, conn):
-    subject = app.mutate(conn, "/api/study/subjects", {"name": "Chemistry"})["item"]
-    return ("study", "subject", str(subject["id"]), "create", "/api/study/subjects")
-
-
-def _schema(app, conn):
-    created = app.mutate(conn, "/api/schema/create", {"title": "Ideas"})
-    return ("schema", "map", str(created["id"]), "create", "/api/schema/create")
-
-
-def _opportunities(app, conn):
-    item = app.mutate(conn, "/api/opportunities", {"title": "Hackathon"})
-    return ("opportunities", "opportunity", str(item["id"]), "create", "/api/opportunities")
-
-
-def _jobs(app, conn):
+def _jobs(app, site, conn):
     job = app.mutate(conn, "/api/jobs/add", {"company": "Acme", "title": "Intern",
                                              "url": "https://example.invalid/acme"})
     path = f"/api/jobs/{job['id']}"
-    app.mutate(conn, path, {"action": "favorite", "value": True})
+    front_mutate(site, path, {"action": "favorite", "value": True})
     return ("jobs", "job", str(job["id"]), "favorite", path)
 
 
-def _reminders(app, conn):
-    reminder = app.mutate(conn, "/api/reminders", {"date": "2030-01-05", "note": "Call back"})
+def _reminders(app, site, conn):
+    reminder = front_mutate(site, "/api/reminders", {"date": "2030-01-05", "note": "Call back"})
     return ("reminders", "reminder", str(reminder["id"]), "create", "/api/reminders")
 
 
-@pytest.mark.parametrize("case", [_notes, _flashcards, _calendar, _study,
-                                  _schema, _opportunities, _jobs, _reminders], ids=lambda case: case.__name__[1:])
+@pytest.mark.parametrize("case", [_jobs, _reminders], ids=lambda case: case.__name__[1:])
 def test_one_real_route_per_section_is_captured(app, workspace, case):
     conn = workspace.conn
-    expected = case(app, conn)
+    with front_site(workspace.settings) as site:
+        expected = case(app, site, conn)
     captured = events(conn)
     assert captured[-1] == expected
     assert all(section in record_events.SECTIONS for section, *_ in captured)
 
 
 def test_block_backed_writes_are_left_to_op_log(app, workspace):
-    """Notes pages, documents and quick notes are block transactions: op_log is their history,
-    so the Brain counts each of them once; the notebook (a plain table) is still captured."""
+    """Documents and quick notes are block transactions: op_log is their history, so the Brain
+    counts each of them once. (Notes, document and quick-note writes are answered by rika-server,
+    which leaves them to op_log as well and still captures a notebook, a plain table:
+    tests/test_notes_parity.py, tests/test_documents_parity.py, tests/test_blocks_parity.py;
+    here the core writes them.)"""
     conn = workspace.conn
     before = conn.execute("SELECT COUNT(*) FROM op_log").fetchone()[0]
-    notebook = app.mutate(conn, "/api/notes/notebooks", {"title": "Physics"})
-    page = app.mutate(conn, "/api/notes/pages", {"notebook_id": notebook["id"], "title": "Waves"})
-    app.mutate(conn, f"/api/notes/pages/{page['id']}", {"revision": page["revision"], "title": "Standing waves",
-                                                        "document": page["document"]})
-    app.mutate(conn, "/api/documents", {"title": "Paper", "content": "Body", "format": "text", "notebook_id": notebook["id"]})
-    note = app.mutate(conn, "/api/quick-notes/create", {"body": "Buy milk"})
-    app.mutate(conn, "/api/quick-notes/delete", {"id": note["id"], "revision": note["revision"]})
-    assert events(conn) == [("notes", "notebook", str(notebook["id"]), "create", "/api/notes/notebooks")]
-    assert conn.execute("SELECT COUNT(*) FROM op_log").fetchone()[0] - before >= 5
+    notebook = notes.create_notebook(conn, "Physics")
+    documents.save(conn, {"title": "Paper", "content": "Body", "format": "text", "notebook_id": notebook["id"]})
+    note = quick_notes.create(conn, "Buy milk")
+    quick_notes.delete(conn, note["id"], note["revision"])
+    assert events(conn) == []
+    assert conn.execute("SELECT COUNT(*) FROM op_log").fetchone()[0] - before >= 3
 
 
 def test_edits_and_deletes_resolve_the_entity_from_path_result_or_body(app, workspace):
-    conn = workspace.conn
-    deck = app.mutate(conn, "/api/flashcards/deck", {"name": "Words"})["deck"]
-    subject = app.mutate(conn, "/api/study/subjects", {"name": "Art"})["item"]
-    app.mutate(conn, "/api/study/subjects", {"id": subject["id"], "revision": subject["revision"], "action": "delete"})
-    assert events(conn) == [
-        ("flashcards", "deck", str(deck["id"]), "create", "/api/flashcards/deck"),
-        ("study", "subject", str(subject["id"]), "create", "/api/study/subjects"),
-        ("study", "subject", str(subject["id"]), "delete", "/api/study/subjects"),
-    ]
-
-
-def test_calendar_undo_is_attributed_to_the_undone_event(app, workspace):
-    conn = workspace.conn
-    event = app.mutate(conn, "/api/calendar/events", {
-        "title": "Seminar", "start": "2030-01-03T09:00:00Z", "end": "2030-01-03T10:00:00Z",
-        "timezone": "UTC", "all_day": False})
-    app.mutate(conn, "/api/calendar/undo", {"id": event["undo_id"]})
-    assert events(conn)[-1] == ("calendar", "event", event["id"], "undo", "/api/calendar/undo")
+    # Routes rika-server answers and records (the parity tests): their rules are still the reference.
+    assert record_events.classify("/api/notes/notebooks", {"title": "Words"}, {"id": 3, "title": "Words"}) == ("notes", "notebook", "3", "create")
+    assert record_events.classify("/api/notes/reorder", {"kind": "folders", "ids": [2]}, {"ok": True}) == ("notes", "folder", None, "reorder")
+    assert record_events.classify("/api/study/subjects", {"id": 4, "revision": 1, "action": "delete"}, {"deleted": 4}) == ("study", "subject", "4", "delete")
+    assert record_events.classify("/api/opportunities", {"title": "Hackathon"}, {"id": 7, "title": "Hackathon"}) == ("opportunities", "opportunity", "7", "create")
+    assert record_events.classify("/api/opportunities/7/items", {"revision": 1, "title": "Task"}, {"id": 7}) == ("opportunities", "opportunity", "7", "items")
 
 
 def test_non_content_and_failed_mutations_are_not_captured(app, workspace):
     conn = workspace.conn
-    app.mutate(conn, "/api/calendar/time", {"value": "2030-01-01T09:00", "timezone": "UTC"})
-    revision = app.get_json(conn, "/api/study", {})["settings"]["revision"]
+    app.mutate(conn, "/api/calendar/import/preview", {"format": "csv", "content": "title,date\nLab,2030-01-01\n"})
+    revision = conn.execute("SELECT revision FROM study_settings").fetchone()[0]
     app.mutate(conn, "/api/study/settings", {"revision": revision, "sound": False})
     with pytest.raises(APIError):
         app.mutate(conn, "/api/quick-notes/save", {"id": 999, "revision": 1, "body": "missing"})
     with pytest.raises(APIError):
-        app.mutate(conn, "/api/notes/pages", {"notebook_id": 999})
+        app.mutate(conn, "/api/notes/attachments", {"name": "missing data"})
     assert events(conn) == []
 
 
@@ -147,7 +116,8 @@ def test_logged_mutations_are_left_to_their_own_history(app, workspace):
     conn = workspace.conn
     job = app.mutate(conn, "/api/jobs/add", {"company": "Acme", "title": "Intern",
                                              "url": "https://example.invalid/acme"})
-    app.mutate(conn, f"/api/jobs/{job['id']}", {"action": "applied", "value": True})
+    with front_site(workspace.settings) as site:
+        front_mutate(site, f"/api/jobs/{job['id']}", {"action": "applied", "value": True})
     assert [row[3] for row in events(conn)] == ["create"]
     assert conn.execute("SELECT COUNT(*) FROM status_events").fetchone()[0] == 1
 
@@ -158,8 +128,8 @@ def test_a_capture_failure_never_fails_the_request(app, workspace, monkeypatch, 
 
     monkeypatch.setattr(record_events, "append", broken)
     with caplog.at_level(logging.WARNING, logger="kitty.core.record_events"):
-        deck = app.mutate(workspace.conn, "/api/flashcards/deck", {"name": "Kept"})["deck"]
-    assert deck["name"] == "Kept"
+        job = app.mutate(workspace.conn, "/api/jobs/add", {"company": "Acme", "title": "Kept", "url": "https://example.invalid/kept"})
+    assert job["id"]
     assert events(workspace.conn) == []
     assert any("not recorded" in record.message for record in caplog.records)
 
@@ -178,8 +148,8 @@ def test_every_route_prefix_is_classified():
     assert prefixes <= declared
     assert not set(record_events.SECTION_PREFIXES) & set(record_events.NON_CONTENT_PREFIXES)
     for path in ("/api/reload", "/api/modules", "/api/account/onboarding", "/api/ai/settings",
-                 "/api/notes/preferences", "/api/notes/pages/3/viewport", "/api/flashcards/grade",
-                 "/api/flashcards/review", "/api/study/timer", "/api/calendar/google/sync",
+                 "/api/notes/preferences", "/api/notes/pages/3/viewport",
+                 "/api/study/timer", "/api/calendar/google/sync",
                  "/api/opportunities/settings", "/api/opportunities/discover", "/api/terminal/session"):
         assert record_events.classify(path, {}, {"id": 1}) is None, path
     assert record_events.classify("/api/documents/import", {}, {"task": "a" * 32}) is None

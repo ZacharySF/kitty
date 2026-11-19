@@ -7,6 +7,7 @@ import pytest
 from typer.testing import CliRunner
 
 from kitty import cli
+from kitty.cli import common as cli_common
 from kitty.core import schedule
 from kitty.core.triage import run as triage_core
 
@@ -37,7 +38,7 @@ def _workspace(monkeypatch, provider="openrouter"):
                                                     max_cost_usd_per_run=5))
     workspace = SimpleNamespace(config=config, settings=SimpleNamespace(root=Path("/tmp/public")),
                                 conn=object(), close=lambda: None)
-    monkeypatch.setattr(cli, "_open", lambda: workspace)
+    monkeypatch.setattr(cli_common, "open_workspace", lambda _settings: workspace)
     return workspace
 
 

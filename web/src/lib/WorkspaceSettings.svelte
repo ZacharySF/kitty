@@ -1,7 +1,7 @@
 <script lang="ts" module>
   /** The short pages Settings opens beside its index, deep-linked as `#settings/<page>`. */
   export const SETTINGS_PAGES = [
-    "appearance", "desktop", "quiet-hours", "build", "account", "modules", "graphs", "tags", "connected-apps", "agents", "keys", "devices",
+    "appearance", "desktop", "quiet-hours", "build", "account", "modules", "graphs", "tags", "backup", "connected-apps", "agents", "keys", "devices",
     "apply-accounts", "rika-routing", "rika-email", "rika-memory",
   ] as const;
   export type SettingsPage = (typeof SETTINGS_PAGES)[number];
@@ -17,19 +17,23 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
   import { Button, Panel } from "@nunera/bracket";
-  import { api, type ModuleId, type ModulesState } from "./api";
+  import type { ModuleId, ModulesState } from "./api";
   import AppearanceSettings from "./AppearanceSettings.svelte";
   import DesktopSettings from "./DesktopSettings.svelte";
   import QuietHours from "./QuietHours.svelte";
   import AccountSettings from "./AccountSettings.svelte";
+  import ConnectionSettings from "./ConnectionSettings.svelte";
   import ConnectedApps from "./ConnectedApps.svelte";
+  import PhoneSettings from "./PhoneSettings.svelte";
   import Keys from "./Keys.svelte";
   import ExternalModules from "./ExternalModules.svelte";
   import ApplyAccounts from "./ApplyAccounts.svelte";
   import Devices from "./Devices.svelte";
+  import BackupSettings from "./BackupSettings.svelte";
   import TagSettings from "./TagSettings.svelte";
   import BuildSettings from "./BuildSettings.svelte";
   import { buildStore, setPreferences } from "./build.svelte";
+  import "./settingsRows.css";
   import RoutingMemory from "./rika/settings/RoutingMemory.svelte";
   import EmailSettings from "./rika/settings/EmailSettings.svelte";
   import MemorySettings from "./rika/settings/MemorySettings.svelte";
@@ -40,6 +44,8 @@
   import { GRAPH_LAYOUTS, setGraphSettings } from "./graphPreferences";
   import type { View } from "./workspace";
   import { activeModules } from "./modules.svelte";
+  import ModulePicker from "./ModulePicker.svelte";
+  import { moduleStore } from "./modulePicker.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
   let { onview, onchange }: { onview: (view: View) => void; onchange: () => Promise<void> } = $props();
   const pane = useWorkspaceContext();
@@ -59,10 +65,11 @@
       { page: "build", label: "Build", icon: "download", keywords: "build file export import share install rollback history custom css tokens safe mode editor" },
     ] },
     { label: "Workspace", items: [
-      { page: "account", label: "Account", icon: "shield", keywords: "google sign-in connect welcome guided tour onboarding identity" },
-      { page: "modules", label: "Modules", icon: "atlas", keywords: "applyai job search workspace study terminal enable disable restart add-on addon plugin github repository install update remove" },
+      { page: "account", label: "Account", icon: "shield", keywords: "google sign-in connect welcome guided tour onboarding identity microsoft outlook slack calendar mail reaction" },
+      { page: "modules", label: "Modules", icon: "atlas", keywords: "applyai job search workspace study terminal brain atlas enable disable restart download pack add-on addon plugin github repository install update remove" },
       { page: "graphs", label: "Graphs", icon: "schema", keywords: "schemas default layout tree clusters sphere force physics repulsion spring damping" },
       ...(activeModules.enabled.includes("workspace") ? [{ page: "tags", label: "Tags", icon: "favorites", keywords: "auto tags keywords suggest always attach" } as Entry] : []),
+      { page: "backup", label: "Backup", icon: "download", keywords: "backup restore archive recover copy export github history sync lost laptop" },
     ] },
     { label: "Connections", items: [
       { page: "connected-apps", label: "Connected apps", icon: "external", keywords: "pairing tern plugin browser extension mirror token revoke approve" },
@@ -129,66 +136,21 @@
   const physics = $derived(draft ?? buildStore.build.ui.graph.physics);
   let physicsTimer: ReturnType<typeof setTimeout> | undefined;
   let error = $state("");
-  let modules = $state<ModulesState | null>(null);
-  let selection = $state<ModuleId[]>([]);
-  let savingModules = $state(false);
-  let moduleError = $state("");
+  // The module picker's switches, kept here so they survive a visit to another page.
+  let moduleOverrides = $state<Partial<Record<ModuleId, boolean>>>({});
   const modulesDirty = $derived(
-    !!modules && (selection.length !== modules.configured.length || selection.some(id => !modules!.configured.includes(id))),
+    Object.entries(moduleOverrides).some(([id, on]) => !!moduleStore.modules && moduleStore.modules.configured.includes(id as ModuleId) !== on),
   );
-  const changes = $derived.by(() => {
-    if (!modules) return { start: [] as string[], stop: [] as string[] };
-    const label = (id: ModuleId) => modules!.available.find(item => item.id === id)?.label ?? id;
-    return {
-      start: modules.configured.filter(id => !modules!.enabled.includes(id)).map(label),
-      stop: modules.enabled.filter(id => !modules!.configured.includes(id)).map(label),
-    };
-  });
   export function hasUnsavedChanges() { return modulesDirty; }
   // Q3: an unsaved module selection is the tab's dot; every other setting saves at once.
   $effect(() => {
     pane.setStatus(modulesDirty ? { state: "unsaved", detail: "Unsaved module selection" } : null);
     return () => pane.setStatus(null);
   });
-  function adopt(next: ModulesState) {
-    modules = next;
-    selection = [...next.configured];
-  }
-  /** An add-on change saves at once; an unsaved built-in selection stays as the user left it. */
+  /** An add-on change saves at once; an unsaved built-in selection (the picker's overrides) stays as the user left it. */
   async function adoptExternal(next: ModulesState) {
-    const kept = modulesDirty ? [...selection] : null;
-    adopt(next);
-    if (kept) selection = kept;
+    moduleStore.modules = next;
     await onchange();
-  }
-  // The build's modules can change from anywhere (an install, a rollback, an outside editor):
-  // show the saved selection again unless the user is editing it here.
-  const buildModules = $derived(buildStore.build.modules.join(","));
-  $effect(() => {
-    void buildModules;
-    if (untrack(() => modulesDirty || savingModules)) return;
-    let cancelled = false;
-    api<ModulesState>("/modules")
-      .then(next => { if (!cancelled) adopt(next); })
-      .catch(cause => { if (!cancelled) moduleError = (cause as Error).message; });
-    return () => { cancelled = true; };
-  });
-  function toggleModule(id: ModuleId, on: boolean) {
-    if (!modules) return;
-    selection = modules.available.map(item => item.id).filter(item => (item === id ? on : selection.includes(item)));
-  }
-  async function saveModules() {
-    if (!modules || savingModules) return;
-    savingModules = true;
-    moduleError = "";
-    try {
-      adopt(await api<ModulesState>("/modules", { enabled: selection }));
-      await onchange();
-    } catch (cause) {
-      moduleError = `Could not save modules: ${(cause as Error).message}`;
-    } finally {
-      savingModules = false;
-    }
   }
   const labels: Record<keyof GraphPhysics, string> = { repulsion: "Repulsion", spring: "Spring", damping: "Damping" };
   const explanations: Record<keyof GraphPhysics, string> = {
@@ -248,7 +210,7 @@
       </nav>
     </div>
 
-    <div class="page" data-settings-page={shown}>
+    <div class="page settings-rows" data-settings-page={shown}>
       {#if shown === "appearance"}
         <AppearanceSettings />
       {:else if shown === "desktop"}
@@ -257,6 +219,7 @@
         <QuietHours />
       {:else if shown === "account"}
         <AccountSettings />
+        <ConnectionSettings />
       {:else if shown === "rika-routing"}
         <RoutingMemory />
       {:else if shown === "rika-email"}
@@ -265,38 +228,9 @@
         <MemorySettings />
       {:else if shown === "modules"}
         <Panel title={title} aria-label={title}>
-          {#if modules}
-            <fieldset class="rows" disabled={savingModules}>
-              <legend class="sr-only">Modules</legend>
-              {#each modules.available as item (item.id)}
-                {@const on = selection.includes(item.id)}
-                {@const configured = modules.configured.includes(item.id)}
-                <div class="set-row">
-                  <button type="button" class="set-switch" role="switch" id={`${uid}-module-${item.id}`} aria-checked={on} aria-label={item.label}
-                    aria-describedby={`${uid}-module-${item.id}-about`} onclick={() => toggleModule(item.id, !on)}><i></i></button>
-                  <label class="set-label" for={`${uid}-module-${item.id}`}>{item.label}</label>
-                  <span class="set-desc one-line" id={`${uid}-module-${item.id}-about`} title={item.description}>{item.description}</span>
-                  {#if configured !== modules.enabled.includes(item.id)}
-                    <span class="set-end pending" title={configured ? "Starts after rika! restarts" : "Stops after rika! restarts"}>Restart</span>
-                  {/if}
-                </div>
-              {/each}
-            </fieldset>
-            {#if modules.error}<p class="set-note" role="alert">Saved selection unreadable ({modules.error}). Saving replaces it.</p>{/if}
-            {#if changes.start.length || changes.stop.length}
-              <p class="set-note restart" role="status">Restart rika! to apply{#if changes.start.length} · on: {changes.start.join(", ")}{/if}{#if changes.stop.length} · off: {changes.stop.join(", ")}{/if}.</p>
-            {/if}
-            <div class="set-row foot">
-              {#if modulesDirty}<span class="set-desc">Applies after restart; your data is kept.</span>{/if}
-              <span class="set-end">
-                <Button size="sm" variant="ghost" disabled={!modulesDirty || savingModules} onclick={() => { if (modules) selection = [...modules.configured]; }}>Discard</Button>
-                <Button intent="primary" size="sm" disabled={!modulesDirty || savingModules} onclick={saveModules}>{savingModules ? "Saving…" : "Save modules"}</Button>
-              </span>
-            </div>
-          {:else if !moduleError}<p class="set-note" role="status">Loading modules…</p>{/if}
-          {#if moduleError}<p class="set-note" role="alert">{moduleError}</p>{/if}
+          <ModulePicker bind:overrides={moduleOverrides} onsaved={onchange} />
         </Panel>
-        {#if modules}<ExternalModules {modules} onstate={adoptExternal} onkeys={() => choose("keys")} />{/if}
+        {#if moduleStore.modules}<ExternalModules modules={moduleStore.modules} onstate={adoptExternal} onkeys={() => choose("keys")} />{/if}
       {:else if shown === "graphs"}
         <Panel title={title} aria-label={title}>
           <div class="rows">
@@ -328,12 +262,15 @@
         <TagSettings />
       {:else if shown === "connected-apps"}
         <ConnectedApps />
+        <PhoneSettings />
       {:else if shown === "agents"}
         <AgentSettings />
       {:else if shown === "keys"}
         <Keys />
       {:else if shown === "devices"}
         <Devices />
+      {:else if shown === "backup"}
+        <BackupSettings />
       {:else if shown === "apply-accounts"}
         <ApplyAccounts />
       {/if}
@@ -436,117 +373,6 @@
     color: var(--muted);
     font-size: var(--fs-control);
   }
-  /* One page, one surface: rows inside are split by full-width hairlines. */
-  .page :global(.rows) {
-    display: grid;
-    min-width: 0;
-    margin: 0;
-    padding: 0;
-    border: 0;
-  }
-  .page :global(.set-row) {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    min-width: 0;
-    min-height: 44px;
-    margin: 0 calc(-1 * var(--br-panel-p));
-    padding: 6px var(--br-panel-p);
-    border-top: 1px solid var(--hairline);
-    font-size: 13px;
-  }
-  .page :global(.rows > .set-row:first-of-type) {
-    border-top: 0;
-  }
-  .page :global(.set-label) {
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    flex-shrink: 0;
-    min-width: 130px;
-    color: var(--ink);
-    font-weight: 500;
-  }
-  .page :global(.set-desc) {
-    min-width: 0;
-    color: var(--muted);
-    line-height: 1.45;
-  }
-  /* Module rows stay one line; the whole description is in the tooltip. */
-  .set-desc.one-line {
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-  }
-  .page :global(.set-end) {
-    display: inline-flex;
-    align-items: center;
-    gap: 10px;
-    margin-left: auto;
-  }
-  .page :global(.set-note) {
-    margin: 8px 0 0;
-    color: var(--muted);
-    font-size: 12px;
-  }
-  .page :global(.set-switch) {
-    position: relative;
-    flex-shrink: 0;
-    width: 32px;
-    height: 18px;
-    padding: 0;
-    border: 1px solid var(--hairline);
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--ink) 8%, transparent);
-    cursor: pointer;
-    transition: background-color 160ms;
-  }
-  .page :global(.set-switch i) {
-    position: absolute;
-    top: 2px;
-    left: 2px;
-    width: 12px;
-    height: 12px;
-    border-radius: 999px;
-    background: var(--muted);
-    transition: transform 160ms, background-color 160ms;
-  }
-  .page :global(.set-switch[aria-checked="true"]) {
-    background: color-mix(in srgb, var(--accent) 45%, transparent);
-  }
-  .page :global(.set-switch[aria-checked="true"] i) {
-    transform: translateX(14px);
-    background: var(--ink);
-  }
-  .page :global(.set-switch:focus-visible) {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-  }
-  .page :global(.set-switch:disabled) {
-    opacity: 0.55;
-    cursor: default;
-  }
-  .set-row .set-label[for] {
-    cursor: pointer;
-  }
-  .pending {
-    color: var(--warning);
-    font-size: 12px;
-    cursor: help;
-  }
-  .restart {
-    color: var(--ink);
-  }
-  .restart::before {
-    content: "";
-    display: inline-block;
-    width: 6px;
-    height: 6px;
-    margin-right: 7px;
-    border-radius: 999px;
-    background: var(--warning);
-    vertical-align: 1px;
-  }
   .set-row.slider {
     display: grid;
     grid-template-columns: 130px minmax(0, 1fr) 48px;
@@ -568,7 +394,7 @@
   }
   output {
     color: var(--muted);
-    font: 500 11px var(--font-mono);
+    font: 500 11px var(--font-ui);
     font-variant-numeric: tabular-nums;
     text-align: right;
   }

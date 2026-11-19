@@ -39,7 +39,7 @@ export const DEFAULT_BRAIN_VIEW: BrainView = {
   groupBy: "section",
   labels: "hover",
   turning: true,
-  speed: 1,
+  speed: 0.5,
   lines: false,
   scaffold: true,
   pointSize: 1,

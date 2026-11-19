@@ -3,7 +3,7 @@ import { loadBrief, markBriefSeen, runBrief } from "./api";
 import type { Brief } from "./goals";
 
 /**
- * Today's morning brief (docs/rika-design.md Q15 A), shared by the Rika bar's
+ * Today's morning brief (docs/rika-design.md Q15 A), shared by Rika's
  * "Morning brief · N" chip and the home widget. It loads when the first of them mounts,
  * follows `{type:'brief'}` stream events and re-reads when the window regains focus.
  */

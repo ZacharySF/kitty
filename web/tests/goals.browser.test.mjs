@@ -134,7 +134,7 @@ describe("Goals view", () => {
       assert.equal(await found(page).getByRole("article").count(), internship.suggestions_count);
     }
     // The breadcrumb names the goal.
-    assert.ok(await page.getByRole("navigation", { name: "Schema tabs" }).getByText(INTERNSHIP).isVisible());
+    assert.ok(await page.getByRole("navigation", { name: "Schema path" }).getByText(INTERNSHIP).isVisible());
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -195,6 +195,42 @@ describe("Goals view", () => {
     await detail(page).getByRole("heading", { name: `Linked · ${deck.links_count}` }).waitFor();
     assert.deepEqual(problems, []);
     await context.close();
+  });
+
+  test("target date calendar selects leap days, clears dates and stays inside a narrow drawer", async () => {
+    const { page, context } = await open("#goals");
+    try {
+      await page.getByRole("button", { name: "New goal" }).first().click();
+      const drawer = page.getByRole("dialog", { name: "New goal", exact: true });
+      const input = drawer.getByLabel("Target date", { exact: true });
+      await input.fill("2028-01-31");
+      await drawer.getByRole("button", { name: "Choose target date" }).click({ timeout: 5000 });
+      const calendar = page.getByRole("dialog", { name: "Choose target date", exact: true });
+      await calendar.getByRole("button", { name: "Next month" }).click();
+      await calendar.getByRole("button", { name: "2028-02-29", exact: true }).click();
+      assert.equal(await input.inputValue(), "2028-02-29");
+      assert.equal(await calendar.count(), 0);
+      assert.ok(await drawer.getByRole("button", { name: "Choose target date" }).evaluate(node => node === document.activeElement));
+      await page.setViewportSize({ width: 390, height: 700 });
+      await drawer.getByRole("button", { name: "Choose target date" }).click();
+      const bounds = await calendar.boundingBox();
+      assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= 390 && bounds.y >= 0 && bounds.y + bounds.height <= 700, "calendar stays within the viewport");
+      const day = calendar.getByRole("button", { name: "2028-02-29", exact: true });
+      const size = await day.boundingBox();
+      assert.ok(size.width >= 36 && size.height >= 36, "dates have readable touch targets");
+      await day.press("ArrowLeft");
+      await page.keyboard.press("Enter");
+      assert.equal(await input.inputValue(), "2028-02-28");
+      await drawer.getByRole("button", { name: "Choose target date" }).click();
+      await calendar.getByRole("button", { name: "Clear date" }).click();
+      assert.equal(await input.inputValue(), "");
+      await drawer.getByRole("button", { name: "Choose target date" }).click();
+      await page.keyboard.press("Escape");
+      assert.equal(await calendar.count(), 0);
+      assert.ok(await drawer.isVisible(), "Escape closes only the calendar");
+    } finally {
+      await context.close();
+    }
   });
 
   test("a goal is created, edited and deleted in the side drawer", async () => {
@@ -258,17 +294,14 @@ describe("Goals view", () => {
 });
 
 describe("Morning brief", () => {
-  test("home shows today's brief; the bar chip's popover lists it, marks it seen and opens a goal", async () => {
+  test("the Rika panel's chip on home carries today's brief: a popover that lists it, marks it seen and opens a goal", async () => {
     const { brief } = await call("/rika/brief");
     assert.ok(brief.items.length > 0, "the demo brief has no items");
     const { page, problems, context } = await open("#today");
-    const widget = page.getByRole("complementary", { name: "Home widgets" }).getByRole("region", { name: "Morning brief" });
-    await widget.waitFor({ timeout: 60_000 });
-    // Compact on home: three one-line items, then a link to the rest on Goals.
-    assert.equal(await widget.getByRole("list").getByRole("link").count(), Math.min(3, brief.items.length));
-    if (brief.items.length > 3) assert.ok(await widget.getByRole("link", { name: `${brief.items.length - 3} more in Goals` }).isVisible());
-    assert.ok(await widget.getByText(brief.items[0].title).first().isVisible());
-    const chip = page.getByRole("region", { name: "Rika" }).getByRole("button", { name: /^Morning brief, / });
+    // Design review: home has no separate brief widget; the chip is the one place.
+    const chip = page.locator(".home").getByRole("region", { name: "Rika" }).getByRole("button", { name: /^Morning brief, / });
+    await chip.waitFor({ timeout: 60_000 });
+    assert.equal(await page.getByRole("region", { name: "Home widgets" }).getByRole("region", { name: "Morning brief" }).count(), 0, "home still has a brief widget");
     assert.equal(await chip.textContent(), `Morning brief · ${brief.items.length}`);
     // Keyboard: focus the chip and open it with Enter.
     await chip.focus();
@@ -277,7 +310,8 @@ describe("Morning brief", () => {
     await popover.waitFor();
     const chipBox = await chip.boundingBox();
     const popBox = await popover.boundingBox();
-    assert.ok(popBox.y + popBox.height <= chipBox.y, "the popover is not above the bar");
+    assert.ok(popBox.y + popBox.height <= chipBox.y || popBox.y >= chipBox.y + chipBox.height, "the popover covers its chip");
+    assert.ok(popBox.y >= 0 && popBox.y + popBox.height <= page.viewportSize().height, "the popover leaves the window");
     assert.equal(await popover.getByRole("list").getByRole("link").count(), brief.items.length);
     assert.ok(await popover.getByRole("link", { name: "Open Goals" }).isVisible());
     await page.waitForFunction(async () => (await (await fetch("/api/rika/brief", { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).brief.seen === true);
@@ -339,7 +373,7 @@ describe("Rika alerts", () => {
     const minute = new Date().getHours() * 60 + new Date().getMinutes();
     const quiet = { enabled: true, from: (minute + 1380) % 1440, to: (minute + 60) % 1440, letCalendar: true, digest: true };
     const { page, problems, context } = await open("#today", { quiet });
-    await page.getByRole("button", { name: /^Notifications, / }).waitFor({ timeout: 60_000 });
+    await page.locator(".wordmark").waitFor({ timeout: 60_000 });
     await page.waitForFunction((key) => JSON.parse(localStorage.getItem("kitty.notify.ledger") ?? "{}").held?.includes(key), alerts[0].key, { timeout: 30_000 });
     assert.equal(await page.getByText("Rika · strong match").count(), 0, "an alert toasted during quiet hours");
     assert.deepEqual(problems, []);
@@ -357,7 +391,9 @@ describe("themes and motion", () => {
       // Text and controls stay readable: the title is opaque ink, never the surface colour.
       const [ink, fill] = await detail(page).evaluate((node) => [getComputedStyle(node.querySelector("h2")).color, getComputedStyle(node).backgroundColor]);
       assert.notEqual(ink, fill);
-      await page.getByRole("region", { name: "Rika" }).getByRole("button", { name: /^Morning brief, / }).click();
+      // Away from home the chip is in Rika's drawer.
+      await page.keyboard.press("Control+j");
+      await page.getByRole("dialog", { name: "Rika" }).getByRole("button", { name: /^Morning brief, / }).click();
       const popover = page.getByRole("dialog", { name: "Morning brief" });
       await popover.waitFor();
       assert.ok((await popover.boundingBox()).width >= 300);

@@ -32,8 +32,9 @@
     // removed, a template focuses a field); state changes wait until that update is done.
     const focusIn = (event: FocusEvent) => {
       const element = event.target;
-      // Top-layer dialogs and popovers paint above any page layer; their ring stays plain.
-      const shown = element instanceof HTMLElement && element.matches(":focus-visible") && !element.closest("dialog, [popover]");
+      // Top-layer dialogs and popovers paint above any page layer; their ring stays plain. The page
+      // itself (`main`, focused after a jump from search) takes no ring, as its CSS says.
+      const shown = element instanceof HTMLElement && element.matches(":focus-visible") && element.tagName !== "MAIN" && !element.closest("dialog, [popover]");
       queueMicrotask(() => {
         target = shown ? element : null;
         if (shown) place();
@@ -97,10 +98,10 @@
     contain: strict;
     will-change: transform;
   }
-  /* Above everything, edges only, never in the pointer's way; it ends above the Rika bar. */
+  /* Above everything, edges only, never in the pointer's way. */
   .theme-frame {
     position: fixed;
-    inset: 0 0 var(--rika-space, 0px);
+    inset: 0;
     z-index: 900;
     pointer-events: none;
   }

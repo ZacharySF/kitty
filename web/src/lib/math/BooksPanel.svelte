@@ -120,13 +120,13 @@
   }
   .eyebrow {
     color: var(--subtle);
-    font: 500 10px var(--font-mono);
+    font: 500 10px var(--font-ui);
     letter-spacing: 0.12em;
     text-transform: uppercase;
   }
   .due-count {
     color: var(--warning);
-    font: 500 11px var(--font-mono);
+    font: 500 11px var(--font-ui);
   }
   .entries {
     display: grid;

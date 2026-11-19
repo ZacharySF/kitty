@@ -2,6 +2,7 @@
   import { onMount, tick, untrack } from "svelte";
   import { Panel, Button, Badge } from "@nunera/bracket";
   import { api, safeUrl } from "./api";
+  import { tween } from "./motion";
   import SchemaNetwork from "./SchemaNetwork.svelte";
   import type { GraphLayout, GraphLink, GraphNode } from "./graph3d";
   import { useWorkspaceContext, type SaveStatus } from "./workspaceContext.svelte";
@@ -19,7 +20,7 @@
   /**
    * The one mind-map editor (Q18 D, Q19 A): Notes' Map mode (embedded, the page's own map),
    * Study's Mind map tab and the Mind maps view (Ctrl K) all open it. Chrome: a slim top bar
-   * (map switcher, title, layout, view, ⋯), the Notes canvas pill for building, a small bar on
+   * (map switcher, title, layout, ⋯), the Notes canvas pill for building, a small bar on
    * the selected topic and a zoom corner; the canvas fills the rest. Edits autosave and the
    * save state is a dot on the tab.
    */
@@ -111,7 +112,6 @@
     queue_state: string;
   };
   type Snapshot = { title: string; graph: Graph; viewport: View };
-  type View3D = "edit" | "map3d" | "network";
   type NetworkNode = {
     id: string;
     kind: string;
@@ -284,8 +284,7 @@
   let erasing: {pointer: number; erased: boolean} | null = null, penHover = false, penSeen = -Infinity;
   /** The last tap (node id, `edge:` id or `stage`), so a second tap on the same spot is a double tap. */
   let lastTap = {key: "", time: 0, x: 0, y: 0};
-  let view = $state<View3D>("edit"),
-    mapLayout = $state<GraphLayout>("tree"),
+  let view = $state<"edit" | "network">("edit"),
     netLayout = $state<GraphLayout>("tree");
   let network = $state<Network | null>(null),
     netMode = $state(""),
@@ -1277,7 +1276,8 @@
     if (stage?.hasPointerCapture(e.pointerId))
       stage.releasePointerCapture(e.pointerId);
   }
-  function zoom(factor: number, clientX?: number, clientY?: number) {
+  let stopZoom = () => {};
+  function zoom(factor: number, clientX?: number, clientY?: number, glide = clientX === undefined) {
     if (!current || !editable) return;
     const rect = stage?.getBoundingClientRect(),
       x =
@@ -1291,9 +1291,15 @@
     remember();
     const v = current.viewport,
       z = Math.max(0.1, Math.min(4, v.zoom * factor));
-    v.x = Math.max(-1e7, Math.min(1e7, x - ((x - v.x) * z) / v.zoom));
-    v.y = Math.max(-1e7, Math.min(1e7, y - ((y - v.y) * z) / v.zoom));
-    v.zoom = z;
+    const from = { x: v.x, y: v.y, zoom: v.zoom };
+    const to = { x: Math.max(-1e7, Math.min(1e7, x - ((x - v.x) * z) / v.zoom)), y: Math.max(-1e7, Math.min(1e7, y - ((y - v.y) * z) / v.zoom)), zoom: z };
+    // The buttons and keys glide there (the Animations module); the wheel and a pinch stay direct.
+    stopZoom();
+    stopZoom = tween(glide ? 170 : 0, (progress) => {
+      v.x = from.x + (to.x - from.x) * progress;
+      v.y = from.y + (to.y - from.y) * progress;
+      v.zoom = from.zoom + (to.zoom - from.zoom) * progress;
+    });
   }
   function fit() {
     if (!current || !editable) return;
@@ -1598,36 +1604,6 @@
     }
     frame();
   }
-  function degreeOf(id: string) {
-    return (
-      current?.graph.edges.filter((e) => e.from === id || e.to === id).length ??
-      0
-    );
-  }
-  const mapGraph = $derived.by(() => {
-    if (!current) return { nodes: [] as GraphNode[], links: [] as GraphLink[] };
-    const degree = new Map<string, number>();
-    for (const e of current.graph.edges) {
-      degree.set(e.from, (degree.get(e.from) ?? 0) + 1);
-      if (e.to !== e.from) degree.set(e.to, (degree.get(e.to) ?? 0) + 1);
-    }
-    return {
-      nodes: current.graph.nodes.map((n): GraphNode => ({
-        id: n.id,
-        label: name(n),
-        group: n.kind,
-        kind: n.kind,
-        size: Math.min(10, 1 + (degree.get(n.id) ?? 0)),
-        detail: `${n.kind}${n.source ? " / linked source" : ""} / ${degree.get(n.id) ?? 0} connections`,
-      })),
-      links: current.graph.edges.map((e): GraphLink => ({
-        source: e.from,
-        target: e.to,
-        label: e.label,
-        directed: true,
-      })),
-    };
-  });
   function mapTitle(id: number) {
     const m =
       network?.maps.find((m) => m.id === id) ?? maps.find((m) => m.id === id);
@@ -2118,10 +2094,6 @@
           {#each LAYOUTS as [id, text] (id)}<button type="button" role="menuitem" class="menu-item" onclick={() => { layoutOpen = false; arrange(id); }}>{text}</button>{/each}
         </Popover>
       {/if}
-      {#if current && view !== "network"}
-        <span class="vr" aria-hidden="true"></span>
-        <Select label="View" kind="segments" value={view} options={[{value: "edit", label: "Map"}, {value: "map3d", label: "Graph"}]} onchange={(value) => view = value as View3D} />
-      {/if}
       <OverflowMenu label="More map actions" items={mapActions} />
     </header>
   {/if}
@@ -2192,33 +2164,6 @@
             {#if !links.out.length && !links.in.length}<li class="hint">No connections.</li>{/if}
           </ul>
         {:else}<p class="hint">Select a topic to see where it appears.</p>{/if}
-      </aside>
-    </div>
-  {:else if current && view === "map3d"}
-    <div class="views graph-view">
-      <main class="graph-pane">
-        {#if pane.active}
-          <SchemaNetwork title={`Map / ${current.title}`} nodes={mapGraph.nodes} links={mapGraph.links} bind:layout={mapLayout}
-            selected={selected || null} onSelect={(id) => { const n = current?.graph.nodes.find((n) => n.id === id); if (n) choose(n); }} />
-        {/if}
-      </main>
-      <aside class="side">
-        {#if node}
-          <h2>{name(node)}</h2>
-          <Badge label={node.kind} />
-          <p class="hint">{degreeOf(node.id)} connections in this map</p>
-          {#if node.source && current.live[node.id]?.missing}<p class="hint warn">Source deleted; unlink it in the map.</p>{/if}
-          {#if node.notes}<p class="notes">{node.notes}</p>{/if}
-          {#if safeUrl((node.source ? current.live[node.id]?.url : undefined) ?? node.url)}<a href={safeUrl((node.source ? current.live[node.id]?.url : undefined) ?? node.url)} target="_blank" rel="noopener noreferrer">Open source ↗</a>{/if}
-          <span class="eyebrow">Connections</span>
-          <ul class="members">
-            {#each current.graph.edges.filter((e) => e.from === node.id || e.to === node.id) as e (e.id)}
-              {@const other = current.graph.nodes.find((n) => n.id === (e.from === node.id ? e.to : e.from))!}
-              <li>{e.from === node.id ? `→ ${e.label || "(unlabeled)"} → ${e.to === node.id ? "itself" : name(other)}` : `← ${e.label || "(unlabeled)"} ← ${name(other)}`}</li>
-            {:else}<li class="hint">No connections.</li>{/each}
-          </ul>
-          <Button size="sm" onclick={() => editInMap(current!.id, node.id)}>Edit in map</Button>
-        {:else}<p class="hint">Select a topic in the graph.</p>{/if}
       </aside>
     </div>
   {:else if current}
@@ -2598,12 +2543,12 @@
 </section>
 
 <style>
-  /* Q18: one surface that fills its tab above the Rika bar (or its host, embedded in Notes). */
+  /* Q18: one surface that fills its tab (or its host, embedded in Notes). */
   .schema {
     position: relative;
     display: flex;
     flex-direction: column;
-    height: var(--map-height, var(--fit-h, calc(100dvh - var(--workbench-top, 0px) - var(--rika-space, 0px) - 34px)));
+    height: var(--map-height, var(--fit-h, calc(100dvh - var(--workbench-top, 0px) - 34px)));
     min-height: 420px;
     overflow: hidden;
     color: var(--ink);
@@ -2683,7 +2628,7 @@
     font: 500 var(--fs-control) / 1.3 var(--font-ui);
     text-align: left;
   }
-  .switch-item small { margin: 0; color: var(--subtle); font: 500 var(--fs-chrome) / 1 var(--font-mono); text-transform: uppercase; letter-spacing: 0.08em; }
+  .switch-item small { margin: 0; color: var(--subtle); font: 500 var(--fs-chrome) / 1 var(--font-ui); text-transform: uppercase; letter-spacing: 0.08em; }
   .switch-item:hover,
   .menu-item:hover,
   .menu-item:focus-visible { background: var(--wash); }
@@ -2782,7 +2727,7 @@
   .graph-node.root .label { fill: var(--solid-void); font: 600 13px var(--font-ui); }
   .graph-node .fold circle { fill: color-mix(in srgb, var(--b) 40%, var(--solid-panel)); }
   .graph-node.root .fold circle { fill: var(--solid-void); }
-  .graph-node .fold text { fill: var(--ink); font: 600 9px var(--font-mono); pointer-events: none; }
+  .graph-node .fold text { fill: var(--ink); font: 600 9px var(--font-ui); pointer-events: none; }
   .graph-node.root.painted .pill { fill: var(--b); }
   .graph-node.drop-target .pill {
     stroke: var(--accent);
@@ -3023,7 +2968,7 @@
   }
   .z.fit { padding: 0 7px; font-size: 11.5px; }
   .z:hover:not(:disabled) { background: var(--wash); color: var(--ink); }
-  .pct { min-width: 38px; color: var(--muted); font: 500 var(--fs-chrome) / 1 var(--font-mono); text-align: center; }
+  .pct { min-width: 38px; color: var(--muted); font: 500 var(--fs-chrome) / 1 var(--font-ui); text-align: center; }
   .corner .vr { height: 14px; margin: 0 2px; }
 
   /* The pill's ⋯ panel: small forms and searches. */
@@ -3100,7 +3045,7 @@
   .branches a { margin: 0; color: var(--ink); text-decoration: none; }
   .branches a:hover,
   .branches a:focus-visible { color: var(--accent); }
-  .ref-kind { display: block; margin-bottom: 2px; color: var(--violet); font: 500 var(--fs-chrome) / 1.2 var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; }
+  .ref-kind { display: block; margin-bottom: 2px; color: var(--violet); font: 500 var(--fs-chrome) / 1.2 var(--font-ui); letter-spacing: 0.06em; text-transform: uppercase; }
   code { color: var(--violet); }
   @media (max-width: 900px) {
     .views,

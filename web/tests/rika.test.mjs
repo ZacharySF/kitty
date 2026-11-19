@@ -1,24 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { agentChips, costLabel, entryKey, holdLeft, holdClock, mergeEntries, mailLine, rikaSocketUrl, usageReadout, usd } from '../src/lib/rika/rika.ts';
+import { costLabel, entryKey, holdLeft, holdClock, mergeEntries, mailLine, rikaSocketUrl, usageReadout, usd, voiceEnabled } from '../src/lib/rika/rika.ts';
 import { compactTokens, trendPath, trendRange } from '../src/lib/rika/settings/settings.ts';
 
-const agent = (id, status) => ({ id, kind: 'omp', name: `omp ${id}`, status, task: '', line: '', since: 0, where: {} });
-
-test('up to four running agents get a chip each; past four they collapse to one count', () => {
-  const four = ['a', 'b', 'c', 'd'].map((id) => agent(id, 'working'));
-  assert.deepEqual(agentChips(four), { kind: 'agents', agents: four });
-  assert.deepEqual(agentChips([]), { kind: 'agents', agents: [] });
-  const five = [...four, agent('e', 'done')];
-  assert.deepEqual(agentChips(five), { kind: 'count', count: 5, status: 'working' });
-});
-
-test('the count chip takes the most urgent state: blocked, then working, idle, done', () => {
-  const many = (states) => agentChips(states.map((status, index) => agent(String(index), status)));
-  assert.equal(many(['done', 'idle', 'working', 'blocked', 'done']).status, 'blocked');
-  assert.equal(many(['done', 'idle', 'idle', 'working', 'done']).status, 'working');
-  assert.equal(many(['done', 'idle', 'done', 'done', 'done']).status, 'idle');
-  assert.equal(many(['done', 'done', 'done', 'done', 'done']).status, 'done');
+test('voice is the voice module with its pack installed: otherwise Rika is text only', () => {
+  assert.equal(voiceEnabled({ enabled: ['workspace', 'voice'] }), true);
+  assert.equal(voiceEnabled({ enabled: ['workspace', 'voice'], missing: [] }), true);
+  assert.equal(voiceEnabled({ enabled: ['workspace', 'voice'], missing: ['voice'] }), false);
+  assert.equal(voiceEnabled({ enabled: ['workspace', 'brain'] }), false);
+  assert.equal(voiceEnabled({ enabled: [] }), false);
 });
 
 test('the stream socket stays on the page origin; only the scheme changes', () => {
@@ -216,4 +206,37 @@ test('routing memory numbers: compact tokens and a 14-day trend line', () => {
   // Days without requests are skipped for the from → to range.
   assert.deepEqual(trendRange([{ day: 'a', requests: 0, avg_cost_usd: 0 }, ...trend]), { from: 0.006, to: 0.002 });
   assert.equal(trendRange([]), null);
+});
+
+import { askedAt, otherDate, radioStep } from '../src/lib/rika/rika.ts';
+
+test('another date answers a date question only once it is a whole date, with its time when it has one', () => {
+  assert.deepEqual(otherDate('2026-11-20'), { date: '2026-11-20', time: null });
+  assert.deepEqual(otherDate('2026-11-20T16:30'), { date: '2026-11-20', time: '16:30' });
+  assert.equal(otherDate(''), null);
+  assert.equal(otherDate('2026-11'), null);
+  assert.equal(otherDate('2026-13-40'), null);
+  assert.equal(otherDate('20/11/2026'), null);
+});
+
+test('arrow keys walk the date chips and wrap; other keys are left alone', () => {
+  assert.equal(radioStep(0, 3, 'ArrowRight'), 1);
+  assert.equal(radioStep(2, 3, 'ArrowDown'), 0);
+  assert.equal(radioStep(0, 3, 'ArrowLeft'), 2);
+  assert.equal(radioStep(1, 3, 'ArrowUp'), 0);
+  assert.equal(radioStep(1, 3, 'Home'), 0);
+  assert.equal(radioStep(1, 3, 'End'), 2);
+  assert.equal(radioStep(1, 3, 'Tab'), null);
+  assert.equal(radioStep(0, 0, 'ArrowRight'), null);
+});
+
+test('a question sits under the reply that asks it, even when the page stamped that reply late', () => {
+  const plan = { id: 'p', plan_kind: 'confirm', created_at: '2026-11-14T10:00:00.100000+00:00' };
+  assert.equal(askedAt(plan, { created_at: '2026-11-14T10:00:00.250Z' }), '2026-11-14T10:00:00.251Z');
+  assert.equal(askedAt(plan, { created_at: '2026-11-14T10:00:00.050000+00:00' }), plan.created_at);
+  assert.equal(askedAt(plan, undefined), plan.created_at);
+  assert.equal(askedAt({ ...plan, plan_kind: 'dump' }, { created_at: '2026-11-14T10:00:00.250Z' }), plan.created_at);
+  const reply = { kind: 'message', id: 'm', role: 'rika', text: 'Which day?', created_at: '2026-11-14T10:00:00.250Z' };
+  const merged = mergeEntries([reply], [{ kind: 'plan', ...plan, created_at: askedAt(plan, reply) }]);
+  assert.deepEqual(merged.map(entryKey), ['message:m', 'plan:p']);
 });

@@ -104,7 +104,7 @@
 
 <Panel title="Devices" aria-label="Devices">
     <div class="devices">
-      <p class="muted">Sync your notes between your own devices. Pair each device once with a short code; after that they find each other on the same network, or at an address you set (for example over Tailscale), and sync directly, end-to-end encrypted. Nothing goes through a server.</p>
+      <p class="muted">Sync your notes between your own devices. Pair each device once with a short code; after that they find each other on the same network, or at an address you set (for example over Tailscale), and sync directly, end-to-end encrypted. Device sync never goes through a server.</p>
       <p class="muted">In this version only notes sync. Jobs, applications and the calendar stay on each device.</p>
       {#if devices}
         {@const device = devices.device}
@@ -241,8 +241,8 @@
   .pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: .75rem; }
   .pair-side { display: grid; align-content: start; gap: .5rem; padding: .65rem .75rem; border: 1px solid var(--border-fine, var(--border)); border-radius: 8px; }
   .pair-side label { display: grid; gap: .2rem; font-size: .8rem; }
-  .big-code { font-family: var(--font-mono, monospace); font-size: 2rem; letter-spacing: .12em; font-variant-numeric: tabular-nums; }
-  .mono { font-family: var(--font-mono, monospace); font-variant-numeric: tabular-nums; }
+  .big-code { font-family: var(--font-ui); font-size: 2rem; letter-spacing: .12em; font-variant-numeric: tabular-nums; }
+  .mono { font-family: var(--font-ui); font-variant-numeric: tabular-nums; }
   .nearby { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: .4rem; }
   .nearby small { color: var(--muted); }
   :global(.explain) p { margin: 0; max-width: 36rem; font-size: 12px; line-height: 1.7; color: var(--muted); }

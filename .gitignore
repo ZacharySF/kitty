@@ -31,6 +31,7 @@ web/dist/
 
 # Native desktop build output and local packaging environments
 desktop/target/
+server/target/
 desktop/binaries/
 desktop/.build/
 desktop/result

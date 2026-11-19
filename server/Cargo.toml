@@ -1,0 +1,62 @@
+[package]
+name = "rika-server"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "rika!'s local web front: serves the UI, enforces its security rules, answers ported routes and forwards the rest to the Python backend"
+
+[dependencies]
+# Versions match desktop/Cargo.lock so the shell can embed this crate without new builds.
+base64 = "0.22.1"
+bytes = "1.12"
+flate2 = "1.1.10"
+# Python's html.parser expressions, look-arounds included (crate::flashcards::html).
+fancy-regex = "0.14"
+form_urlencoded = "1.2"
+getrandom = "0.3"
+hex = "0.4"
+http-body-util = "0.1.5"
+libc = "0.2.191"
+hyper = { version = "1.12", features = ["client", "http1", "server"] }
+hyper-util = { version = "0.1.21", features = ["tokio"] }
+# Python's dicts and insertion-ordered sets in the block engine (crate::blocks).
+indexmap = "2.14"
+# IANA time zones for the ported calendar and goals (crate::ported::time), the database
+# compiled in as Python's `tzdata` ships it, so every platform resolves the same zones.
+jiff = { version = "0.2.38", default-features = false, features = ["std", "tz-fat", "tzdb-bundle-always"] }
+# The pages' Loro documents (crate::blocks::crdt): the version and features Python's `loro`
+# 1.17.1 wraps, so a page's update and snapshot bytes are the ones Python writes.
+loro = "=1.17.1"
+# The FxHashMap a Loro map value is built in, as Python's `loro` builds it (crate::blocks::crdt).
+rustc-hash = "=2.1.1"
+minisign-verify = "0.2.5"
+percent-encoding = "2.3"
+# `kitty.core.sources.safe_error`'s redaction patterns (crate::bootstrap).
+regex = "1.13"
+# The workspace database (crate::migrations, crate::bootstrap); bundled, so the FTS5 and
+# trigram tokenizers the schema uses are always there.
+rusqlite = { version = "0.42", default-features = false, features = ["bundled"] }
+# The desktop updater's HTTPS stack (tauri-plugin-updater's rustls-tls): rustls with ring.
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider", "system-proxy"] }
+rustls = { version = "0.23.46", default-features = false, features = ["ring"] }
+serde = { version = "1", features = ["derive"] }
+# Python's dict order in answers the front builds itself.
+# float_roundtrip: a stored float reads back as the same f64 (Python's floats are; the default parser can be one bit off).
+serde_json = { version = "1.0.154", features = ["preserve_order", "float_roundtrip"] }
+# Anki packages (crate::flashcards::anki): legacy and modern collections, media checksums.
+ruzstd = "0.8"
+# The live channel's WebSocket handshake (crate::live).
+sha1 = "0.10.6"
+sha2 = "0.10.9"
+subtle = "2.6"
+tar = { version = "0.4.46", default-features = false }
+tokio = { version = "1.54", features = ["fs", "io-std", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
+# The OS keyring (crate::keys): the Secret Service over the session bus, with the default
+# features the desktop shell's zbus already uses.
+zbus = "5.19"
+zip = { version = "4.6.1", default-features = false, features = ["deflate"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

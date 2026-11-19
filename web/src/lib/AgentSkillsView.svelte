@@ -137,7 +137,7 @@
   .mono {
     margin: 0;
     color: var(--subtle);
-    font: 10.5px var(--font-mono);
+    font: 10.5px var(--font-ui);
     letter-spacing: 0.06em;
   }
   .cols {
@@ -166,7 +166,7 @@
   h2 small {
     margin-left: auto;
     color: var(--subtle);
-    font: 10px var(--font-mono);
+    font: 10px var(--font-ui);
   }
   .item {
     display: flex;
@@ -175,12 +175,12 @@
     margin: 4px 0 8px;
   }
   .item span {
-    font: 500 12px var(--font-mono);
+    font: 500 12px var(--font-ui);
     overflow-wrap: anywhere;
   }
   .item small {
     color: var(--subtle);
-    font: 10px var(--font-mono);
+    font: 10px var(--font-ui);
     text-transform: uppercase;
   }
   .empty {

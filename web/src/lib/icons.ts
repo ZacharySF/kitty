@@ -31,8 +31,9 @@ export const ICONS: Record<string, IconDef> = {
   schema: { path: "M3 16h4v4H3ZM17 16h4v4h-4ZM12 9.6V12M5 16v-4h14v4", accents: [[12, 5.6, 3.9]] },
   ai: { path: "M5 7h14v13H5ZM8 11h.01M16 11h.01M8 16h8M2 10v6M22 10v6", accents: [[12, 3.6, 2.6]] },
   terminal: { path: "M3 4h18v16H3Zm4 5 3 3-3 3", accents: [[15.6, 14.8, 3]] },
-  // The brand mark sits on a pastel squircle in the top bar; a blossom there would vanish.
-  kitty: plain("M4 10V3l5 4a10 10 0 0 1 6 0l5-4v7a8 8 0 1 1-16 0ZM8 12h.01M16 12h.01m-6 4 2 1 2-1"),
+  // The brand mark, the poured cat (scripts/brand_icons.py `hairline()`): the surface line rises into the
+  // ears, and the tail breaks the surface. It sits on a pastel squircle in the top bar; a blossom there would vanish.
+  kitty: plain("M2.00 15.26H2.11Q4.25 15.26 4.25 14.42L4.25 13.91Q4.25 13.24 4.44 12.59L5.35 9.55Q5.60 8.74 5.97 9.49L7.21 11.96Q7.51 12.56 8.18 12.56H9.98Q10.65 12.56 10.95 11.96L12.19 9.49Q12.56 8.74 12.80 9.55L13.72 12.59Q13.91 13.24 13.91 13.91L13.91 14.42Q13.91 15.26 16.04 15.26H22.00M19.30 15.26V11.44C19.30 9.98 19.87 9.42 21.33 9.42"),
   jobs: { path: "m21 21-4.4-4.4M19 10.5a8.5 8.5 0 1 1-17 0 8.5 8.5 0 0 1 17 0", accents: [[10.5, 10.5, 3.8]] },
   queue: { path: "M4 5h16M4 12h10M4 19h10", accents: [[19, 12, 3]] },
   applications: { path: "M8 5V3h8v2M3 7h18v14H3ZM3 12h9.6M14.4 12H21", accents: [[12, 13.6, 2.4]] },
@@ -49,6 +50,11 @@ export const ICONS: Record<string, IconDef> = {
   close: plain("m6 6 12 12M6 18 18 6"),
   refresh: plain("M20 7v5h-5M4 17v-5h5M5.2 7a8 8 0 0 1 13.2-2L20 8M4 16l1.6 3A8 8 0 0 0 19 17"),
   check: plain("m5 12 4 4L19 6"),
+  clock: plain("M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18ZM12 7.5V12l3 2"),
+  timer: plain("M12 6a7.5 7.5 0 1 0 0 15 7.5 7.5 0 0 0 0-15ZM12 10v3.5M9.5 3h5M18.2 7.3l1.3-1.3"),
+  pulse: plain("M3 12h4l2.5-6 4 12 2.5-6H21"),
+  week: plain("M4 6.5A1.5 1.5 0 0 1 5.5 5h13A1.5 1.5 0 0 1 20 6.5v12a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18.5ZM4 9.5h16M8 3v4M16 3v4M8 13h.01M12 13h.01M16 13h.01M8 16.5h.01M12 16.5h.01"),
+  next: plain("M4 6h10M4 12h10M4 18h6M17 9l3 3-3 3"),
   download: plain("M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"),
   location: plain("M19 10c0 5-7 11-7 11S5 15 5 10a7 7 0 0 1 14 0ZM15 10a3 3 0 1 1-6 0 3 3 0 0 1 6 0"),
   menu: plain("M4 6h16M4 12h16M4 18h16"),
@@ -58,6 +64,8 @@ export const ICONS: Record<string, IconDef> = {
   redo: plain("m15 14 5-5-5-5m5 5H9a5 5 0 0 0 0 10h3"),
   plus: plain("M12 5v14M5 12h14"),
   more: plain("M5 11a1 1 0 1 1 0 2 1 1 0 0 1 0-2ZM12 11a1 1 0 1 1 0 2 1 1 0 0 1 0-2ZM19 11a1 1 0 1 1 0 2 1 1 0 0 1 0-2Z"),
+  expand: plain("M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"),
+  collapse: plain("M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"),
   // Canvas drawing tools (Notes), keyed `tool-<tool id>`.
   "tool-select": plain("M5 3l13 8-6 1.4L9 18.5Z"),
   "tool-lasso": plain("M12 4c4.4 0 8 2.4 8 5.5S16.4 15 12 15s-8-2.4-8-5.5S7.6 4 12 4ZM7 13.5c-1.6 1.6-.6 3.5 1.2 3.5 1.5 0 1.8 1.9.3 3.5"),
@@ -79,7 +87,7 @@ export const ICONS: Record<string, IconDef> = {
   "actor-omp": plain("M4 7h16M9 7v13M15 7v10a3 3 0 0 0 3 3h1"),
   "actor-claude": plain("M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6 5.6 18.4"),
   "actor-codex": plain("M8 6 3 12l5 6M16 6l5 6-5 6M13.5 4l-3 16"),
-  "actor-rika": plain("M4 10V3l5 4a10 10 0 0 1 6 0l5-4v7a8 8 0 1 1-16 0ZM9 12h.01M15 12h.01"),
+  "actor-rika": plain("M2.00 15.26H2.11Q4.25 15.26 4.25 14.42L4.25 13.91Q4.25 13.24 4.44 12.59L5.35 9.55Q5.60 8.74 5.97 9.49L7.21 11.96Q7.51 12.56 8.18 12.56H9.98Q10.65 12.56 10.95 11.96L12.19 9.49Q12.56 8.74 12.80 9.55L13.72 12.59Q13.91 13.24 13.91 13.91L13.91 14.42Q13.91 15.26 16.04 15.26H22.00M19.30 15.26V11.44C19.30 9.98 19.87 9.42 21.33 9.42"),
   "actor-client": plain("M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0ZM12 17v4"),
   "actor-system": plain("M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.2 2.2M16.2 16.2l2.2 2.2M5.6 18.4l2.2-2.2M16.2 7.8l2.2-2.2"),
   "actor-peer": plain("M3 5h13v9H3ZM1 17h17M19 9h3v11h-3Z"),

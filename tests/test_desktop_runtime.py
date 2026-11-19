@@ -1,4 +1,9 @@
-"""Real desktop sidecar lifecycle against isolated public-example workspaces."""
+"""Real desktop sidecar lifecycle against isolated public-example workspaces.
+
+The backend runs as the shell starts it: behind rika-server --desktop (server/), which
+owns the readiness line (the front's origin and secret), relays the owner pipe and quit,
+and is the address the published endpoint names. The backend refuses to run without it.
+"""
 from __future__ import annotations
 
 import http.client
@@ -18,7 +23,7 @@ from urllib.parse import urlsplit
 import pytest
 
 from kitty import web_auth
-from terminal_support import FakeHerdr, FrameReader, websocket
+from terminal_support import RIKA_SERVER, FakeHerdr, FrameReader, websocket
 
 
 PROJECT = Path(__file__).resolve().parents[1]
@@ -47,9 +52,67 @@ def test_selected_workspace_is_reused_without_overwriting(tmp_path):
     assert (root / ".private").is_dir()
 
 
+def test_the_backend_refuses_to_serve_without_the_front(tmp_path):
+    bundle = tmp_path / "bundle"
+    (bundle / "website").mkdir(parents=True)
+    (bundle / "website" / "index.html").write_text("<!doctype html>")
+    (bundle / "backend-package.txt").write_text("kitty\n")
+    code = ("import runpy, sys; sys._MEIPASS=sys.argv[1]; entry=sys.argv[3]; "
+            "sys.argv=['kitty-web', '--workspace', sys.argv[2]]; runpy.run_path(entry, run_name='__main__')")
+    environment = {**os.environ, "PYTHONPATH": os.pathsep.join((str(PROJECT), str(PROJECT / "src")))}
+    result = subprocess.run([sys.executable, "-c", code, str(bundle), str(tmp_path / "workspace"),
+                             str(PROJECT / "desktop/backend.py")],
+                            env=environment, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60)
+    assert result.returncode == 1 and "only behind rika-server" in result.stderr
+    assert result.stdout == "" and not (tmp_path / "workspace").exists()
+
+
+def shown_reason(stderr: str) -> str:
+    """What the shell's start-up error dialog shows (desktop/src/main.rs `startup_failure`)."""
+    line = next((line.strip() for line in reversed(stderr.splitlines()) if line.strip()), "")
+    return line.removeprefix("rika-server: ") or "rika-server stopped before it was ready"
+
+
+@pytest.mark.parametrize("case", ["pre-block workspace without a backend", "backend exits before readiness"])
+def test_a_front_that_cannot_start_ends_its_stderr_with_the_reason_the_shell_shows(tmp_path, case):
+    """The shell captures rika-server's stderr; before readiness, its last line is the dialog's reason."""
+    if not RIKA_SERVER.is_file():
+        pytest.skip(f"rika-server is not built ({RIKA_SERVER}); run cargo build --release in server/")
+    from test_front_migrations import MAIN_SCHEMA
+
+    from kitty.db import connect, migrate
+    from kitty.db.migrations import available_migrations
+
+    root = tmp_path / "workspace"
+    (root / "data").mkdir(parents=True)
+    if case.startswith("pre-block"):
+        files = tmp_path / "main-files"
+        files.mkdir()
+        for migration in available_migrations():
+            if migration.version in MAIN_SCHEMA:
+                shutil.copy(migration.path, files / migration.path.name)
+        conn = connect(root / "data" / "apply.db")
+        migrate(conn, files)
+        conn.execute("INSERT INTO quick_notes(body, created_at, updated_at) VALUES ('Synthetic note', 't', 't')")
+        conn.close()
+        program, expected = str(tmp_path / "no-backend"), "open the workspace once with rika! 0.3.36"
+    else:
+        program, expected = shutil.which("false"), "the Python backend exited before becoming ready"
+    environment = {key: value for key, value in os.environ.items() if key not in {"KITTY_HOME", "KITTY_DB"}}
+    # As desktop/src/main.rs `front_arguments` starts it.
+    result = subprocess.run(
+        [str(RIKA_SERVER), "--desktop", "--port", "0", "--static-dir", str(tmp_path), "--root", str(root),
+         "--worker-program", program, "--worker-arg", "--workspace", "--worker-arg", str(root)],
+        cwd=tmp_path, env=environment, stdin=subprocess.PIPE, capture_output=True, text=True, timeout=60)
+    assert result.returncode == 1 and result.stdout == "", "no readiness line"
+    assert expected in shown_reason(result.stderr)
+
+
 @pytest.fixture
 def backend(tmp_path, request):
     """The frozen entrypoint; indirect parametrization passes extra arguments (e.g. --safe)."""
+    if not RIKA_SERVER.is_file():
+        pytest.skip(f"rika-server is not built ({RIKA_SERVER}); run cargo build --release in server/")
     extra = list(getattr(request, "param", ()))
     root = tmp_path / "workspace"
     bundle = tmp_path / "bundle"
@@ -69,9 +132,13 @@ def backend(tmp_path, request):
     for key in ("KITTY_HOME", "KITTY_DB", "KITTY_HOME", "KITTY_DB", "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY"):
         environment.pop(key, None)
     environment["PYTHONPATH"] = os.pathsep.join((str(PROJECT), str(PROJECT / "src")))
+    command = [sys.executable, "-c", code, str(bundle), str(root), str(PROJECT / "desktop/backend.py"), *extra]
+    # As desktop/src/main.rs starts it: the workspace for rika-server to migrate, and the
+    # backend's arguments passed through unchanged.
+    command = [str(RIKA_SERVER), "--desktop", "--port", "0", "--static-dir", str(assets), "--root", str(root),
+               "--worker-program", command[0], *[part for arg in command[1:] for part in ("--worker-arg", arg)]]
     process = subprocess.Popen(
-        [sys.executable, "-c", code, str(bundle), str(root), str(PROJECT / "desktop/backend.py"), *extra],
-        cwd=tmp_path, env=environment, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        command, cwd=tmp_path, env=environment, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
         stderr=subprocess.PIPE, text=True,
     )
     try:
@@ -98,7 +165,8 @@ def request(origin, method="GET", path="/", headers=None, body=None, *, secret=N
         fields = {**({web_auth.HEADER: secret} if secret else {}), **(headers or {})}
         connection.request(method, path, body=body, headers=fields)
         response = connection.getresponse()
-        return response.status, dict(response.getheaders()), response.read()
+        # http.client's header mapping: names are case-insensitive, as HTTP says (the Rust front sends lowercase).
+        return response.status, response.headers, response.read()
     finally:
         connection.close()
 
@@ -122,7 +190,10 @@ def test_random_loopback_origin_preserves_same_origin_csrf(backend):
     assert request(origin, "POST", "/api/not-a-route", local_headers, "{}", secret=secret)[0] == 404
     local_headers.pop("X-Kitty-Request")
     assert request(origin, "POST", "/api/not-a-route", local_headers, "{}", secret=secret)[0] == 403
+    # rika-server made and migrated the database before the backend started: owner-only.
     assert (root / "data/apply.db").is_file()
+    assert {path.name: path.stat().st_mode & 0o777 for path in (root, root / "data", root / "data/apply.db")} == {
+        "workspace": 0o700, "data": 0o700, "apply.db": 0o600}
 
 
 @pytest.mark.parametrize("backend", [(), ("--safe",)], indirect=True, ids=["normal", "safe"])
@@ -167,13 +238,13 @@ def owner_line(process, timeout=10):
 def test_settings_desktop_commands_travel_the_owner_pipe(backend):
     process, origin, _root, secret = backend
     local = {"Origin": origin.geturl().rstrip("/"), "Content-Type": "application/json", "X-Kitty-Request": "1"}
-    process.stdin.write(json.dumps({"keep_running": False, "keep_running_available": True}) + "\n")
+    process.stdin.write(json.dumps({"keep_running": False, "keep_running_available": True, "autostart": False, "autostart_available": True}) + "\n")
     process.stdin.flush()
     for _ in range(50):
         status, _headers, body = request(origin, path="/api/desktop", secret=secret)
         if json.loads(body)["keep_running"] is False:
             break
-    assert status == 200 and json.loads(body) == {"available": True, "keep_running": False, "keep_running_available": True}
+    assert status == 200 and json.loads(body) == {"available": True, "keep_running": False, "keep_running_available": True, "autostart": False, "autostart_available": True}
     assert request(origin, "POST", "/api/desktop/command", local, '{"command":"new-quick-note"}', secret=secret)[0] == 200
     assert owner_line(process) == {"command": "new-quick-note"}
     # A request without the local header never reaches the shell.
@@ -188,7 +259,7 @@ def test_settings_desktop_commands_travel_the_owner_pipe(backend):
         request(origin, "POST", "/api/desktop/command", local, '{"command":"keep-running-on"}', secret=secret)))
     worker.start()
     assert owner_line(process) == {"command": "keep-running-on"}
-    process.stdin.write(json.dumps({"keep_running": True, "keep_running_available": True}) + "\n")
+    process.stdin.write(json.dumps({"keep_running": True, "keep_running_available": True, "autostart": False, "autostart_available": True}) + "\n")
     process.stdin.flush()
     worker.join(timeout=10)
     status, _headers, body = results[0]
@@ -201,6 +272,49 @@ def test_settings_desktop_commands_travel_the_owner_pipe(backend):
     process.stdin.write("quit\n")
     process.stdin.flush()
     assert process.wait(timeout=30) == 0
+
+
+@pytest.fixture
+def framed_module_workspace(tmp_path, monkeypatch):
+    """A workspace with one installed `process` external module (kitty.web_external_modules)."""
+    from external_module_kit import FakeGitHub, process_files, tarball
+
+    from kitty.core.external_modules import installer
+    from kitty.db import connect, migrate
+    from kitty.settings import Settings
+
+    root = tmp_path / "workspace"
+    settings = Settings(root=root, db_path=root / "data" / "apply.db", demo=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    with FakeGitHub() as fake:
+        monkeypatch.setenv("KITTY_GITHUB_API", fake.origin)
+        fake.publish("synthetic/rika-proc", "rika-proc", "0.1.0", tarball(process_files(command=[sys.executable, "server.py"])))
+        conn = connect(settings.db_path)
+        try:
+            migrate(conn)
+            installer.install(settings, conn, "synthetic/rika-proc", token="")
+            conn.commit()
+        finally:
+            conn.close()
+    yield root
+
+
+def test_the_shell_and_the_front_learn_a_framed_modules_port(framed_module_workspace, backend):
+    process, origin, _root, secret = backend
+    # The backend's allow-frame line reaches the shell through rika-server's owner-pipe relay. It
+    # can arrive with the readiness line, already in the reader's buffer, where select sees nothing.
+    read = []
+    reader = threading.Thread(target=lambda: read.append(process.stdout.readline()), daemon=True)
+    reader.start()
+    reader.join(timeout=10)
+    assert read, "No owner-pipe message"
+    line = json.loads(read[0])
+    assert set(line) == {"command", "port"} and line["command"] == "allow-frame"
+    frame = f"http://127.0.0.1:{line['port']}"
+    status, _headers, body = request(origin, path="/api/modules/rika-proc", secret=secret)
+    assert status == 200 and json.loads(body)["url"] == frame
+    # The front's own answers frame it as well as the backend's.
+    assert f"frame-src http://127.0.0.1:3210 {frame};" in request(origin)[1]["Content-Security-Policy"]
 
 
 @pytest.fixture

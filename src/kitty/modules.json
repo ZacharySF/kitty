@@ -1,0 +1,89 @@
+{
+  "modules": [
+    {
+      "id": "applyai",
+      "label": "ApplyAI",
+      "description": "Find jobs and track applications",
+      "packs": ["discovery"]
+    },
+    {
+      "id": "workspace",
+      "label": "Workspace",
+      "description": "Write notes, plan your days and review cards on a schedule",
+      "packs": []
+    },
+    {
+      "id": "math",
+      "label": "Math",
+      "description": "Learn math with checked answers",
+      "packs": ["math"]
+    },
+    {
+      "id": "learnharness",
+      "label": "LearnHarness",
+      "description": "Run LearnHarness inside rika!",
+      "packs": ["learnharness"]
+    },
+    {
+      "id": "terminal",
+      "label": "Terminal",
+      "description": "Run terminals and coding agents",
+      "packs": ["herdr"]
+    },
+    {
+      "id": "voice",
+      "label": "Voice",
+      "description": "Talk to Rika and hear it answer",
+      "packs": ["voice"]
+    },
+    {
+      "id": "brain",
+      "label": "Brain",
+      "description": "See your workspace as a map or brain",
+      "packs": ["brain"]
+    }
+  ],
+  "default": ["applyai", "workspace", "math", "learnharness", "terminal", "voice"],
+  "packs": [
+    {
+      "id": "discovery",
+      "label": "Job aggregators",
+      "description": "JobSpy's search of Indeed, Google Jobs, ZipRecruiter and Glassdoor (python-jobspy, pandas)."
+    },
+    {
+      "id": "math",
+      "label": "Math engine",
+      "description": "SymPy, which reads and checks typed answers."
+    },
+    {
+      "id": "learnharness",
+      "label": "LearnHarness",
+      "description": "The LearnHarness app and the Node.js runtime it runs on."
+    },
+    {
+      "id": "herdr",
+      "label": "herdr",
+      "description": "The pinned herdr terminal multiplexer."
+    },
+    {
+      "id": "voice",
+      "label": "Speech engine",
+      "description": "faster-whisper and its native libraries; the Whisper model itself downloads on first use."
+    },
+    {
+      "id": "brain",
+      "label": "Brain",
+      "description": "The Brain's views and 3D engine (three.js, 3d-force-graph)."
+    },
+    {
+      "id": "themes",
+      "label": "Themes",
+      "description": "The art, loaders and stylesheets of every theme but Black."
+    },
+    {
+      "id": "animations",
+      "label": "Animations",
+      "description": "The motion stylesheet and its script."
+    }
+  ]
+}

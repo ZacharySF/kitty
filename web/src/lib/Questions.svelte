@@ -2,6 +2,7 @@
   import { tick } from "svelte";
   import { api, type TaskRecord } from "./api";
   import TaskStatus from "./TaskStatus.svelte";
+  import Select from "./ui/Select.svelte";
 
   let { jobId, demo = false }: { jobId?: number; demo?: boolean } = $props();
   type Question = {
@@ -26,7 +27,7 @@
   let minJobs = $state(0);
   let dialog: HTMLDialogElement;
   let cancel: HTMLButtonElement;
-  let input: HTMLTextAreaElement;
+  let input: HTMLInputElement;
   const shown = $derived(
     questions.filter(
       (item) =>
@@ -106,24 +107,17 @@
   });
 </script>
 
-<section class="questions" aria-label="Screening questions">
+<section class="questions calm" aria-label="Screening questions">
   <header class="row">
-    <h3>Screening questions</h3>
-    <button class="button" onclick={refresh} disabled={busy}>Refresh</button>
+    <h3>Questions</h3>
+    <button class="text-button" onclick={download}>Download</button>
     <button
-      class="button"
+      class="text-button"
       onclick={confirmCollect}
       disabled={demo || busy || task?.status === "running"}
-      >Collect queue questions</button
+      >Collect from my queue</button
     >
   </header>
-  <p class="muted">
-    Answers are yours to write in Profile → Answers. Unknown questions stay
-    blank; nothing generates applicant facts.
-  </p>
-  {#if demo}<p class="muted">
-      Public form collection is disabled in demo mode.
-    </p>{/if}
   {#if error}<p class="error-banner" role="alert">{error}</p>{/if}
   <TaskStatus
     {task}
@@ -133,55 +127,44 @@
     }}
   />
   <form
+    class="calm-row"
     onsubmit={(event) => {
       event.preventDefault();
       void save();
     }}
   >
-    <label
-      >Question encountered {#if jobId}(job #{jobId}){/if}
-      <textarea
-        bind:this={input}
-        bind:value={text}
-        required
-        maxlength="4000"
-        rows="2"
-        placeholder="Paste the exact question; no answer is invented"
-      ></textarea>
-    </label>
-    <button class="button" disabled={busy || !text.trim()}>Log question</button>
+    <input
+      class="grow"
+      bind:this={input}
+      bind:value={text}
+      required
+      maxlength="4000"
+      placeholder={jobId ? `A question job #${jobId} asked` : "Add a question an employer asked"}
+      aria-label="Question encountered"
+    />
+    <button class="button primary" disabled={busy || !text.trim()}>Add</button>
   </form>
-  <label
-    >Question type <select bind:value={kind}
-      ><option value="all">All types</option>{#each kinds as value}<option
-          {value}>{value}</option
-        >{/each}</select
-    ></label
-  >
-  <label
-    >Minimum jobs asking <input
-      type="number"
-      min="0"
-      max="100000"
-      step="1"
-      bind:value={minJobs}
-    /></label
-  >
-  <button class="button" onclick={download}
-    >Download filtered questions JSON</button
-  >
-  {#if !shown.length}<p class="muted">
-      No questions in this view. This does not prove that every application is
-      complete.
-    </p>{/if}
+  <div class="calm-row filters">
+    <Select label="Question type" kind="list" bind:value={kind}
+      options={[{ value: "all", label: "All types" }, ...kinds.map((value) => ({ value, label: value }))]} />
+    <label class="calm-inline"
+      >Asked by at least <input
+        type="number"
+        min="0"
+        max="100000"
+        step="1"
+        bind:value={minJobs}
+      /> jobs</label
+    >
+  </div>
+  {#if !shown.length}<p class="muted">No questions here yet.</p>{/if}
   <ul>
     {#each shown as question (question.id)}
       <li>
         <strong>{question.text}</strong>
         <span class="badge">{question.kind}</span>
         <p class="muted">
-          {question.job_ids.length} jobs · required by {question.required_jobs} ·
-          {question.companies.join(", ") || "Manually logged"}
+          {question.job_ids.length} {question.job_ids.length === 1 ? "job" : "jobs"} · {question.companies.join(", ") || "Added by you"}
         </p>
         {#if question.choices.length}<p>
             Choices: {question.choices.join(" · ")}
@@ -278,7 +261,19 @@
     border-bottom: 1px solid var(--border);
   }
   ul {
-    padding-left: 1.2rem;
+    margin: 1rem 0 0;
+    padding: 0;
+    list-style: none;
+  }
+  .filters {
+    margin: 12px 0 0;
+    padding: 0 0 4px;
+  }
+  .filters :global(.br-control) {
+    margin: 0;
+  }
+  .row .text-button {
+    font-size: 15px;
   }
   dialog {
     color: var(--ink);

@@ -110,39 +110,28 @@ const BORDER_PROBE = `(style, side) => {
   return width > 0 && kind !== "none" && kind !== "hidden" && !/rgba\\(.*,\\s*0\\)$/.test(color) && color !== "transparent";
 }`;
 
-describe("Find jobs", () => {
-  test("one segmented Jobs view control: Map · List · Saved · Applications · Resumes · Sources in one pill, between the H1 and Add", async () => {
+describe("Career", () => {
+  test("Career is three steps with More at the far right; Find opens on the list, with the map one press away", async () => {
     const { page, problems, context } = await open("jobs");
+    const steps = page.getByRole("navigation", { name: "Career" });
+    await steps.waitFor();
+    assert.deepEqual(await steps.getByRole("button").allInnerTexts(), ["Track", "Find", "Saved", "More"]);
+    assert.equal(await steps.getByRole("button", { name: "Find", exact: true }).getAttribute("aria-current"), "page");
+    // More is the bar's last item and sits at its far right, level with the page's right edge.
+    const more = steps.getByRole("button", { name: "More", exact: true });
+    const [moreBox, pageBox] = [await more.boundingBox(), await page.locator("section.opportunities").boundingBox()];
+    assert.ok(Math.abs(moreBox.x + moreBox.width - (pageBox.x + pageBox.width)) <= 2, `More is not at the far right (${moreBox.x + moreBox.width} vs ${pageBox.x + pageBox.width})`);
+
+    // Find jobs lists the jobs first: something to pick is on screen without a press.
     const views = page.getByRole("navigation", { name: "Jobs view" });
     await views.waitFor();
-    assert.equal(await page.getByRole("navigation", { name: "Jobs view" }).count(), 1);
-    const buttons = views.getByRole("button");
-    assert.deepEqual(await buttons.allInnerTexts(), ["Map", "List", "Saved", "Applications", "Resumes", "Sources"]);
-    const shape = await views.evaluate((nav, probe) => {
-      const painted = eval(probe);
-      const edge = (node) => ["top", "right", "bottom", "left"].some((side) => painted(getComputedStyle(node), side));
-      const box = nav.getBoundingClientRect();
-      const segments = [...nav.querySelectorAll("button")].map((button) => {
-        const rect = button.getBoundingClientRect();
-        return { height: Math.round(rect.height), bordered: edge(button), top: rect.top, bottom: rect.bottom, parent: button.parentElement === nav };
-      });
-      return { bordered: edge(nav), radius: parseFloat(getComputedStyle(nav).borderTopLeftRadius), height: Math.round(box.height), top: box.top, bottom: box.bottom, segments };
-    }, BORDER_PROBE);
-    assert.equal(shape.bordered, true, "the control is not one bordered pill");
-    assert.ok(shape.radius >= 12, `the control is not a pill (radius ${shape.radius})`);
-    assert.equal(shape.height, 28, `the control is ${shape.height}px, not 28px`);
-    assert.equal(new Set(shape.segments.map((segment) => segment.height)).size, 1, "segments differ in height");
-    for (const segment of shape.segments) {
-      assert.equal(segment.bordered, false, "a segment draws its own border");
-      assert.equal(segment.parent, true, "a segment is not a direct child of the pill");
-      assert.ok(segment.top >= shape.top && segment.bottom <= shape.bottom, "a segment spills out of the pill");
-    }
-    assert.equal(await views.getByRole("button", { name: "Map", exact: true }).getAttribute("aria-pressed"), "true");
-    assert.equal(await views.getByRole("button", { name: "List", exact: true }).getAttribute("aria-pressed"), "false");
+    assert.deepEqual(await views.getByRole("button").allInnerTexts(), ["Map", "List"]);
+    assert.equal(await views.getByRole("button", { name: "List", exact: true }).getAttribute("aria-pressed"), "true");
+    await page.getByRole("region", { name: "Job results" }).locator("[data-job-id]").first().waitFor();
 
-    // The page title is a Fraunces H1 with its count; Add a job link is the 32px primary, last.
+    // The page title is an H1 in the text face with its count; Add a job link is the 32px primary, last.
     const title = page.getByRole("heading", { level: 1, name: /Find jobs/ });
-    assert.match(await title.evaluate((node) => getComputedStyle(node).fontFamily), /Fraunces/);
+    assert.equal(await title.evaluate((node) => getComputedStyle(node).fontFamily === getComputedStyle(document.body).fontFamily), true, "the title is not in the text face");
     const add = page.getByRole("button", { name: "Add a job link" });
     assert.equal(Math.round((await add.boundingBox()).height), 32);
     assert.equal(await add.evaluate((node) => {
@@ -151,89 +140,144 @@ describe("Find jobs", () => {
       return controls.at(-1) === node && header.contains(document.querySelector('nav[aria-label="Jobs view"]'));
     }), true, "Add a job link is not the header's last control");
 
-    // List and Map swap presentation; the others navigate.
+    // The page is part of the app: no filled card behind the list.
+    assert.equal(await page.locator("section.opportunities").evaluate((node) => getComputedStyle(node).backgroundColor), "rgba(0, 0, 0, 0)", "the jobs list sits in a filled card");
+
+    // Map and List swap the presentation.
+    await views.getByRole("button", { name: "Map", exact: true }).click();
+    await page.locator(".map-stage").waitFor();
+    assert.equal(await page.getByRole("region", { name: "Job results" }).count(), 0);
     await views.getByRole("button", { name: "List", exact: true }).click();
     await page.getByRole("region", { name: "Job results" }).waitFor();
-    assert.equal(await views.getByRole("button", { name: "List", exact: true }).getAttribute("aria-pressed"), "true");
-    await views.getByRole("button", { name: "Saved", exact: true }).click();
-    await page.waitForFunction(() => location.hash === "#favorites");
-    const saved = page.getByRole("navigation", { name: "Jobs view" });
-    await saved.getByRole("button", { name: "Saved", exact: true }).waitFor();
-    assert.equal(await saved.getByRole("button", { name: "Saved", exact: true }).getAttribute("aria-current"), "page");
-    assert.equal(await saved.getByRole("button", { name: "Map", exact: true }).getAttribute("aria-pressed"), "false");
-    // List from Saved jobs opens Find jobs as a list.
-    await saved.getByRole("button", { name: "List", exact: true }).click();
+
+    // Applying is part of Find: one press narrows it to the jobs ready to apply to, and back.
+    const ready = page.getByRole("button", { name: "Ready to apply", exact: true });
+    assert.equal(await ready.getAttribute("aria-pressed"), "false");
+    await ready.click();
+    await page.waitForFunction(() => location.hash === "#queue");
+    await page.getByRole("button", { name: /^Fill in the form/ }).waitFor();
+    assert.equal(await page.getByRole("button", { name: "Ready to apply", exact: true }).getAttribute("aria-pressed"), "true");
+    assert.equal(await steps.getByRole("button", { name: "Find", exact: true }).getAttribute("aria-current"), "page");
+    await page.getByRole("button", { name: "Ready to apply", exact: true }).click();
     await page.waitForFunction(() => location.hash === "#jobs");
-    await page.getByRole("heading", { level: 1, name: /Find jobs/ }).waitFor();
-    await page.getByRole("region", { name: "Job results" }).waitFor();
-    assert.equal(await views.getByRole("button", { name: "List", exact: true }).getAttribute("aria-pressed"), "true");
-    await views.getByRole("button", { name: "Applications", exact: true }).click();
+
+    // The same steps lead through the whole section, and name where you are.
+    for (const [step, hash, heading] of [["Saved", "#favorites", /^Saved/], ["Track", "#pipeline", /^Track/], ["Find", "#jobs", /^Find jobs/]]) {
+      await steps.getByRole("button", { name: step, exact: true }).click();
+      await page.waitForFunction((wanted) => location.hash === wanted, hash);
+      await page.getByRole("heading", { name: heading }).first().waitFor();
+      assert.equal(await steps.getByRole("button", { name: step, exact: true }).getAttribute("aria-current"), "page", step);
+    }
+    // Everything else is one menu away, and the menu's button says which of them is open.
+    await steps.getByRole("button", { name: "More", exact: true }).click();
+    await page.getByRole("button", { name: "Resumes", exact: true }).click();
+    await page.waitForFunction(() => location.hash === "#resumes");
+    await page.waitForFunction(() => document.querySelector('nav[aria-label="Career"] button.more')?.textContent === "Resumes");
+    assert.equal(await steps.locator("button.more").getAttribute("aria-current"), "page");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("legacy Apply and Find links open the merged Find tab", async () => {
+    for (const [hash, pressed] of [["queue", "true"], ["apply", "true"], ["jobs", "false"], ["find", "false"]]) {
+      const { page, problems, context } = await open(hash);
+      const steps = page.getByRole("navigation", { name: "Career" });
+      await steps.waitFor();
+      assert.equal(await steps.getByRole("button", { name: "Find", exact: true }).getAttribute("aria-current"), "page", hash);
+      assert.equal(await steps.getByRole("button", { name: "Apply", exact: true }).count(), 0, "Apply is still a step");
+      assert.equal(await page.getByRole("button", { name: "Ready to apply", exact: true }).getAttribute("aria-pressed"), pressed, hash);
+      assert.deepEqual(problems, []);
+      await context.close();
+    }
+  });
+
+  test("the Career group opens on Track, with Rika at its right at 1568x942 and below it when narrow", async () => {
+    const { page, problems, context } = await open("calendar", { viewport: { width: 1568, height: 942 } });
+    const groups = page.getByRole("navigation", { name: "Workspace groups" });
+    await groups.getByRole("button", { name: "Career", exact: true }).click();
     await page.waitForFunction(() => location.hash === "#pipeline");
+    const steps = page.getByRole("navigation", { name: "Career" });
+    assert.equal(await steps.getByRole("button", { name: "Track", exact: true }).getAttribute("aria-current"), "page");
+    const board = page.getByRole("region", { name: "Application pipeline" });
+    const rika = page.getByRole("region", { name: "Rika", exact: true });
+    await board.waitFor();
+    await rika.waitFor();
+    const [boardBox, rikaBox] = [await board.boundingBox(), await rika.boundingBox()];
+    assert.ok(rikaBox.x >= boardBox.x + boardBox.width, `Rika is not to the right of the board (${rikaBox.x} < ${boardBox.x + boardBox.width})`);
+    assert.ok(rikaBox.x + rikaBox.width <= 1568, "Rika runs off the screen");
+    assert.ok(rikaBox.y < 942 && boardBox.y < 942, "the board or Rika starts below the fold");
+    // The board stays readable: its lanes fit without sideways scrolling.
+    assert.equal(await page.locator(".pipeline .lanes").evaluate((node) => node.scrollWidth <= node.clientWidth + 1), true, "the board scrolls sideways at 1568px");
+
+    // Narrow, Rika moves below the board instead of squeezing it.
+    await page.setViewportSize({ width: 900, height: 942 });
+    await page.waitForFunction(() => {
+      const board = document.querySelector('[aria-label="Application pipeline"]');
+      const rika = [...document.querySelectorAll("section.home-widget")].find((node) => node.querySelector("h3")?.textContent === "Rika");
+      return board && rika && rika.getBoundingClientRect().top >= board.getBoundingClientRect().bottom;
+    });
     assert.deepEqual(problems, []);
     await context.close();
   });
 
-  test("reminders, deadlines and the weekly goal sit in an unboxed strip; the rest is one popover", async () => {
-    const { page, problems, context } = await open("jobs");
-    const strip = page.getByRole("region", { name: "Reminders, deadlines and goals" });
-    await strip.waitFor();
-    assert.ok(await strip.isVisible(), "the strip needs a click to show");
-    assert.equal(await strip.locator("details, summary").count(), 0, "the strip folds");
-    const box = await strip.evaluate((node, probe) => {
-      const painted = eval(probe);
-      const style = getComputedStyle(node);
-      return {
-        top: painted(style, "top"), right: painted(style, "right"), bottom: painted(style, "bottom"), left: painted(style, "left"),
-        topWidth: parseFloat(style.borderTopWidth), background: style.backgroundColor, image: style.backgroundImage,
-      };
-    }, BORDER_PROBE);
-    assert.deepEqual({ top: box.top, right: box.right, bottom: box.bottom, left: box.left }, { top: true, right: false, bottom: false, left: false }, "the strip is boxed");
-    assert.equal(box.topWidth, 1);
-    assert.equal(box.background, "rgba(0, 0, 0, 0)");
-    assert.equal(box.image, "none");
-    await strip.getByText("This week", { exact: true }).waitFor();
-    const goal = strip.getByTitle(/Applications sent this week/);
-    await goal.waitFor();
-    assert.match((await goal.innerText()).replace(/\s+/g, " "), /\b\d+\/\d+\b/);
-    assert.equal(await page.getByText(/DON.T MISS THE NEXT STEP/i).count(), 0);
-    assert.equal(await page.getByRole("heading", { name: "Reminders & deadlines" }).count(), 0);
-
-    // Everything else Dashboard showed is behind one popover, unboxed, without fold-outs.
-    await strip.getByRole("button", { name: "Search health and weekly goals" }).click();
-    const details = page.getByRole("dialog", { name: "Search health and weekly goals" });
-    await details.waitFor();
-    await details.getByRole("button", { name: /See all reminders/ }).waitFor();
-    await details.getByRole("table").waitFor();
-    assert.equal(await details.locator("details, summary").count(), 0);
-    assert.equal(await details.evaluate((node) => [...node.querySelectorAll("*")].filter((child) => child.matches(".panel, .surface")).length), 0);
-    await page.keyboard.press("Escape");
-    assert.equal(await page.evaluate(() => localStorage.getItem("kitty.jobs.brief")), null);
-    // The strip belongs to Find jobs only.
-    await page.evaluate(() => (location.hash = "inbox"));
-    await page.getByRole("heading", { name: /New jobs/ }).first().waitFor();
-    assert.equal(await page.getByRole("region", { name: "Reminders, deadlines and goals" }).count(), 0);
+  test("AI sorting controls share one height and line", async () => {
+    const { page, problems, context } = await open("triage", { viewport: { width: 1568, height: 942 } });
+    const form = page.getByRole("form", { name: "Sort jobs with AI" });
+    await form.waitFor();
+    const controls = [
+      form.getByRole("combobox", { name: "Track" }),
+      form.getByRole("spinbutton", { name: "Jobs to send" }),
+      form.getByRole("button", { name: "See the price" }),
+      form.getByRole("button", { name: "Sort with free rules" }),
+    ];
+    const boxes = [];
+    for (const control of controls) boxes.push(await control.boundingBox());
+    const heights = boxes.map((box) => Math.round(box.height));
+    assert.ok(Math.max(...heights) - Math.min(...heights) <= 1, `the controls differ in height: ${heights}`);
+    const middles = boxes.map((box) => box.y + box.height / 2);
+    assert.ok(Math.max(...middles) - Math.min(...middles) <= 1, `the controls are not on one line: ${middles}`);
     assert.deepEqual(problems, []);
     await context.close();
   });
+});
 
-  test("the map has one surface border; no Browse-as-list link", async () => {
+describe("Find jobs", () => {
+
+  test("Scrape shows the brain in place of the list while the sources run, then reloads and says what came in", async () => {
     const { page, problems, context } = await open("jobs");
-    const map = page.getByRole("region", { name: "Jobs map" });
-    await map.locator(".canvas").waitFor();
-    const borders = await map.locator(".canvas").evaluate((canvas, probe) => {
-      const painted = eval(probe);
-      const boxed = [];
-      for (let node = canvas; node && node !== document.documentElement; node = node.parentElement) {
-        const style = getComputedStyle(node);
-        if (["top", "right", "bottom", "left"].every((side) => painted(style, side))) boxed.push(node.className || node.tagName);
-      }
-      return boxed;
-    }, BORDER_PROBE);
-    assert.ok(borders.length <= 1, `the map sits in ${borders.length} boxes: ${borders.join(" > ")}`);
-    const rect = await map.boundingBox();
-    assert.ok(rect.height >= 300, `the map is only ${rect.height}px tall`);
-    assert.equal(await page.getByRole("button", { name: /as a list/ }).count(), 0);
-    assert.deepEqual(problems, []);
+    const results = page.getByRole("region", { name: "Job results" });
+    await results.locator("[data-job-id]").first().waitFor();
+    // The demo never reaches the network: the run and its task are answered here, the rest is the app's.
+    const task = { id: "a".repeat(32), kind: "discovery", status: "running", started_at: new Date().toISOString(), finished_at: null, result: null, error: null };
+    let polls = 0;
+    let listed = 0;
+    await page.route("**/api/sources/run", (route) => route.fulfill({ json: { task } }));
+    await page.route(`**/api/tasks/${task.id}`, (route) => {
+      polls += 1;
+      const done = polls >= 2;
+      return route.fulfill({ json: done ? { ...task, status: "completed", finished_at: new Date().toISOString(),
+        result: { sources: { ashby: { status: "ok", new: 2 }, greenhouse: { status: "ok", new: 1 }, lever: { status: "error", new: 0 } } } } : task });
+    });
+    page.on("request", (request) => { if (request.url().includes("/api/jobs?")) listed += 1; });
+    const before = listed;
+    await page.getByRole("button", { name: "Scrape", exact: true }).click();
+    const loader = page.locator(".scrape-stage").getByRole("status");
+    await loader.waitFor();
+    assert.equal((await loader.innerText()).trim(), "Scraping your job sources…");
+    assert.equal(await loader.locator("canvas, svg").count() > 0, true, "the loader draws no brain");
+    assert.equal(await results.count(), 0, "the list is still shown under the loader");
+    assert.equal(await page.getByRole("button", { name: "Scraping…", exact: true }).isDisabled(), true);
+    await results.locator("[data-job-id]").first().waitFor({ timeout: 15_000 });
+    assert.equal(await page.locator(".scrape-stage").count(), 0);
+    assert.ok(listed > before, "the list was not reloaded after the scrape");
+    assert.match(await page.locator(".action-feedback").innerText(), /3 new jobs from 3 sources; 1 did not finish\./);
+    await page.unroute("**/api/sources/run");
+
+    // A refusal (the demo's own answer here) leaves the list and says why.
+    await page.getByRole("button", { name: "Scrape", exact: true }).click();
+    await page.getByRole("alert").first().waitFor();
+    assert.ok(await results.isVisible(), "the list went away on a refused scrape");
+    assert.deepEqual(problems.filter((problem) => !/403/.test(problem)), []);
     await context.close();
   });
 
@@ -287,7 +331,7 @@ describe("Find jobs", () => {
 
     // Fill opens the drawer and asks for the reviewed plan, as Shift+F does.
     const preflight = page.waitForRequest((request) => request.url().includes("/api/automation/preflight"));
-    await page.getByRole("button", { name: /^Fill 1 selected for review/ }).click();
+    await page.getByRole("button", { name: /^Fill in the form/ }).click();
     await preflight;
     const drawer = page.getByRole("dialog", { name: "Prepare applications" });
     await drawer.waitFor();
@@ -299,7 +343,7 @@ describe("Find jobs", () => {
     assert.ok(await drawer.isVisible(), "Escape in the plan review closed the drawer");
     await drawer.getByRole("button", { name: "Close" }).click();
     await drawer.waitFor({ state: "detached" });
-    await page.getByRole("button", { name: "Preparation" }).click();
+    await page.getByRole("button", { name: "Progress" }).click();
     await drawer.waitFor();
     assert.deepEqual(problems, []);
     await context.close();

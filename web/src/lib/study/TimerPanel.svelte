@@ -6,7 +6,7 @@
   import { minutesLabel, phaseLabel, type Settings, type Workspace } from "./types";
 
   /** The focus-first page's centre: session chip, the live ring, the controls and ⚙ timer settings. */
-  let { data, targetId = $bindable(), subjectId, projectId, remaining, clockLabel, phaseTotal, disabled, ontimer, onsettings }: {
+  let { data, targetId = $bindable(), subjectId, projectId, remaining, clockLabel, phaseTotal, disabled, ringSize = 260, ontimer, onsettings }: {
     data: Workspace;
     targetId: string;
     subjectId: string;
@@ -15,6 +15,8 @@
     clockLabel: string;
     phaseTotal: number;
     disabled: boolean;
+    /** The ring's diameter in pixels; the digits scale with it. */
+    ringSize?: number;
     ontimer: (action: string) => void;
     onsettings: (next: Settings) => Promise<boolean>;
   } = $props();
@@ -27,7 +29,7 @@
   const goals = $derived([{ value: "", label: "No goal" }, ...data.targets.map((item) => ({ value: String(item.id), label: item.title ?? "" }))]);
 </script>
 
-<section class="timer-card" class:break-phase={timer.phase !== "focus"} aria-label="Session timer">
+<section class="timer-card" class:break-phase={timer.phase !== "focus"} aria-label="Session timer" style:--ring={`${ringSize}px`}>
   <span class="gear"><TimerSettings settings={data.settings} {disabled} onsave={onsettings} /></span>
   <div class="meta">
     <span class="chip" title={rhythm}><span class="dot" style:background={subject?.color || "var(--subtle)"} aria-hidden="true"></span>{subject?.name || "Open study"}{#if concept}<span class="concept">· {concept.name}</span>{/if}</span>
@@ -36,7 +38,7 @@
       <span class="goal"><Select kind="list" label="Goal" options={goals} bind:value={targetId} {disabled} /></span>
     {/if}
   </div>
-  <TimerRing {remaining} total={phaseTotal} phase={timer.phase} rounds={timer.cycle}
+  <TimerRing {remaining} total={phaseTotal} phase={timer.phase} rounds={timer.cycle} size={ringSize} stroke={ringSize >= 320 ? 8 : 6}
     label={`${phaseLabel(timer.phase)}, ${clockLabel.replace(/^0/, "")} left of ${Math.floor(phaseTotal / 60)}:${(phaseTotal % 60).toString().padStart(2, "0")}`}
   ><div class="clock">{clockLabel}</div></TimerRing>
   <div class="actions">
@@ -89,7 +91,7 @@
   }
   .clock {
     color: var(--ink);
-    font-size: 3.2rem;
+    font-size: calc(var(--ring, 260px) * 0.2);
     font-variant-numeric: tabular-nums;
     font-weight: 500;
     letter-spacing: -0.04em;
@@ -100,7 +102,14 @@
     flex-wrap: wrap;
     justify-content: center;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
+  }
+  /* Big enough to hit without looking: the session's only controls. Outranks the shared control height. */
+  :global(:root body) .actions :global(.br-btn) {
+    height: 44px;
+    min-height: 44px;
+    padding-inline: 18px;
+    font-size: 15px;
   }
   kbd {
     font-size: 0.75em;

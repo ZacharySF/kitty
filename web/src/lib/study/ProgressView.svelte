@@ -126,7 +126,7 @@
       </div>
     </div>
     <div class="share">
-      <svg viewBox="0 0 140 140" aria-hidden="true">
+      <svg viewBox="0 0 140 140" width="140" height="140" aria-hidden="true">
         <circle cx="70" cy="70" r={RADIUS} class="track" />
         {#each arcs as arc (arc.id)}
           <circle cx="70" cy="70" r={RADIUS} class="arc" class:dim={hot !== undefined && hot !== arc.id} class:hot={hot === arc.id}
@@ -302,7 +302,7 @@
     left: -30px;
     top: -7px;
     color: var(--subtle);
-    font: normal 500 9px var(--font-mono);
+    font: normal 500 9px var(--font-ui);
   }
   .day-bar {
     position: relative;
@@ -338,7 +338,7 @@
     position: absolute;
     bottom: -18px;
     color: var(--subtle);
-    font: 500 9.5px var(--font-mono);
+    font: 500 9.5px var(--font-ui);
     text-transform: uppercase;
   }
   .day-bar[data-today="true"] small {
@@ -349,6 +349,12 @@
     grid-template-columns: 140px minmax(0, 1fr);
     align-items: center;
     gap: 14px;
+  }
+  /* A fixed size: with only a viewBox, WebKit sizes the SVG past its 140px column and over the legend. */
+  .share svg {
+    display: block;
+    width: 140px;
+    height: 140px;
   }
   .share svg circle {
     fill: none;
@@ -372,7 +378,7 @@
   }
   .small {
     fill: var(--muted);
-    font: 500 8px var(--font-mono);
+    font: 500 8px var(--font-ui);
     letter-spacing: 0.1em;
     text-anchor: middle;
     text-transform: uppercase;
@@ -404,7 +410,7 @@
   li b {
     margin-left: auto;
     color: var(--muted);
-    font: 500 10.5px var(--font-mono);
+    font: 500 10.5px var(--font-ui);
   }
   .dot {
     flex: none;
@@ -429,7 +435,7 @@
   }
   .dow span {
     color: var(--subtle);
-    font: 500 9px var(--font-mono);
+    font: 500 9px var(--font-ui);
     text-align: center;
   }
   .day {
@@ -454,7 +460,7 @@
     position: absolute;
     top: 3px;
     left: 6px;
-    font: 500 9.5px var(--font-mono);
+    font: 500 9.5px var(--font-ui);
     text-shadow: 0 0 4px var(--solid-void);
   }
   .day[data-today="true"]::after {
@@ -574,10 +580,10 @@
   }
   .ring-side strong small {
     color: var(--muted);
-    font: 500 11px var(--font-mono);
+    font: 500 11px var(--font-ui);
   }
   .ring-side li > b {
-    font: 600 12px var(--font-mono);
+    font: 600 12px var(--font-ui);
   }
   .set {
     padding: 2px 9px;
@@ -608,7 +614,7 @@
   }
   .goal-list small {
     color: var(--muted);
-    font: 500 10.5px var(--font-mono);
+    font: 500 10.5px var(--font-ui);
   }
   @media (prefers-reduced-motion: reduce) {
     .ring-arc {

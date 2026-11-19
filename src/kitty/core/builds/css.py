@@ -50,7 +50,9 @@ class Token:
 
 
 def _hex(char: str) -> bool:
-    return char in "0123456789abcdefABCDEF"
+    # `peek()` is "" at the end of the text, and "" is `in` every string: without the length check an
+    # escape ending the text never stops consuming.
+    return len(char) == 1 and char in "0123456789abcdefABCDEF"
 
 
 def _name_char(char: str) -> bool:
@@ -217,7 +219,8 @@ class _Tokenizer:
                     out.append(Token("at", self.name().lower(), line, column))
                 else:
                     out.append(Token("delim", "@", line, column))
-            elif char.isdigit() or (char in "+-." and (self.peek(1).isdigit() or (self.peek(1) == "." and self.peek(2).isdigit()))):
+            elif char.isdigit() or (char == "." and self.peek(1).isdigit()) or (
+                    char in "+-" and (self.peek(1).isdigit() or (self.peek(1) == "." and self.peek(2).isdigit()))):
                 out.append(self.number(line, column))
             elif char == "<" and text.startswith("<!--", self.i):
                 self.advance(4)

@@ -349,7 +349,7 @@ Built (Keys step):
 - `kitty.core.keys` resolves keyring → file → environment. The keyring is the `keyring` package's Secret Service backend, used directly rather than through `keyring`'s backend auto-selection (MIT; its dependencies SecretStorage, jeepney and jaraco.* are BSD/MIT, and `cryptography` was already locked). Entries are filed under the Secret Service attribute `service=kitty`; only those are ever searched. No `secret-tool` binary is needed. `KITTY_KEYRING=none` turns the keyring off (tests always do).
 - Files: OpenRouter keeps `.private/openrouter-key`; other keys use `.private/keys/<NAME>`. Owner-only (600/700), `O_NOFOLLOW`, symbolic links refused. Setting a key in the keyring removes a stale file copy; **Move to keyring** verifies the keyring copy before deleting the file.
 - Consumers: `web_ai`, `triage/openrouter`, `triage/run.make_client` (Anthropic now gets `api_key` explicitly; `Settings.anthropic_key_set` is gone), the USAJOBS and Brave adapters and `kitty doctor` (`key/<NAME>` checks). USAJOBS and Brave error text is redacted with the key value. `USAJOBS_EMAIL` stays an environment setting: it is an identifier sent as the User-Agent, not a secret. `.private/application-credentials.env` is unchanged.
-- Settings → Keys (`web_keys.py`: `GET /api/keys`, `POST /api/keys/set|remove|move`) and `kitty keys list|set|remove|move|run`. `run` replaces itself with the command (`execvpe`), with the named keys added and kitty's other known keys removed from the command's environment. Demo mode uses only its throwaway files.
+- Settings → Keys (`GET /api/keys`, `POST /api/keys/set|remove|move`, answered by rika-server's `server/src/keys/` over the same keyring items and files) and `kitty keys list|set|remove|move|run`. `run` replaces itself with the command (`execvpe`), with the named keys added and kitty's other known keys removed from the command's environment. Demo mode uses only its throwaway files.
 
 ### Q11: The website you're on appears in kitty as a live page mirror from your everyday browser
 
@@ -602,7 +602,7 @@ The block backend lives in `src/kitty/core/blocks/` (no web imports).
 
   The legacy tables stay readable and refuse writes (triggers) for one release. A runner directive (`-- python: module:function`) lets a numbered migration call a Python conversion in the same transaction.
 - **Existing UI:** every Notes, Documents and Quick notes endpoint keeps its request and response shape. They now read the projection and write through transactions; a whole-page save becomes the smallest diff (`convert.sync_tree`). Deleting a page or quick note moves it to Trash.
-- **WebSocket transactions and live push** (`src/kitty/web_live.py` since builds, which made the channel part of the always-on core; `web/src/lib/live.ts`):
+- **WebSocket transactions and live push** (`server/src/live/` in rika-server since the Rust core's milestone 2, `src/kitty/web_live.py` before; `web/src/lib/live.ts`):
   - A window gets a single-use token from `POST /api/live/session`, then opens `/api/live/socket` (`/api/blocks/session` and `/api/blocks/socket` before builds). The socket has the same exact Host and Origin guard as the terminal; the RFC 6455 code is now shared in `web_socket.py`.
   - `{"type":"txn","ops","base"}` is applied by the server and answered with `ack` (sequence numbers and revisions) or `reject` (status and error) to the sender only.
   - Every committed `op_log` row is pushed to every window as a `change`. This includes rows written by the HTTP adapters, background imports and other processes: one thread follows the log and starts with the first window.
@@ -686,9 +686,11 @@ Peer sync (Q16) on Loro (Q5). Code: `src/kitty/core/blocks/crdt.py` (Loro page d
 ## Builds (Q8/Q9): what was built
 
 Code: `src/kitty/core/builds/` (`document`, `css`, `store`, `project`, `share` and the published
-schema `kitty-build.schema.json`), migration `041_builds.sql`, `src/kitty/web_build.py`,
-`src/kitty/web_live.py`, `web/src/lib/build.svelte.ts`, `buildCore.ts`, `BuildEditor.svelte`,
-`BuildSettings.svelte`, `BuildStatus.svelte`. Dependency added with uv: `jsonschema` 4.26 (MIT;
+schema `kitty-build.schema.json`), migration `041_builds.sql`, rika-server's `server/src/builds/`
+(the build routes, the watcher and push, the projection, link fetching; docs/rust-core-design.md),
+`src/kitty/web_build.py` (the worker's `build_applied` hooks), `web/src/lib/build.svelte.ts`,
+`buildCore.ts`, `BuildEditor.svelte`, `BuildSettings.svelte`, `BuildStatus.svelte`. Dependency
+added with uv: `jsonschema` 4.26 (MIT;
 already in the lock through `mcp`).
 
 - **Where the active build lives: `config/build.json`.** It sits beside the YAML a person edits
@@ -759,7 +761,7 @@ already in the lock through `mcp`).
   then deletes those keys. No localStorage fallback remains.
 - **Live (Q9).** The live channel moved from the workspace module to the always-on core
   (`/api/live/session`, `/api/live/socket`; block transactions still need the workspace
-  module). A watcher (a stat every 250 ms, acting once a file has stood still for one tick)
+  module). A watcher in rika-server (a stat every 250 ms, acting once a file has stood still for one tick)
   projects each valid save and pushes `{"type": "build", ...}` to every window, whoever saved
   it: the build editor, a Settings screen, an install, another process or any text editor. An
   invalid save changes nothing: every window gets the problems, shows a notice with the line and
@@ -799,11 +801,17 @@ already in the lock through `mcp`).
   compatibility, token values, 11 allowed and 30 refused CSS cases, what an export never holds,
   the modules.yaml and settings-row migration, projection, invalid file keeping the last good
   build and starting on it, Settings writes through the file, symlinks refused, diff and holds,
-  atomic install and rollback, a failed write changing nothing, history pruning, link fetching);
-  `tests/test_web_build.py` (two live sockets: editor saves and external edits reach both, an
-  invalid edit keeps the last good build and blocks Settings writes, preferences, the one-time
-  local move, install/rollback, export, https-only links, the build without the workspace
-  module, safe mode, the Tern plugin switch); `web/tests/builds.test.mjs` (pure client logic);
+  atomic install and rollback, a failed write changing nothing, history pruning);
+  `tests/test_web_build.py`, through rika-server (two live sockets: editor saves and external
+  edits reach both, an invalid edit keeps the last good build and blocks Settings writes,
+  preferences, the one-time local move, install/rollback, export and its link ticket, https-only
+  links, the build without the workspace module, safe mode, the Tern plugin switch, and every
+  write path's file, history and rows compared with Python's `project`, previews and checks with
+  `share` and `document`); link fetching is unit-tested in `server/src/builds/fetch.rs`;
+  `tests/test_build_parity.py` (every route, push and `build_applied` announcement, with the
+  file, history and rows, against `web_build`'s handlers over `kitty.core.builds` at one test
+  clock; docs/rust-core-design.md);
+  `web/tests/builds.test.mjs` (pure client logic);
   `web/tests/builds.browser.test.mjs` (two real windows on a real server: a token edited in the
   editor and an external save restyle both, invalid saves marked at their line, import diff with
   restart flag, install, rollback, safe mode by shortcut and URL over hostile CSS).
@@ -970,7 +978,7 @@ scheduled oracle"). Code: `src/kitty/core/search.py`, `src/kitty/core/blocks/sea
 The paper's §13 step 2 ("block read, write and search tools are added to the API"), closing
 the §11 limit "MCP and CLI expose the job-search module only". Code:
 `src/kitty/core/block_api.py` (no web imports), `WorkspaceTools` in `src/kitty/mcp_server.py`,
-`kitty notes` in `src/kitty/cli.py`, routes in `src/kitty/web_blocks.py`; block-level search
+`kitty notes` in `src/kitty/cli/notes.py`, routes in `src/kitty/web_blocks.py`; block-level search
 (`search.block_hits`, `search.phrase_blocks`) in `src/kitty/core/search.py`.
 
 - **One core, three thin consumers.** `block_api` holds every rule; the MCP notes tools,
@@ -1155,8 +1163,10 @@ mediator and journal), `src/kitty/core/agent_policy.py` (purpose labels, policie
 
 The paper's §16: one approval protocol for every risky action, replacing four separate
 ones. Code: `src/kitty/core/effects.py` (the kernel), `src/kitty/core/effect_kinds.py`
-(`delete_block`, `submit_application`), `src/kitty/web_effects.py` (the pending-approvals
-routes), `web/src/lib/EffectsPrompt.svelte` + `web/src/lib/effects.ts`, migration
+(`delete_block`, `submit_application`), `server/src/effects/` (the pending-approvals
+routes, answered by rika-server) with `src/kitty/web_effects_worker.py` (their worker side:
+`submit_application`'s preconditions and the executor), `web/src/lib/EffectsPrompt.svelte` +
+`web/src/lib/effects.ts`, migration
 `053_effects.sql`; kinds owned by their modules in `web_ai.py`, `web_automation.py`,
 `core/calendar_google.py` and `core/apply/recovery.py`.
 
@@ -1167,9 +1177,12 @@ routes), `web/src/lib/EffectsPrompt.svelte` + `web/src/lib/effects.ts`, migratio
   them and recomputes the digest inside one `BEGIN IMMEDIATE` with the `executed` event, and
   any difference refuses the effect for good (409, the changed names listed). Approvals are
   single-use, short-lived (2 minutes by default) and bound to the approving rika! window
-  session (`ui-<random>` per launch); proposals expire (`Kind.lifetime`).
+  session (`ui-<random>` per launch, made by rika-server and handed to the worker as
+  `app.ui_session`, so the front and the inline views share it); proposals expire
+  (`Kind.lifetime`).
 - **Who decides.** Only a `user` actor with a session approves, executes or denies:
-  `web_effects.user(app)` behind the UI secret. Agents, clients, peers and the system can
+  the window session behind the UI secret (`web_auth.window_user(app)` in Python, rika-server's
+  session in the front). Agents, clients, peers and the system can
   propose (a kind lists who may) and never approve. Policy-approved kinds are approved in
   memory by a computed policy, never by a model.
 - **A route decides only its own kind.** `approve`, `execute`, `approve_and_execute` and

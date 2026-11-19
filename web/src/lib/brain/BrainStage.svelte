@@ -498,7 +498,7 @@
 
   {#if model && model.groups.length}
     <div class="legend" class:panel-open={view.panel}>
-      <p>{#if isolatedGroup}{isolatedGroup.label} by kind{:else}By {grouping}{/if}</p>
+      <p>{#if isolatedGroup}{isolatedGroup.label} by kind{:else}By {grouping.toLowerCase()}{/if}</p>
       <p>Records + edits</p>
       <ul aria-label="Legend">
         {#each legend as group, index (group.key)}

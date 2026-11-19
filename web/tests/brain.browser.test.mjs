@@ -144,7 +144,7 @@ describe("brain stage", () => {
     assert.equal(Number(await drawn(page).getAttribute("data-shown")), jobs, "only the jobs are shown");
     const legend = page.getByRole("list", { name: "Legend" });
     assert.ok(await legend.locator('[data-key="record:job"]').count(), "the legend lists the group's kinds");
-    assert.match(await stage(page).innerText(), /JOBS BY KIND/);
+    assert.match(await stage(page).innerText(), /Jobs by kind/);
     await page.keyboard.press("Escape");
     await page.waitForFunction(() => !document.querySelector("[data-brain-stage]")?.hasAttribute("data-isolated"));
     assert.equal(Number(await drawn(page).getAttribute("data-shown")), BRAIN.nodes.length);
@@ -235,7 +235,7 @@ describe("brain stage", () => {
     await brainReady(page);
     const legend = page.getByRole("list", { name: "Legend" });
     await assert.doesNotReject(legend.waitFor());
-    assert.match(await page.locator("[data-brain-stage]").innerText(), /BY SECTION/);
+    assert.match(await page.locator("[data-brain-stage]").innerText(), /By section/);
     await legend.getByRole("button", { name: /more/ }).click().catch(() => {});
     for (const section of BRAIN.sections) {
       const item = legend.locator(`[data-key="${section.id}"]`);
@@ -290,19 +290,19 @@ describe("brain stage", () => {
     await page.getByRole("group", { name: "Group by" }).getByRole("button", { name: "Type" }).click();
     await page.getByRole("switch", { name: "Lines" }).click();
     await page.getByRole("slider", { name: "Point size" }).fill("2");
-    assert.match(await page.locator("[data-brain-stage]").innerText(), /BY TYPE/);
+    assert.match(await page.locator("[data-brain-stage]").innerText(), /By type/);
     const changed = await stored(page);
     assert.deepEqual([changed.layout, changed.groupBy, changed.lines, changed.pointSize], ["wheel", "type", true, 2]);
     await page.getByRole("button", { name: "Reset", exact: true }).click();
     const reset = await stored(page);
     assert.deepEqual(
       { ...reset, panel: undefined },
-      { layout: "anatomy", groupBy: "section", labels: "hover", turning: true, speed: 1, lines: false, scaffold: true, pointSize: 1, background: "transparent", panel: undefined },
+      { layout: "anatomy", groupBy: "section", labels: "hover", turning: true, speed: 0.5, lines: false, scaffold: true, pointSize: 1, background: "transparent", panel: undefined },
     );
     assert.equal(await page.getByRole("group", { name: "Layout" }).getByRole("button", { name: "Brain" }).getAttribute("aria-pressed"), "true");
     assert.equal(await page.getByRole("switch", { name: "Lines" }).getAttribute("aria-checked"), "false");
     assert.equal(await page.getByRole("slider", { name: "Point size" }).inputValue(), "1");
-    assert.match(await page.locator("[data-brain-stage]").innerText(), /BY SECTION/);
+    assert.match(await page.locator("[data-brain-stage]").innerText(), /By section/);
     await context.close();
   });
 
@@ -370,13 +370,13 @@ describe("brain stage", () => {
   });
 });
 
-describe("home is the Brain or the 2D atlas", () => {
-  test("home opens on the Brain; its switch offers only Brain and 2D, sits beside View in the corner, and remembers the choice", async () => {
+describe("the Brain view is the Brain or the 2D atlas", () => {
+  test("the view opens on the Brain; its switch offers only Brain and 2D, sits beside View in the corner, and remembers the choice", async () => {
     const { page, problems, context } = await open();
     await mount(page, "atlas");
     await brainReady(page);
-    const looks = page.getByRole("group", { name: "Home look" });
-    assert.deepEqual(await looks.getByRole("button").allInnerTexts(), ["Brain", "2D"], "home offers no 3D");
+    const looks = page.getByRole("group", { name: "Look" });
+    assert.deepEqual(await looks.getByRole("button").allInnerTexts(), ["Brain", "2D"], "the Brain view offers no 3D");
     assert.equal(await looks.getByRole("button", { name: "Brain" }).getAttribute("aria-pressed"), "true");
     const [switchBox, viewBox] = await Promise.all([looks, page.getByRole("button", { name: "View" })].map((locator) => locator.evaluate((node) => node.getBoundingClientRect().toJSON())));
     assert.ok(switchBox.right <= viewBox.left && Math.abs(switchBox.top - viewBox.top) <= 2, "the look switch is not in View's row");
@@ -393,7 +393,7 @@ describe("home is the Brain or the 2D atlas", () => {
     await page.locator('.atlas canvas[data-graph-look="2d"]').waitFor();
     assert.equal(await page.locator(".atlas .stage > .canvas").evaluate((element) => getComputedStyle(element).visibility), "visible");
     assert.equal((await savedBuild(page)).ui.home.look, "2d");
-    assert.ok(!(await page.evaluate(() => window.harnessBuild.preferences.some((patch) => patch.ui?.graph))), "home's choice leaves section graphs alone");
+    assert.ok(!(await page.evaluate(() => window.harnessBuild.preferences.some((patch) => patch.ui?.graph))), "the view's choice leaves section graphs alone");
     await mount(page, "atlas");
     await page.locator('.atlas canvas[data-graph-look="2d"]').waitFor();
     assert.equal(await page.locator("[data-brain-stage]").count(), 0, "the 2D choice is remembered");
@@ -403,11 +403,10 @@ describe("home is the Brain or the 2D atlas", () => {
     await context.close();
   });
 
-  test("the Brain stays fitted to its stage with the side rail expanded, collapsed and expanded again", async () => {
+  test("the Brain stays fitted to its stage as the window narrows and widens again", async () => {
     const { page, problems, context } = await open({ settings: { turning: false, panel: false } });
     await mount(page, "atlas");
     await brainReady(page);
-    const toggle = page.getByRole("button", { name: "Side widgets" });
     const fit = async (label) => {
       await page.waitForFunction(() => {
         const stage = document.querySelector(".atlas .stage"), canvas = stage?.querySelector("[data-brain-stage] canvas[data-points]");
@@ -426,18 +425,13 @@ describe("home is the Brain or the 2D atlas", () => {
       assert.ok(within(brain, area), `${label}: the brain ${JSON.stringify(brain)} leaves the stage ${JSON.stringify(area)}`);
       return area;
     };
-    const expanded = await fit("expanded");
-    await toggle.click();
-    await page.locator(".atlas .side.collapsed").waitFor();
-    const collapsed = await fit("collapsed");
-    assert.ok(collapsed.width - expanded.width >= 150, `the stage only widened ${collapsed.width - expanded.width}px`);
-    assert.equal(await page.evaluate(() => localStorage.getItem("kitty.home.rail")), "collapsed");
-    await mount(page, "atlas");
-    await brainReady(page);
-    assert.equal(await page.locator(".atlas .side.collapsed").count(), 1, "the collapsed rail is not remembered");
-    await toggle.click();
-    const again = await fit("expanded again");
-    assert.ok(Math.abs(again.width - expanded.width) <= 1, "the stage did not return to its width");
+    const wide = await fit("wide");
+    await page.setViewportSize({ width: 820, height: 760 });
+    const narrow = await fit("narrow");
+    assert.ok(wide.width - narrow.width >= 150, `the stage only narrowed ${wide.width - narrow.width}px`);
+    await page.setViewportSize({ width: 1200, height: 760 });
+    const again = await fit("wide again");
+    assert.ok(Math.abs(again.width - wide.width) <= 1, "the stage did not return to its width");
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -488,13 +482,13 @@ describe("home is the Brain or the 2D atlas", () => {
   }
 
   for (const [saved, shown] of [["3d", "brain"], ["brain", "brain"], ["2d", "2d"]]) {
-    test(`an old shared look of ${saved} opens home as ${shown}`, async () => {
+    test(`an old shared look of ${saved} opens the Brain view as ${shown}`, async () => {
       // Saved by a rika! from before builds; moved into the build on first start.
       const { page, problems, context } = await open({ storage: { "kitty.graph.look": saved } });
       await mount(page, "atlas");
       if (shown === "brain") await brainReady(page);
       else await page.locator('.atlas canvas[data-graph-look="2d"]').waitFor();
-      assert.equal(await page.getByRole("group", { name: "Home look" }).getByRole("button", { name: shown === "brain" ? "Brain" : "2D" }).getAttribute("aria-pressed"), "true");
+      assert.equal(await page.getByRole("group", { name: "Look" }).getByRole("button", { name: shown === "brain" ? "Brain" : "2D" }).getAttribute("aria-pressed"), "true");
       assert.equal((await savedBuild(page)).ui.home.look, shown);
       assert.deepEqual(problems, []);
       await context.close();

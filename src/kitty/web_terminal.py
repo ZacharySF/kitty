@@ -23,6 +23,10 @@ GET  /api/terminal/socket?token=<token>[&cols=<n>&rows=<n>]   (WebSocket upgrade
 
 Binary messages carry terminal bytes both ways. A text message resizes the pty:
 ``{"type": "resize", "cols": <1-1000>, "rows": <1-1000>}``.
+
+rika-server answers ``GET /api/terminal/agents`` (the herdr binary and session this worker's
+readiness line names, kitty.web_server.readiness) and a socket GET without an upgrade (426)
+itself (server/src/terminal.rs).
 """
 from __future__ import annotations
 
@@ -64,22 +68,20 @@ def stop(app) -> None:
 
 
 def get(app, conn, path, query):
-    if path == SOCKET_PATH:
-        raise _error(426, "Open the terminal with a WebSocket upgrade")
-    if path == "/api/terminal/agents":
-        runtime = app.terminal.runtime
-        return {"binary": runtime.binary, "session": runtime.session,
-                "cwd": str(app.settings.root), "default": "omp", "kinds": list(CODING_AGENTS)}
     if path == "/api/terminal/activity":
         try:
-            activity = app.terminal.runtime.activity()
+            activity = app.terminal.runtime.activity(signals=True)
         except TerminalUnavailable as exc:
             raise _error(503, str(exc)) from None
-        # Each card names the guarantee of the newest launch in its pane (Settings → Agents).
+        # Each card names the guarantee of the newest launch in its pane (Settings → Agents)
+        # and, while usage is on for its kind, its session's usage (kitty.web_usage). The
+        # signals that find the session stay here.
         guarantees = agent_sessions.pane_guarantees(conn, "herdr")
         for space in activity["workspaces"]:
             for agent in space["agents"]:
+                signals = agent.pop("signals")
                 agent["guarantee"] = guarantees.get(agent["pane"], "none")
+                agent["usage"] = app.usage.card({"id": f"herdr:{agent['pane']}", "kind": agent["kind"], **signals})
         return activity
 
 

@@ -2,6 +2,7 @@
   import { untrack } from "svelte";
   import { api, followApiLink, safeUrl, type TaskRecord } from "./api";
   import TaskStatus from "./TaskStatus.svelte";
+  import Select from "./ui/Select.svelte";
   import Loader from "./Loader.svelte";
   import ReportSummary, { type Summary } from "./ReportSummary.svelte";
 
@@ -110,8 +111,8 @@
   const titles = {
     finder: "Company finder",
     reports: "Response reports",
-    mail: "Read-only Gmail",
-    triage: "Job triage",
+    mail: "Gmail",
+    triage: "Rank jobs",
   };
 
   async function load() {
@@ -324,30 +325,21 @@
 <section class="panel insights" aria-labelledby="insights-title">
   <header class="panel-heading">
     <div>
-      <p class="eyebrow">Workspace insights</p>
       <h2 id="insights-title">{titles[section]}</h2>
     </div>
     <button class="button" onclick={load} disabled={loading || running}
-      >Refresh status</button
+      >Refresh</button
     >
   </header>
   <div class="body">
-    {#if demo}<p class="muted">
-        Demo data only. Network, Gmail authorization and paid operations are
-        disabled.
-      </p>{/if}
     {#if error}<p class="error-banner" role="alert">{error}</p>{/if}
     {#if notice}<p role="status">{notice}</p>{/if}
     <TaskStatus {task} oncomplete={complete} />
-    {#if loading}<Loader label="Loading…" />{/if}
+    {#if loading}<Loader label="Loading insights…" />{/if}
 
     {#if section === "finder"}
-      <p class="muted">
-        Discover niche companies from public sources. Review evidence before
-        adding a company to your watchlist; nothing is approved automatically.
-      </p>
       <form
-        class="controls"
+        class="controls calm"
         onsubmit={(event) => {
           event.preventDefault();
           confirm(
@@ -357,34 +349,27 @@
           );
         }}
       >
-        <label
-          >Proposal cap<input
+        <Select label="Decision" kind="segments" value={decision} onchange={(next) => { decision = next; void load(); }}
+          options={[{ value: "pending", label: "Pending", count: counts.pending ?? 0 }, { value: "approved", label: "Approved", count: counts.approved ?? 0 },
+            { value: "rejected", label: "Rejected", count: counts.rejected ?? 0 }]} />
+        <span class="spacer"></span>
+        <label class="calm-inline"
+          >Up to <input
             type="number"
             min="0"
             max="1000"
             bind:value={cap}
             required
-          /></label
+            aria-label="Proposal cap"
+          /> companies</label
         >
         <button class="button primary" disabled={demo || running}
           >Find companies</button
         >
-        <label
-          >Decision<select bind:value={decision} onchange={load}
-            ><option value="pending">Pending ({counts.pending ?? 0})</option
-            ><option value="approved">Approved ({counts.approved ?? 0})</option
-            ><option value="rejected">Rejected ({counts.rejected ?? 0})</option
-            ></select
-          ></label
-        >
       </form>
-      <p class="muted">
-        Keyboard: j/k select · a/Enter approve · r/x reject · R run finder · u
-        refresh. Actions always require confirmation.
-      </p>
       {#if lastFinderRun}<details>
           <summary
-            >Last finder run: {lastFinderRun.started_at} · {lastFinderRun.proposed}
+            >Last run: {lastFinderRun.started_at} · {lastFinderRun.proposed}
             proposed</summary
           >
           <ul>
@@ -394,9 +379,7 @@
                   : ""}
               </li>{/each}
           </ul>
-        </details>{:else}<p class="muted">
-          Finder has not completed a run.
-        </p>{/if}
+        </details>{/if}
       {#if !loading && candidates.length === 0}<p class="empty-state">
           No {decision} company proposals.
         </p>{/if}
@@ -519,41 +502,23 @@
       {/each}
       </div>
     {:else if section === "mail"}
-      <p class="muted">
-        Gmail uses only <strong>gmail.readonly</strong>: no sending, deleting or
-        labeling. Reading recruiting mail proposes status changes. Only your
-        confirmation moves an application.
-      </p>
       {#if mail}
-        <div class="badges">
-          <span class="badge"
-            >OAuth client: {mail.client_present ? "Present" : "Missing"}</span
-          ><span class="badge"
-            >Token: {mail.token_present
-              ? "Present (not validated)"
-              : "Not authorized"}</span
-          >
-        </div>
-        {#if !mail.client_present}<details open>
-            <summary>Set up a read-only Gmail OAuth client</summary>
+        {#if mail.client_present}<p>
+            <strong>{mail.token_present ? "Connected" : "Ready to connect"}</strong>
+          </p>{/if}
+        {#if !mail.client_present}<details>
+            <summary>Set up Gmail (one time)</summary>
             <ol>
-              <li>Create a Google Cloud project and enable Gmail API.</li>
+              <li>In Google Cloud, make a project and turn on the Gmail API.</li>
+              <li>On the consent screen, add yourself as a test user.</li>
               <li>
-                Configure the OAuth consent screen and add your account as a
-                test user.
+                Make a “Desktop app” client and save its file as
+                <code>config/gmail_client.json</code>.
               </li>
-              <li>
-                Create a Desktop app OAuth client; download its JSON to the
-                local workspace's <code>config/gmail_client.json</code>.
-              </li>
-              <li>
-                Choose Authorize below and complete Google's browser consent. No
-                credentials are displayed here.
-              </li>
+              <li>Come back and choose Connect Gmail.</li>
             </ol>
-            <p>
-              Testing-mode tokens can expire after seven days; authorize again
-              when needed.
+            <p class="muted">
+              Google signs test apps out after seven days; connect again then.
             </p>
           </details>{/if}
         <div class="controls">
@@ -565,7 +530,7 @@
                 "Authorize read-only Gmail access?",
                 "Open Google's consent page in your local browser. You must choose your account and grant read-only access yourself; the token is stored locally and never displayed.",
                 () => request("/mail/auth", { confirm: true }),
-              )}>Authorize / reconnect</button
+              )}>{mail.token_present ? "Reconnect Gmail" : "Connect Gmail"}</button
           >
         </div>
         <form
@@ -580,7 +545,7 @@
           }}
         >
           <label
-            >Look back (days)<input
+            >Days to look back<input
               type="number"
               min="1"
               max="3650"
@@ -633,33 +598,20 @@
         </div>
       {/if}
     {:else}
-      <p class="muted">
-        Free rules and saved answers are reused. Paid triage sends
-        contact-redacted resume context and job descriptions to the configured
-        provider only after a fresh estimate and your explicit approval. It
-        never submits applications.
-      </p>
-      <p>
-        Model: <strong>{model || "Loading…"}</strong> · Configured hard cap:
-        <strong>${configuredCap.toFixed(2)}</strong>
-      </p>
+      <!-- One row of same-height controls; the model and its limit are a quiet note after them. -->
       <form
-        class="controls"
+        class="triage-row"
+        aria-label="Sort jobs with AI"
         onsubmit={(event) => {
           event.preventDefault();
           estimate = null;
           void request("/triage/estimate", { track: track || null, limit });
         }}
       >
-        <label
-          >Track<select bind:value={track} onchange={() => (estimate = null)}
-            ><option value="">All tracks</option>{#each tracks as name}<option
-                value={name}>{name}</option
-              >{/each}</select
-          ></label
-        >
-        <label
-          >Maximum paid jobs<input
+        <Select label="Track" kind="list" options={[{ value: "", label: "All tracks" }, ...tracks.map((name) => ({ value: name, label: name }))]}
+          bind:value={track} onchange={() => (estimate = null)} />
+        <label class="inline-field"
+          >Jobs to send<input
             type="number"
             min="1"
             max="1000"
@@ -668,20 +620,10 @@
             oninput={() => (estimate = null)}
           /></label
         >
-        <button class="button primary" disabled={running}
-          >Estimate (no paid call)</button
-        >
-        <button
-          class="button"
-          type="button"
-          disabled={running}
-          onclick={() => runTriage("rules")}>Apply free rules only</button
-        >
+        <button class="button primary" disabled={running}>See the price</button>
+        <button class="button" type="button" disabled={running} onclick={() => runTriage("rules")}>Sort with free rules</button>
+        <span class="triage-meta" title="AI model and its spending limit">{model || "Loading…"} · up to ${configuredCap.toFixed(2)}</span>
       </form>
-      <p class="muted">
-        The paid-job limit and track apply to model requests; free rules tiers
-        cover the full workspace.
-      </p>
       {#if estimate}<article class="estimate">
           <h3>Review estimate</h3>
           <p>
@@ -738,21 +680,19 @@
             >
           </div>
         </article>{/if}
-      <h3>Pending batches</h3>
-      {#if pending.length === 0}<p class="empty-state">
-          No batches waiting.
-        </p>{:else}<ul>
+      <div class="batches">
+        <span class="triage-meta">{pending.length ? `${pending.length} ${pending.length === 1 ? "batch" : "batches"} waiting` : "No batches waiting"}</span>
+        {#if pending.length}<button
+            class="button"
+            disabled={demo || running}
+            onclick={() => runTriage("collect")}>Collect results</button
+          >{/if}
+      </div>
+      {#if pending.length}<ul class="batch-list">
           {#each pending as batch}<li>
-              {batch.batch_id} · {batch.sent} jobs · estimated ${batch.estimate_usd.toFixed(
-                4,
-              )}
+              {batch.batch_id} · {batch.sent} jobs · estimated ${batch.estimate_usd.toFixed(4)}
             </li>{/each}
         </ul>{/if}
-      <button
-        class="button"
-        disabled={demo || running || pending.length === 0}
-        onclick={() => runTriage("collect")}>Collect batch results</button
-      >
     {/if}
   </div>
 </section>
@@ -839,22 +779,65 @@
   dd {
     overflow-wrap: anywhere;
   }
+  .controls .spacer {
+    flex: 1 1 auto;
+  }
   .controls {
-    align-items: end;
+    align-items: center;
   }
   label {
     display: grid;
     gap: 0.35rem;
     font-size: 0.85rem;
   }
-  input,
-  select {
+  input {
     max-width: 100%;
     padding: 0.6rem;
     background: var(--surface);
     color: var(--ink);
     border: 1px solid var(--border);
     border-radius: 0.45rem;
+  }
+  /* Job ranking: one card-like row, every control the shared control height on one centre line. */
+  .triage-row,
+  .batches {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+  }
+  .triage-row {
+    padding: 12px 14px;
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-panel);
+  }
+  .inline-field {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted);
+    font-size: var(--fs-control);
+  }
+  .inline-field input {
+    box-sizing: border-box;
+    width: 76px;
+    height: var(--control-h);
+    padding: 0 10px;
+    border-radius: var(--r-control);
+    font-size: var(--fs-control);
+  }
+  .triage-meta {
+    color: var(--muted);
+    font-size: var(--fs-control);
+  }
+  .triage-row .triage-meta {
+    margin-left: auto;
+  }
+  .batch-list {
+    margin: 0;
+    padding-left: 1.2rem;
+    color: var(--muted);
+    font-size: var(--fs-control);
   }
   .cards {
     display: grid;

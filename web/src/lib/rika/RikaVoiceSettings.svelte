@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { untrack } from "svelte";
   import { api } from "../api";
-  import { downloadLabel } from "./rika";
+  import { activeModules } from "../modules.svelte";
+  import { downloadLabel, voiceEnabled } from "./rika";
   import { rika } from "./session.svelte";
 
   /**
@@ -30,7 +31,9 @@
       error = (cause as Error).message;
     }
   }
-  onMount(load);
+  // Without the voice module Rika is text only and there is nothing to set.
+  const voiceOn = $derived(voiceEnabled(activeModules));
+  $effect(() => { if (voiceOn) untrack(load); });
   // A finished download (the session clears its progress) shows the model as installed.
   $effect(() => {
     if (!rika.model && voice?.downloading) void load();
@@ -61,11 +64,11 @@
   }
 </script>
 
-<fieldset class="voice">
+{#if voiceOn}<fieldset class="voice">
   <legend>Rika's voice</legend>
   {#if voice}
     {#if voice.engine === "demo"}
-      <p class="muted">The demo hears a canned transcript: no microphone audio is transcribed and no model is downloaded.</p>
+      <p class="muted">Voice uses a sample transcript here.</p>
     {:else}
       <label>Speech-to-text model (on this computer)
         <select value={voice.model} disabled={busy} onchange={(event) => choose(event.currentTarget.value)}>
@@ -75,9 +78,9 @@
         </select>
       </label>
       <p class="muted">
-        {#if progress}Downloading · {downloadLabel(progress.received, progress.total)}
+        {#if progress}Downloading, {downloadLabel(progress.received, progress.total)}
         {:else if voice.installed}Downloaded. Audio never leaves this computer.
-        {:else}Downloads once into this workspace's data folder the first time you hold Space in the Rika bar.{/if}
+        {:else}Downloads once into this workspace's data folder the first time you hold Space in Rika's field.{/if}
       </p>
       {#if !voice.installed && !progress}<button class="button" disabled={busy} onclick={download}>Download now</button>{/if}
     {/if}
@@ -86,7 +89,7 @@
     </p>
   {/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
-</fieldset>
+</fieldset>{/if}
 
 <style>
   .voice {

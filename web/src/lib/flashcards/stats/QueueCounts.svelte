@@ -59,7 +59,7 @@
   .big span,
   .counts small {
     color: var(--muted);
-    font: 10px var(--font-mono);
+    font: 10px var(--font-ui);
     letter-spacing: 0.1em;
     text-transform: uppercase;
   }
@@ -107,7 +107,7 @@
     border-radius: 2px;
   }
   .counts b {
-    font: 600 16px var(--font-mono);
+    font: 600 16px var(--font-ui);
   }
   .parked {
     display: flex;
@@ -120,7 +120,7 @@
     border: 1px dashed var(--hairline);
     border-radius: 999px;
     color: var(--muted);
-    font: 10px var(--font-mono);
+    font: 10px var(--font-ui);
   }
   @media (prefers-reduced-motion: reduce) {
     .bar span {

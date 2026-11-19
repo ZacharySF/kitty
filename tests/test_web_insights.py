@@ -1,6 +1,7 @@
 """Insights web adapters against isolated fixtures, without live auth or paid calls."""
 from __future__ import annotations
 
+import http.client
 import io
 import json
 import zipfile
@@ -8,7 +9,9 @@ from dataclasses import replace
 from datetime import date
 
 import pytest
+from terminal_support import front_site
 
+from kitty import web_auth
 from kitty import web_insights as web
 from kitty.core import applications, jobs, stats, tracks
 from kitty.core.finder import store
@@ -27,7 +30,7 @@ class DeferredTasks:
 
 @pytest.fixture
 def app(workspace, tmp_path):
-    result = WebApplication(workspace.settings, workspace.config, tmp_path)
+    result = WebApplication(workspace.settings, workspace.config, tmp_path, ui_session="ui-test")
     result.tasks = DeferredTasks()
     return result
 
@@ -46,55 +49,73 @@ def candidate(workspace, name):
                                   board_url=None, website="https://example.invalid", evidence=["Synthetic"], run_id=None)
 
 
-def test_finder_decisions_persist_and_approval_updates_watchlist(app, workspace):
+def test_finder_approval_persists_and_updates_watchlist(app, workspace):
     approved = candidate(workspace, "Synthetic Approved Firm")
-    rejected = candidate(workspace, "Synthetic Rejected Firm")
+    pending = candidate(workspace, "Synthetic Pending Firm")
     with pytest.raises(APIError):
         web.post(app, workspace.conn, f"/api/finder/{approved}/approve", {})
     web.post(app, workspace.conn, f"/api/finder/{approved}/approve", {"confirm": True})
-    web.post(app, workspace.conn, f"/api/finder/{rejected}/reject", {"confirm": True})
     assert store.get_candidate(workspace.conn, approved).decision == "approved"
-    assert store.get_candidate(workspace.conn, rejected).decision == "rejected"
+    assert store.get_candidate(workspace.conn, pending).decision == "pending"
     assert any(item.name == "Synthetic Approved Firm" for item in app.config.watchlist.companies)
-    assert not any(item.name == "Synthetic Rejected Firm" for item in app.config.watchlist.companies)
-    with pytest.raises(APIError):
-        web.post(app, workspace.conn, f"/api/finder/{approved}/reject", {"confirm": True})
+    assert not any(item.name == "Synthetic Pending Firm" for item in app.config.watchlist.companies)
+    with pytest.raises(APIError) as caught:
+        web.post(app, workspace.conn, f"/api/finder/{approved}/approve", {"confirm": True})
+    assert caught.value.status == 409
+    # Rejections are rika-server's (server/src/insights): the worker no longer answers them.
+    with pytest.raises(APIError, match="API route not found"):
+        app.mutate(workspace.conn, f"/api/finder/{pending}/reject", {"confirm": True})
 
 
-def test_all_exports_include_history_and_escape_csv(app, workspace, posting):
+def download(site, target):
+    client = http.client.HTTPConnection("127.0.0.1", site.port, timeout=10)
+    try:
+        client.request("GET", target, headers={"Origin": site.server.origin, web_auth.HEADER: site.secret})
+        response = client.getresponse()
+        return response.status, response.getheader("Content-Type"), response.getheader("Content-Disposition"), response.read()
+    finally:
+        client.close()
+
+
+def test_all_exports_include_history_and_escape_csv(workspace, posting):
     applied = applications.record_application(workspace.conn, posting.id)
     applications.set_status(workspace.conn, applied.id, "interview")
-    content, content_type, filename = web.download(app, workspace.conn, "/api/reports/export", {"format": "json"})
-    document = json.loads(content)
-    assert document["jobs"][0]["title"] == "=Synthetic formula"
-    assert len(document["applications"]) == 1 and len(document["status_events"]) == 2
-    assert content_type == "application/json" and filename.endswith(".json")
-    content, content_type, _ = web.download(app, workspace.conn, "/api/reports/export", {"format": "csv"})
-    with zipfile.ZipFile(io.BytesIO(content)) as archive:
-        assert set(archive.namelist()) == {"jobs.csv", "applications.csv", "status_events.csv"}
-        assert "'=Synthetic formula" in archive.read("jobs.csv").decode()
-    report = web.get(app, workspace.conn, "/api/reports", {})
-    assert report["sections"] and report["datasets"] == ["jobs", "applications", "status_events"]
+    workspace.conn.commit()
+    # Reports and the export are rika-server's (server/src/insights).
+    with front_site(workspace.settings) as site:
+        status, content_type, disposition, content = download(site, "/api/reports/export?format=json")
+        document = json.loads(content)
+        assert status == 200 and document["jobs"][0]["title"] == "=Synthetic formula"
+        assert len(document["applications"]) == 1 and len(document["status_events"]) == 2
+        assert content_type == "application/json" and disposition.endswith('.json"')
+        status, content_type, _, content = download(site, "/api/reports/export?format=csv")
+        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+            assert set(archive.namelist()) == {"jobs.csv", "applications.csv", "status_events.csv"}
+            assert "'=Synthetic formula" in archive.read("jobs.csv").decode()
+        status, report = site.request("/api/reports")
+        assert status == 200 and report["sections"] and report["datasets"] == ["jobs", "applications", "status_events"]
 
 
-def test_mail_status_does_not_read_credentials_and_proposals_require_decision(app, workspace, posting):
+def test_mail_status_does_not_read_credentials_and_proposals_require_decision(workspace, posting):
     (workspace.settings.config_dir / "gmail_client.json").write_text("synthetic-client-secret")
     (workspace.settings.data_dir / "gmail_token.json").write_text("synthetic-token-secret")
     applied = applications.record_application(workspace.conn, posting.id)
     proposal = applications.set_status(workspace.conn, applied.id, "interview", state="proposed", source="gmail", evidence="Synthetic recruiting subject")
-    state = web.get(app, workspace.conn, "/api/mail", {})
-    assert state["ready"] and state["scope"] == "gmail.readonly"
-    assert "synthetic-token-secret" not in json.dumps(state)
-    assert "synthetic-client-secret" not in json.dumps(state)
-    assert state["proposals"][0]["event_id"] == proposal.id
-    assert applications.get_application(workspace.conn, applied.id).status == "applied"
-    with pytest.raises(APIError):
-        web.post(app, workspace.conn, f"/api/mail/proposals/{proposal.id}/confirm", {"confirm": 1})
-    web.post(app, workspace.conn, f"/api/mail/proposals/{proposal.id}/confirm", {"confirm": True})
-    assert applications.get_application(workspace.conn, applied.id).status == "interview"
     declined = applications.set_status(workspace.conn, applied.id, "rejected", state="proposed", source="gmail")
-    web.post(app, workspace.conn, f"/api/mail/proposals/{declined.id}/reject", {"confirm": True})
-    assert applications.get_application(workspace.conn, applied.id).status == "interview"
+    workspace.conn.commit()
+    # The mail status and proposal decisions are rika-server's (server/src/insights).
+    with front_site(workspace.settings) as site:
+        status, state = site.request("/api/mail")
+        assert status == 200 and state["ready"] and state["scope"] == "gmail.readonly"
+        assert "synthetic-token-secret" not in json.dumps(state)
+        assert "synthetic-client-secret" not in json.dumps(state)
+        assert [item["event_id"] for item in state["proposals"]] == [declined.id, proposal.id]
+        assert applications.get_application(workspace.conn, applied.id).status == "applied"
+        assert site.request(f"/api/mail/proposals/{proposal.id}/confirm", {"confirm": 1})[0] == 400
+        assert site.request(f"/api/mail/proposals/{proposal.id}/confirm", {"confirm": True}) == (200, {"ok": True})
+        assert applications.get_application(workspace.conn, applied.id).status == "interview"
+        assert site.request(f"/api/mail/proposals/{declined.id}/reject", {"confirm": True}) == (200, {"ok": True})
+        assert applications.get_application(workspace.conn, applied.id).status == "interview"
 
 
 @pytest.mark.parametrize("path,body", [
@@ -259,4 +280,3 @@ def test_report_summary_tells_the_week_and_month_from_recorded_history(app, work
     # The undone offer is not counted; the OA is the week's one reply.
     assert summary["week"] == {"start": "2026-11-02", "applied": 3, "replies": 1, "advanced": 1, "offers": 0}
     assert summary["month"] == {"start": "2026-11-01", "applied": 3, "replies": 1, "advanced": 1, "offers": 0, "previous_applied": 2}
-    assert "summary" in web.get(app, workspace.conn, "/api/reports", {})

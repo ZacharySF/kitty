@@ -5,7 +5,6 @@ import dataclasses
 import json
 import time
 from contextlib import closing
-from urllib.parse import quote
 
 import httpx
 import pytest
@@ -29,10 +28,18 @@ def no_network(monkeypatch):
 
 @pytest.fixture
 def demo(tmp_path, no_network):
-    settings = dataclasses.replace(make_root(tmp_path, ("workspace", "terminal")), demo=True)
+    # Voice is its own module now (its engine is a pack the checkout carries).
+    settings = dataclasses.replace(make_root(tmp_path, ("workspace", "terminal", "voice")), demo=True)
     with site(settings) as running:
         yield running
     assert no_network == []
+
+
+def _history(running, before=None):
+    """`GET /api/rika/history`'s answer: rika-server answers that route (tests/test_rika_data_parity.py),
+    this demo's in-process site the rest of Rika."""
+    with closing(connect(running.app.settings.db_path)) as conn:
+        return store.history(conn, before)
 
 
 class Stream:
@@ -84,14 +91,15 @@ def test_a_demo_request_streams_tier_action_and_reply_and_undo_reverts_it(demo, 
     assert (tier["tier"], tier["model"], tier["reply_to"]) == ("fast", "deterministic", sent["message_id"])
     [action] = kinds(events, "action")
     assert action["action"]["summary"] == "Added the node Photosynthesis to Canvas" and action["action"]["reversible"]
-    status, history = demo.request("/api/rika/history")
-    assert status == 200 and [item["kind"] for item in history["items"]] == ["message", "message", "action"]
+    history = _history(demo)
+    assert [item["kind"] for item in history["items"]] == ["message", "message", "action"]
     assert history["has_more"] is False
     status, body = demo.request(f"/api/rika/actions/{action['action']['id']}/undo", {})
     assert status == 200 and body["action"]["status"] == "undone"
     assert stream.until(lambda event: event["type"] == "action")[-1]["action"]["status"] == "undone"
     assert demo.request(f"/api/rika/actions/{action['action']['id']}/undo", {})[0] == 409
-    assert demo.request("/api/notes")[1]["pages"] == []
+    with closing(connect(demo.app.settings.db_path)) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM note_page_index").fetchone()[0] == 0
 
 
 def test_open_view_is_a_navigate_event(demo, stream):
@@ -101,12 +109,46 @@ def test_open_view_is_a_navigate_event(demo, stream):
     assert kinds(events, "action")[0]["action"]["reversible"] is False
 
 
+def test_a_saved_skill_is_handed_to_a_running_agent_of_its_kind_only(demo):
+    # Skills are listed per kind once the kind is switched on.
+    assert demo.request("/api/terminal/agent-skills/settings", {"kind": "omp", "enabled": True})[0] == 200
+    assert demo.request("/api/terminal/agent-skills/settings", {"kind": "claude", "enabled": True})[0] == 200
+    catalog = {entry["kind"]: entry for entry in demo.request("/api/terminal/agent-skills")[1]["kinds"]}
+    lavish = next(skill for skill in catalog["omp"]["skills"] if skill["name"] == "lavish")
+    docx = next(skill for skill in catalog["claude"]["skills"] if skill["name"] == "docx")
+    agents = demo.request("/api/rika/agents")[1]["agents"]
+    omp = next(agent for agent in agents if agent["kind"] == "omp" and agent["status"] != "done")
+
+    status, sent = demo.request(f"/api/rika/agents/{omp['id']}/skill", {"path": lavish["path"]})
+    assert status == 200 and sent["skill"] == "lavish" and "skill://lavish" in sent["sent"]
+    after = next(agent for agent in demo.request("/api/rika/agents")[1]["agents"] if agent["id"] == omp["id"])
+    assert after["line"] == "Loading the lavish skill"
+    # Another kind's skill, an unlisted path and an agent that is gone are refused.
+    assert demo.request(f"/api/rika/agents/{omp['id']}/skill", {"path": docx["path"]})[0] == 404
+    assert demo.request(f"/api/rika/agents/{omp['id']}/skill", {"path": "/etc/passwd"})[0] == 404
+    assert demo.request("/api/rika/agents/herdr:nope/skill", {"path": lavish["path"]})[0] == 404
+    assert demo.request(f"/api/rika/agents/{omp['id']}/skill", {"path": 7})[0] == 400
+
+
+def test_each_agent_kind_is_asked_for_a_skill_in_its_own_terms():
+    from pathlib import Path
+
+    from kitty.core.rika.agents import skill_line
+
+    path = Path("/home/me/.codex/skills/lavish/SKILL.md")
+    assert "skill://lavish" in skill_line("omp", "lavish", path)
+    assert skill_line("claude", "lavish", path) == "Use the lavish skill for the rest of this session."
+    assert str(path) in skill_line("codex", "lavish", path)
+
+
 def test_starting_an_agent_waits_for_approval_then_joins_the_scripted_roster(demo, stream):
     status, roster = demo.request("/api/rika/agents")
     assert status == 200 and len(roster["agents"]) == 5
     assert {agent["status"] for agent in roster["agents"]} == {"working", "blocked", "idle", "done"}
-    assert all(set(agent) == {"id", "kind", "name", "status", "task", "line", "since", "where", "now", "guarantee"}
+    assert all(set(agent) == {"id", "kind", "name", "status", "task", "line", "since", "where", "now", "usage", "guarantee"}
                for agent in roster["agents"])
+    # The demo's cards carry invented usage (kitty.web_usage); no log is opened.
+    assert all(agent["usage"]["agent"] == agent["kind"] and agent["usage"]["new_tokens"] > 0 for agent in roster["agents"])
     # Every guarantee level shows on a demo card (Settings → Agents names them).
     assert {agent["guarantee"] for agent in roster["agents"]} == {"full", "attribution", "none"}
     # Agent skills are off by default: no agent's now state is read.
@@ -140,7 +182,6 @@ def test_requests_are_validated_and_header_protected(demo):
     assert demo.request("/api/rika/messages", {"text": "hi"}, headers={"X-Kitty-Request": None})[0] == 403
     assert demo.request("/api/rika/messages", {"text": "hi", "conversation_id": "missing"})[0] == 404
     assert demo.request("/api/rika/approvals/" + "0" * 32, {"decision": "approve"})[0] == 404
-    assert demo.request("/api/rika/history?before=;drop")[0] == 400
     assert demo.request("/api/rika/stream")[0] == 426
 
 
@@ -164,10 +205,9 @@ def test_history_pages_backwards(demo, stream):
         older = store.history(conn, before=page["next_before"], limit=4)
     assert page["has_more"] and len(page["items"]) == 4
     assert older["items"][-1]["created_at"] < page["items"][0]["created_at"]
-    everything = demo.request("/api/rika/history")[1]["items"]
+    everything = _history(demo)["items"]
     assert [item["kind"] for item in everything] == ["message", "message", "action"] * 3
-    status, body = demo.request("/api/rika/history?before=" + quote(page["next_before"]))
-    assert status == 200 and body["items"] == everything[:5]
+    assert _history(demo, page["next_before"])["items"] == everything[:5]
 
 
 # Voice and brain dumps (phase 2a) ----------------------------------------------
@@ -196,7 +236,15 @@ def test_voice_streams_over_the_rika_socket_and_the_spoken_request_routes_fast(d
     _control(stream, type="voice.stop")
     final = stream.until(lambda event: event["type"] == "voice.final")[-1]
     assert final["text"] == voice_engine.DEMO_COMMAND and final["mode"] == "command" and final["duration"] == 1.5
-    assert demo.request("/api/rika/history")[1]["items"] == []  # hearing stores nothing by itself
+    assert _history(demo)["items"] == []  # hearing stores nothing by itself
+    # "Tomorrow" said before 04:00 asks which day is meant, so the calendar gets a zone where it is daytime now.
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    daytime = next(name for name in ("UTC", "Asia/Tokyo", "America/Los_Angeles") if 4 <= datetime.now(ZoneInfo(name)).hour < 23)
+    with closing(connect(demo.app.settings.db_path)) as conn:
+        conn.execute("UPDATE calendar_calendars SET timezone=? WHERE id='personal'", (daytime,))
+        conn.commit()
     status, sent = demo.request("/api/rika/messages", {"text": final["text"], "spoken": True})
     events = stream.reply()
     assert kinds(events, "message")[0]["message"]["source"] == "voice"
@@ -303,7 +351,7 @@ def test_a_brain_dump_in_the_demo_makes_one_plan_grouped_by_area_and_a_dump_note
     assert notebook == "Brain dumps"
     assert any(text.startswith("Transcript · ") for text in texts)
     assert "0:00 " + DEMO_LINES[0] in texts and any(DEMO_LINES[-1] in text for text in texts)
-    history = demo.request("/api/rika/history")[1]["items"]
+    history = _history(demo)["items"]
     assert [item["kind"] for item in history] == ["message", "message", "plan"]
 
 

@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from typing import ClassVar
 
 import pytest
+from terminal_support import front_site
 
 from kitty import web_ai
 from kitty.core import block_api, effect_kinds, effects, keys
@@ -20,7 +21,7 @@ KEY = 'synthetic-openrouter-test-key'
 @pytest.fixture
 def ai(workspace):
     app = SimpleNamespace(settings=workspace.settings, tasks=TaskRunner(), ui_session='ui-test')
-    web_ai._write_key(app, KEY)
+    keys.for_settings(workspace.settings).set('OPENROUTER', KEY)
     workspace.conn.execute('INSERT INTO ai_models VALUES(?,?,?,?,?,?)',
                            ('synthetic/text', 'Synthetic text model', '0.000001', '0.000002', 100000, web_ai._now().isoformat()))
     workspace.conn.execute("UPDATE ai_settings SET model='synthetic/text',daily_budget_usd='0.02' WHERE id=1")
@@ -91,20 +92,21 @@ def preview(ai, workspace, purpose='summarize'):
 
 
 def test_key_is_private_and_settings_staleness_cannot_replace_it(ai, workspace):
-    status = web_ai.get(ai, workspace.conn, '/api/ai/status', {})
-    assert 'synthetic-openrouter-test-key' not in str(status)
-    path = keys.for_settings(ai.settings).file_path('OPENROUTER')
-    assert path.stat().st_mode & 0o077 == 0
-    web_ai.post(ai, workspace.conn, '/api/ai/settings', {'revision': status['revision'], 'daily_budget_usd': 2, 'confirmed': True})
-    with pytest.raises(APIError) as error:
-        web_ai.post(ai, workspace.conn, '/api/ai/settings', {'revision': status['revision'], 'key': 'stale-replacement-test-key', 'confirmed': True})
-    assert error.value.status == 409
-    assert web_ai._key(ai) == 'synthetic-openrouter-test-key'
-    workspace.settings.root.joinpath('.private', 'outside').write_text('outside-content')
-    path.unlink()
-    path.symlink_to('outside')
-    with pytest.raises(APIError):
-        web_ai.post(ai, workspace.conn, '/api/ai/settings', {'revision': status['revision'] + 1, 'key': 'new-synthetic-test-key', 'confirmed': True})
+    # Status and settings are rika-server's (server/src/insights/ai.rs).
+    with front_site(workspace.settings, env={'OPENROUTER_API_KEY': ''}) as site:
+        code, status = site.request('/api/ai/status')
+        assert code == 200 and status['configured'] and KEY not in json.dumps(status)
+        path = keys.for_settings(ai.settings).file_path('OPENROUTER')
+        assert path.stat().st_mode & 0o077 == 0
+        assert site.request('/api/ai/settings', {'revision': status['revision'], 'daily_budget_usd': 2, 'confirmed': True})[0] == 200
+        code, error = site.request('/api/ai/settings', {'revision': status['revision'], 'key': 'stale-replacement-test-key', 'confirmed': True})
+        assert (code, error) == (409, {'error': 'AI settings changed; reload before saving'})
+        assert web_ai._key(ai) == KEY
+        workspace.settings.root.joinpath('.private', 'outside').write_text('outside-content')
+        path.unlink()
+        path.symlink_to('outside')
+        code, _ = site.request('/api/ai/settings', {'revision': status['revision'] + 1, 'key': 'new-synthetic-test-key', 'confirmed': True})
+        assert code == 409
     assert workspace.settings.root.joinpath('.private', 'outside').read_text() == 'outside-content'
 
 
@@ -128,7 +130,7 @@ def test_unapproved_underfunded_expired_and_stale_reviews_stay_unspent(ai, works
             web_ai.post(ai, workspace.conn, '/api/ai/run', base)
     assert error.value.status == 409 and state(workspace, plan) == 'expired'
     fresh = preview(ai, workspace, purpose)
-    web_ai._write_key(ai, 'synthetic-changed-private-key')
+    keys.for_settings(ai.settings).set('OPENROUTER', 'synthetic-changed-private-key')
     with pytest.raises(APIError) as error:
         web_ai.post(ai, workspace.conn, '/api/ai/run', run_body(fresh))
     assert error.value.status == 409 and state(workspace, fresh) == 'refused'
@@ -345,18 +347,18 @@ def test_mind_map_review_sends_exact_approved_prompt_once(ai, workspace, provide
 
 
 def test_rika_tier_models_are_settings_from_the_refreshed_catalog(ai, workspace):
-    status = web_ai.get(ai, workspace.conn, '/api/ai/status', {})
-    assert status['rika_tiers'] == {'fast': '', 'standard': '', 'deep': ''}
-    assert set(status['rika_tier_defaults']) == {'fast', 'standard', 'deep'}
-    saved = web_ai.post(ai, workspace.conn, '/api/ai/settings', {
-        'revision': status['revision'], 'rika_tiers': {'fast': 'synthetic/text', 'deep': ''}, 'confirmed': True})
-    assert saved['rika_tiers'] == {'fast': 'synthetic/text', 'standard': '', 'deep': ''}
-    for tiers in ({'fast': 'not/listed'}, {'huge': 'synthetic/text'}, ['synthetic/text'], {'fast': 3}):
-        with pytest.raises(APIError) as error:
-            web_ai.post(ai, workspace.conn, '/api/ai/settings', {
-                'revision': saved['revision'], 'rika_tiers': tiers, 'confirmed': True})
-        assert error.value.status == 400
-    assert web_ai.get(ai, workspace.conn, '/api/ai/status', {})['rika_tiers']['fast'] == 'synthetic/text'
+    with front_site(workspace.settings, env={'OPENROUTER_API_KEY': ''}) as site:
+        status = site.request('/api/ai/status')[1]
+        assert status['rika_tiers'] == {'fast': '', 'standard': '', 'deep': ''}
+        assert set(status['rika_tier_defaults']) == {'fast', 'standard', 'deep'}
+        code, saved = site.request('/api/ai/settings', {
+            'revision': status['revision'], 'rika_tiers': {'fast': 'synthetic/text', 'deep': ''}, 'confirmed': True})
+        assert code == 200 and saved['rika_tiers'] == {'fast': 'synthetic/text', 'standard': '', 'deep': ''}
+        for tiers in ({'fast': 'not/listed'}, {'huge': 'synthetic/text'}, ['synthetic/text'], {'fast': 3}):
+            assert site.request('/api/ai/settings', {'revision': saved['revision'], 'rika_tiers': tiers, 'confirmed': True})[0] == 400
+        assert site.request('/api/ai/status')[1]['rika_tiers']['fast'] == 'synthetic/text'
+    from kitty.core.rika import router
+    assert router.configured(workspace.conn)['fast'] == 'synthetic/text'
 
 
 def catalog_model(identifier, context=100000, **pricing):

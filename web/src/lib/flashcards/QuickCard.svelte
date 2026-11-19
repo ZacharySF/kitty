@@ -176,7 +176,7 @@
   }
   .face span {
     color: var(--subtle);
-    font: 500 10.5px var(--font-mono);
+    font: 500 10.5px var(--font-ui);
     letter-spacing: 0.06em;
     text-transform: uppercase;
   }
@@ -203,7 +203,7 @@
     line-height: 1.5;
   }
   .keys { color: var(--subtle); }
-  .keys kbd { font: 10.5px var(--font-mono); }
+  .keys kbd { font: 10.5px var(--font-ui); }
   .problem { color: var(--error); }
   .warning { color: var(--warning); }
   .added { color: var(--success); }

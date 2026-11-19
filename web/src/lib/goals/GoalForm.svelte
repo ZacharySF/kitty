@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import EditDrawer from "../ui/EditDrawer.svelte";
+  import DatePicker from "../ui/DatePicker.svelte";
   import Select from "../ui/Select.svelte";
   import { createGoal, deleteGoal, loadGoal, updateGoal } from "./api";
   import { STATUSES, emptyMeasure, measureDraft, measureInputs, type Goal, type GoalStatus, type Id, type MeasureDraft } from "./goals";
@@ -29,6 +30,8 @@
   let error = $state("");
   let busy = $state(false);
   let confirming = $state(false);
+  const uid = $props.id();
+  const targetId = `${uid}-target`;
 
   function fill(source: Goal | null) {
     base = source;
@@ -104,7 +107,7 @@
   <form id="goal-form" class="goal-form" onsubmit={save}>
     <label class="field"><span class="field-label">Title</span><input bind:value={title} required maxlength="200" placeholder="Land a summer 2027 frontend internship" /></label>
     <label class="field"><span class="field-label">Why</span><textarea bind:value={why} rows="3" maxlength="2000" placeholder="What it gets you, in your words"></textarea></label>
-    <label class="field"><span class="field-label">Target date</span><input type="date" bind:value={target} /></label>
+    <div class="field"><label class="field-label" for={targetId}>Target date</label><DatePicker id={targetId} label="Target date" bind:value={target} /></div>
     {#if base}
       <div class="field">
         <span class="field-label">Status</span>

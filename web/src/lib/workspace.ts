@@ -3,16 +3,18 @@ import { ICONS } from "./icons.ts";
 
 /** `module` is the owner; core views (null) are always available. */
 export const navigation = [
-  { id: "today", label: "Atlas", icon: "atlas", module: null },
+  { id: "today", label: "Home", icon: "today", module: null },
+  { id: "brain", label: "Brain", icon: "atlas", module: "brain" },
   { id: "goals", label: "Goals", icon: "goals", module: null },
+  { id: "rika", label: "Rika", icon: "ai", module: null },
   { id: "calendar", label: "Calendar", icon: "calendar", module: "workspace" },
   { id: "opportunities", label: "Opportunities & projects", icon: "opportunities", module: "workspace" },
   { id: "herdr", label: "herdr", icon: "terminal", module: "terminal" },
   { id: "tern", label: "Tern", icon: "terminal", module: "terminal" },
   { id: "agent-skills", label: "All agent skills", icon: "terminal", module: "terminal" },
   { id: "study", label: "Study", icon: "study", module: "workspace" },
-  { id: "math", label: "Math", icon: "math", module: "workspace" },
-  { id: "learnharness", label: "LearnHarness", icon: "study", module: "workspace" },
+  { id: "math", label: "Math", icon: "math", module: "math" },
+  { id: "learnharness", label: "LearnHarness", icon: "study", module: "learnharness" },
   { id: "flashcards", label: "Flashcards", icon: "flashcards", module: "workspace" },
   { id: "notes", label: "Notes & canvas", icon: "notes", module: "workspace" },
   { id: "quick-notes", label: "Quick notes", icon: "quick-notes", module: "workspace" },
@@ -20,7 +22,7 @@ export const navigation = [
   { id: "schema", label: "Mind maps", icon: "schema", module: "workspace" },
   { id: "ai", label: "AI settings", icon: "ai", module: null },
   { id: "inbox", label: "New jobs", icon: "inbox", module: "applyai" },
-  { id: "queue", label: "Prepare applications", icon: "queue", module: "applyai" },
+  { id: "queue", label: "Ready to apply", icon: "queue", module: "applyai" },
   { id: "jobs", label: "Find jobs", icon: "jobs", module: "applyai" },
   { id: "pipeline", label: "My applications", icon: "applications", module: "applyai" },
   { id: "applications", label: "Application list", icon: "applications", module: "applyai" },
@@ -54,7 +56,7 @@ const EXTERNAL_ID = new RegExp(`^m/${SLUG}/${SLUG}$`);
 const EXTERNAL_HASH = new RegExp(`^(m/${SLUG}/${SLUG})(?:/|$)`);
 /** Drawn for an add-on whose icon name rika! does not know (the Modules settings icon). */
 export const GENERIC_ICON = "atlas";
-const GROUP_LABELS: Record<ExternalView["group"], string> = { plan: "Plan", study: "Study", jobs: "Job search", settings: "Settings" };
+const GROUP_LABELS: Record<ExternalView["group"], string> = { plan: "Plan", study: "Study", jobs: "Career", settings: "Settings" };
 
 export function externalViewId(view: Pick<ExternalView, "module" | "id">): ExternalViewId {
   return `m/${view.module}/${view.id}`;
@@ -80,9 +82,18 @@ export function viewEnabled(view: AnyView, enabled: Enabled, external: Externals
   const owner = moduleOf(view);
   return owner === null || enabled.includes(owner);
 }
+/** Views that run on a module's pack (kitty.packs): with the pack missing they show its download. */
+const viewPacks: Partial<Record<View, string>> = { math: "math", learnharness: "learnharness", herdr: "herdr" };
+/** The pack `view` needs that this process lacks (`modules.missing`), or null. */
+export function missingPack(view: View, missing: readonly string[]): string | null {
+  const pack = viewPacks[view];
+  return pack && missing.includes(pack) ? pack : null;
+}
 export function isView(value: string): value is View {
   return navigation.some(item => item.id === value);
 }
+/** Words old links used for a page that has since merged into another: `#apply` was Apply, `#find` Find. */
+const HASH_ALIASES: Record<string, View> = { apply: "queue", find: "jobs" };
 /**
  * The view a route hash (without `#`) opens: `<view>/<detail>` for built-ins,
  * `m/<module>/<view>/<detail>` for add-ons; null when it names neither.
@@ -91,7 +102,7 @@ export function viewFromHash(hash: string): AnyView | null {
   const external = EXTERNAL_HASH.exec(hash);
   if (external) return external[1] as ExternalViewId;
   const view = hash.split("/")[0];
-  return isView(view) ? view : null;
+  return isView(view) ? view : Object.hasOwn(HASH_ALIASES, view) ? HASH_ALIASES[view] : null;
 }
 /** `#notes/<number>`: a link to one note page (the rika! Inbox block in Tern opens these). */
 export function notePageLink(hash: string): number | null {
@@ -108,25 +119,26 @@ export function visibleNavigation(enabled: Enabled, external: Externals = []): N
   return [...navigation.filter(item => viewEnabled(item.id, enabled)), ...external.map(externalItem)];
 }
 
-/** `tone` is the group's graph colour, used to mark its tabs. */
+/** `tone` is the group's graph colour, used to mark its tabs; a group opens on its first view other than home. */
 export const navigationGroups: { label: string; shortcut: string; tone: string; views: View[] }[] = [
   {
     label: "Plan",
     shortcut: "Ctrl + Alt",
     tone: "var(--c1)",
-    views: ["today", "goals", "calendar", "opportunities", "reminders", "herdr", "tern", "agent-skills"],
+    views: ["today", "goals", "brain", "calendar", "opportunities", "reminders", "herdr", "tern", "agent-skills"],
   },
-  { label: "Study", shortcut: "Ctrl + X", tone: "var(--c3)", views: ["study", "math", "learnharness", "flashcards", "notes", "quick-notes", "schema", "documents"] },
+  { label: "Study", shortcut: "", tone: "var(--c3)", views: ["study", "math", "learnharness", "flashcards", "notes", "quick-notes", "schema", "documents"] },
   {
-    label: "Job search",
-    shortcut: "Ctrl + C",
+    // Career opens on Track (its first view); Find (`jobs`) stays its hub on the atlas.
+    label: "Career",
+    shortcut: "",
     tone: "var(--c4)",
     views: [
+      "pipeline",
       "jobs",
       "inbox",
       "favorites",
       "queue",
-      "pipeline",
       "applications",
       "workshop",
       "resumes",
@@ -138,7 +150,8 @@ export const navigationGroups: { label: string; shortcut: string; tone: string; 
       "reports",
     ],
   },
-  { label: "Settings", shortcut: "Ctrl + V", tone: "var(--c6)", views: ["settings", "profile", "ai"] },
+  { label: "Rika", shortcut: "", tone: "var(--c5)", views: ["rika"] },
+  { label: "Settings", shortcut: "", tone: "var(--c6)", views: ["settings", "profile", "ai"] },
 ];
 /** The header group a view belongs to; an add-on view's `group` names it. */
 export function groupOf(view: string, external: Externals = []) {
@@ -214,39 +227,65 @@ export const navigationRelations: [View, View][] = [
   ["ai", "notes"],
   ["ai", "flashcards"],
 ];
-type ShortcutGroup = { title: string; module?: ModuleId; shortcuts: string[][] };
+/** `module` gates the group; "voice" is the voice module's id (ModuleId gains it with the voice pack). */
+type ShortcutGroup = { title: string; module?: ModuleId | "voice"; shortcuts: string[][] };
 const shortcutGroups: ShortcutGroup[] = [
   {
     title: "Navigate",
     shortcuts: [
-      ["rika!", "Return to the main schema"],
-      ["Ctrl + Alt / Ctrl + X / Ctrl + C / Ctrl + V", "Plan / Study / Job search / Settings (outside text editing)"],
-      ["Ctrl / ⌘ + K", "Search commands, sections, and jobs"],
+      ["rika!", "Go home"],
+      ["Ctrl + Alt", "Plan (outside text editing)"],
+      ["Ctrl + Space · Ctrl / ⌘ + K", "Search commands, sections, and jobs"],
+      ["Ctrl + Shift + Space", "Edit this page"],
+      ["Ctrl + Tab / Ctrl + Shift + Tab", "Next / previous tab, wrapping (works inside editors too)"],
+      ["Ctrl + O", "Every open tab as a card: arrows or 1–9 to pick, Enter to open, Esc to stay"],
+      ["Ctrl + T / Ctrl + W", "New tab / close tab"],
+      ["Ctrl + Y", "Slide through your themes live: Ctrl + Y again for the next, Enter keeps, Esc undoes (redo while typing)"],
+      ["Ctrl + ← / →", "Previous / next group in the top bar (Brain, Plan, Study, Career, Rika)"],
+      ["← / →", "Previous / next tab of the page you are on (outside text, lists, the canvas and Track's cards)"],
+      ["Settings, Theme, Notifications", "Search, or the tab switcher's menu"],
       [
         "Calendar / Study / Notes / Mind maps / AI",
-        "Pick a node on the atlas, Sections on the stage, or Ctrl / ⌘ + K",
+        "Sections on home, or search",
       ],
       ["?", "Show keyboard help"],
-      ["Ctrl + J", "Open or close Rika's history drawer (anywhere but a terminal)"],
-      ["Enter in the Rika bar", "Ask Rika; the reply lands as a toast above the bar"],
-      ["Hold Space in the Rika bar", "Talk to Rika; let go to send (a tap types a space)"],
-      ["Hold Space for 8 s", "Brain dump: keeps listening; press Space again to make the plan"],
-      ["Escape while Rika listens", "Drop what you said; nothing is sent"],
+      ["/ on home", "Ask Rika"],
+      ["Ctrl + J", "Ask Rika: the field on home, the drawer elsewhere (anywhere but a terminal)"],
+      ["Ctrl + R", "Rika beside the page you are on; Ctrl + R again or Escape closes her"],
+      ["Enter in Rika's field", "Ask Rika; away from home the reply lands as a toast"],
       ["F / Esc", "Toggle focused panel fullscreen / exit (outside text editing)"],
-      ["Ctrl + Shift + F", "Toggle panel fullscreen inside terminal views"],
+      ["Ctrl + Shift + F", "Toggle panel fullscreen anywhere, while typing or in a terminal"],
       ["Escape", "Close dialog or details; leave a text field"],
     ],
   },
   {
-    title: "Atlas home",
+    title: "Talk to Rika",
+    module: "voice",
+    shortcuts: [
+      ["Hold Space in Rika's field", "Talk to Rika; let go to send (a tap types a space)"],
+      ["Hold Space for 8 s", "Brain dump: keeps listening; press Space again to make the plan"],
+      ["Escape while Rika listens", "Drop what you said; nothing is sent"],
+    ],
+  },
+  {
+    title: "Brain",
+    module: "brain",
     shortcuts: [
       ["/", "Open Sections and find a section"],
       ["Enter in section search", "Show the first match on the map; Enter again opens it"],
-      ["]", "Hide or show the side widgets"],
+      ["Ctrl + Alt", "Find Plan on the map"],
       ["Drag / scroll", "Turn / zoom the Brain, or pan / zoom the 2D map"],
       ["Click a Brain group", "Open that group on its own; Escape returns to all"],
       ["Ctrl + ← / →", "Rotate the visible 3D schema left / right (outside editors and dialogs)"],
       ["Click a node", "Open that section, item, or job"],
+    ],
+  },
+  {
+    title: "Calendar",
+    module: "workspace",
+    shortcuts: [
+      ["Delete / Backspace", "Delete the selected or focused event (outside text fields and dialogs)"],
+      ["Escape", "Clear the event selection"],
     ],
   },
   {
@@ -268,14 +307,14 @@ const shortcutGroups: ShortcutGroup[] = [
       ["1–4", "Pick a choice in a multiple-choice sprint or problem"],
       ["Enter", "Check the answer; again for the next problem"],
       ["R", "Restart a finished sprint"],
-      ["Ctrl / ⌘ + K", "Mental math sprint · Next math lesson, from any page"],
+      ["Ctrl + Space", "Mental math sprint · Next math lesson, from any page"],
     ],
   },
   {
     title: "Flashcards",
     module: "workspace",
     shortcuts: [
-      ["n", "Quick-add a card to the deck in view; Ctrl / ⌘ + K → New card does it from any page"],
+      ["n", "Quick-add a card to the deck in view; Ctrl + Space → New card does it from any page"],
       ["Tab / Enter in the add row", "Move to the back / save and start the next card"],
       ["Enter / Ctrl + Enter · Esc", "Save the quick-add card · close it"],
     ],
@@ -396,11 +435,8 @@ export function shortcutsFor(enabled: Enabled, external: Externals = []): Shortc
       return {
         ...group,
         shortcuts: group.shortcuts.flatMap(row => {
-          if (row[0].startsWith("Ctrl + Alt /"))
-            return groups.length
-              ? [[groups.map(item => item.shortcut).join(" / "), `${groups.map(item => item.label).join(" / ")} (outside text editing)`]]
-              : [];
-          if (row[0].startsWith("Ctrl / ⌘ + K")) return [[row[0], `Search ${searches}`]];
+          if (row[0] === "Ctrl + Alt" && row[1].startsWith("Plan")) return groups.some(item => item.label === "Plan") ? [row] : [];
+          if (row[0].startsWith("Ctrl + Space")) return [[row[0], `Search ${searches}`]];
           if (row[0].startsWith("Calendar /"))
             return [[targets.join(" / "), row[1]]];
           return [row];

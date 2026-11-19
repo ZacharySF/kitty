@@ -5,7 +5,10 @@
   import { buildStore, setTheme } from "./build.svelte";
   import type { GraphLook } from "./graph3d";
   import { setGraphLook, setHomeLook, type HomeLook } from "./graphPreferences";
-  import { THEMES, getTheme } from "./themes/catalog";
+  import { activeModules } from "./modules.svelte";
+  import { getTheme, type ThemeId } from "./themes/catalog";
+  import { shownThemes } from "./themes/installed";
+  import ThemeTiles from "./themes/ThemeTiles.svelte";
 
   /**
    * Q59: every look control in one panel beside a live preview, plus Cozy,
@@ -15,13 +18,19 @@
    */
   const appearance = $derived(appearanceOf(buildStore.build.ui.appearance));
   const theme = $derived(getTheme(buildStore.build.theme.base).id);
+  // The default, the one in use, and the Themes module's picks (Settings → Modules).
+  const shown = $derived(shownThemes(buildStore.build.ui.themes.installed, theme));
   const look = $derived<GraphLook>(buildStore.build.ui.graph.look);
   const home = $derived<HomeLook>(buildStore.build.ui.home.look);
+  /** The home look and the 3D graph look belong to the Brain module (its download). */
+  const brainOn = $derived(activeModules.enabled.includes("brain"));
 
   type Choice = { [K in keyof Appearance]: Appearance[K] extends boolean ? never : K }[keyof Appearance];
   const CHOICES: { key: Choice; label: string; options: [string, string][] }[] = [
     { key: "titleFont", label: "Titles", options: [["fraunces", "Fraunces"], ["plain", "Plain"]] },
-    { key: "density", label: "Density", options: [["compact", "Compact · 13px"], ["comfortable", "Comfortable · 14px"]] },
+    // Design labs (Type): the density switch is now text size, Standard or one step Larger
+    // (stored under the build's existing `density` values, compact / comfortable).
+    { key: "density", label: "Text size", options: [["compact", "Standard"], ["comfortable", "Larger"]] },
     { key: "motion", label: "Motion", options: [["full", "Full"], ["reduced", "Reduced"]] },
     { key: "background", label: "Background", options: [["nebula", "Nebula"], ["petals", "Petal drift"]] },
   ];
@@ -68,24 +77,16 @@
     <div class="controls">
       <fieldset class="field wide">
         <legend>Theme</legend>
-        <div class="themes">
-          {#each THEMES as item (item.id)}
-            <label class:on={theme === item.id} title={item.label}>
-              <input type="radio" name="appearance-theme" value={item.id} checked={theme === item.id} onchange={() => setTheme(item.id)} />
-              <span class="swatch" style:background={item.roles.void} style:border-color={item.roles.line}
-                ><i style:background={item.roles.structure}></i><i style:background={item.graph[2]}></i></span
-              >
-              <small>{item.label}</small>
-            </label>
-          {/each}
-        </div>
+        <ThemeTiles themes={shown} selected={[theme]} kind="radio" name="appearance-theme" label="Theme" onpick={(id) => setTheme(id as ThemeId)} />
       </fieldset>
       {#each CHOICES as choice (choice.key)}
         {@render segments(choice.label, `appearance-${choice.key}`, choice.options, appearance[choice.key], (id) =>
           change({ ...appearance, [choice.key]: id } as Appearance))}
       {/each}
-      {@render segments("Home", "appearance-home", HOME_LOOKS, home, (id) => chooseHome(id as HomeLook))}
-      {@render segments("Section graph look", "appearance-look", LOOKS, look, (id) => chooseLook(id as GraphLook))}
+      {#if brainOn}
+        {@render segments("Home", "appearance-home", HOME_LOOKS, home, (id) => chooseHome(id as HomeLook))}
+        {@render segments("Section graph look", "appearance-look", LOOKS, look, (id) => chooseLook(id as GraphLook))}
+      {/if}
       <label class="check wide">
         <input type="checkbox" checked={appearance.motif} onchange={(event) => change({ ...appearance, motif: event.currentTarget.checked })} />
         Theme motif
@@ -179,14 +180,12 @@
     background: color-mix(in srgb, var(--ink) 13%, transparent);
     color: var(--ink);
   }
-  .segments label:has(input:focus-visible),
-  .themes label:has(input:focus-visible) {
+  .segments label:has(input:focus-visible) {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
   /* The real radio covers its whole segment, invisible, so clicks and keys reach it. */
-  .segments input,
-  .themes input {
+  .segments input {
     position: absolute;
     inset: 0;
     width: 100%;
@@ -195,62 +194,12 @@
     opacity: 0;
     cursor: pointer;
   }
-  .themes {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(62px, 1fr));
-    gap: 4px;
-  }
-  .themes label {
-    position: relative;
-    display: grid;
-    justify-items: center;
-    gap: 3px;
-    padding: 5px 2px;
-    border: 1px solid transparent;
-    border-radius: 10px;
-    cursor: pointer;
-  }
-  .themes label.on {
-    border-color: color-mix(in srgb, var(--violet) 60%, transparent);
-    background: var(--wash);
-  }
-  .themes small {
-    max-width: 100%;
-    overflow: hidden;
-    color: var(--muted);
-    font-size: 10.5px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .themes label.on small {
-    color: var(--ink);
-  }
-  /* Theme swatches show each theme's own colours, so they are literal by design. */
-  .swatch {
-    display: flex;
-    align-items: end;
-    justify-content: center;
-    gap: 3px;
-    width: 34px;
-    height: 22px;
-    padding-bottom: 4px;
-    border: 1px solid;
-    border-radius: 7px;
-  }
-  .swatch i {
-    width: 7px;
-    height: 7px;
-    border-radius: 999px;
-  }
   .check {
     display: inline-flex;
     align-items: center;
     gap: 8px;
     color: var(--ink);
     font-size: 12.5px;
-  }
-  .check input {
-    accent-color: var(--violet);
   }
   @media (max-width: 760px) {
     .layout {

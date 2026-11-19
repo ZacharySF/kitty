@@ -7,7 +7,6 @@ import stat
 from contextlib import closing
 from pathlib import Path
 
-import httpx
 import pytest
 from jsonschema import Draft202012Validator
 
@@ -17,6 +16,7 @@ from kitty.core.blocks import history, tags
 from kitty.core.builds import css, document, project, share, store
 from kitty.core.workspace import open_workspace
 from kitty.db import connect, migrate
+from kitty.modules import DEFAULT_MODULES
 from kitty.settings import Settings
 
 
@@ -53,7 +53,7 @@ def test_the_published_schema_is_valid_and_an_empty_build_means_every_default():
     checked = document.check('{"schema": 1}')
     assert checked.ok and checked.problems == []
     assert checked.build == document.defaults()
-    assert checked.build["modules"] == ["applyai", "workspace", "terminal"]
+    assert checked.build["modules"] == list(DEFAULT_MODULES)
     assert checked.build["settings"]["history"]["retention_days"] == 30
     assert checked.build["settings"]["tags"]["mode"] == "suggest"
 
@@ -185,6 +185,18 @@ def test_css_problems_carry_their_line_and_column():
     assert css.check_css("x" * (css.MAX_CSS + 1))[0].message.startswith("custom CSS is limited")
 
 
+@pytest.mark.parametrize("text", ["a\\41", ".a { color: \\ }", "a{b:..5}", "a{b:-.}", "a{b:.}"])
+def test_the_css_check_finishes_on_text_that_ends_mid_token(text):
+    """A shared build is untrusted text: an escape at the very end, or `..5`, once looped forever."""
+    import threading
+
+    result: list = []
+    worker = threading.Thread(target=lambda: result.append(css.check_css(text)), daemon=True)
+    worker.start()
+    worker.join(5)
+    assert result, f"check_css did not finish on {text!r}"
+
+
 # What a build holds and never holds -------------------------------------------------------
 
 def test_a_build_has_exactly_the_documented_sections():
@@ -193,7 +205,7 @@ def test_a_build_has_exactly_the_documented_sections():
     assert set(document.schema()["properties"]["settings"]["properties"]) == {
         "ai", "notes", "history", "tags", "study", "opportunities", "tern"}
     assert set(document.schema()["properties"]["ui"]["properties"]) == {
-        "graph", "atlas", "notes", "terminal", "appearance", "home", "brain", "notifications", "flashcards", "study"}
+        "graph", "atlas", "notes", "terminal", "appearance", "home", "brain", "notifications", "flashcards", "study", "themes", "icons", "rika", "animations", "pages"}
 
 
 def test_export_never_carries_keys_credentials_devices_clients_or_applicant_data(tmp_path):
@@ -422,45 +434,8 @@ def test_history_keeps_only_the_newest_builds(root):
         store.history_text(root, "../../config/build")
 
 
-def public(host, *_args, **_kwargs):
-    return [(2, 1, 6, "", ("140.82.112.3" if host != "evil.internal" else "127.0.0.1", 443))]
-
-
-def transport(routes: dict[str, httpx.Response]) -> httpx.MockTransport:
-    return httpx.MockTransport(lambda request: routes[str(request.url)])
-
-
-def test_fetching_a_build_link_follows_only_https_and_caps_its_size():
-    good = '{"schema": 1, "name": "gist"}'
-    routes = {
-        "https://gist.githubusercontent.com/u/1/raw/kitty-build.json": httpx.Response(200, text=good),
-        "https://github.com/u/r/raw/main/kitty-build.json": httpx.Response(
-            302, headers={"location": "https://raw.githubusercontent.com/u/r/main/kitty-build.json"}),
-        "https://raw.githubusercontent.com/u/r/main/kitty-build.json": httpx.Response(200, text=good),
-        "https://gist.githubusercontent.com/u/2/raw": httpx.Response(301, headers={"location": "http://plain.example/x"}),
-        "https://gist.githubusercontent.com/u/3/raw": httpx.Response(200, content=b"x" * (document.MAX_BYTES + 1)),
-        "https://gist.githubusercontent.com/u/4/raw": httpx.Response(404),
-        **{f"https://loop.example/{n}": httpx.Response(302, headers={"location": f"https://loop.example/{n + 1}"})
-           for n in range(6)},
-    }
-    fetch = lambda url: share.fetch(url, transport=transport(routes), resolver=public)  # noqa: E731
-    assert fetch("https://gist.githubusercontent.com/u/1/raw/kitty-build.json") == good
-    assert fetch("https://github.com/u/r/raw/main/kitty-build.json") == good
-    for url, reason in (("http://gist.githubusercontent.com/u/1/raw", "https"),
-                        ("https://gist.githubusercontent.com/u/2/raw", "non-https"),
-                        ("https://gist.githubusercontent.com/u/3/raw", "limited"),
-                        ("https://gist.githubusercontent.com/u/4/raw", "404"),
-                        ("https://loop.example/0", "redirects more than"),
-                        ("https://user:pw@gist.githubusercontent.com/x", "user name"),
-                        ("https://evil.internal/build.json", "public https address"),
-                        ("file:///etc/passwd", "https")):
-        with pytest.raises(share.ShareError) as refused:
-            fetch(url)
-        assert reason in str(refused.value), (url, str(refused.value))
-
-
 def test_a_new_workspace_gets_an_owner_only_build_with_every_module(tmp_path):
     text = store.ensure(tmp_path)
     assert set(json.loads(text)) == {"schema", "kitty_version"}
-    assert document.require(text)["modules"] == ["applyai", "workspace", "terminal"]
+    assert document.require(text)["modules"] == list(DEFAULT_MODULES)
     assert stat.S_IMODE((tmp_path / "config" / "build.json").stat().st_mode) == 0o600

@@ -13,7 +13,7 @@ import httpx
 import pytest
 
 from kitty import web_ai
-from kitty.core import notes
+from kitty.core import keys, notes
 from kitty.core.rika import llm, store
 from kitty.core.rika.loop import Rika, RikaError
 
@@ -181,7 +181,7 @@ def _text(*parts: str) -> bytes:
 @pytest.fixture
 def openrouter(workspace, monkeypatch):
     """A key, three priced tier models and a scripted OpenRouter behind a mock transport."""
-    web_ai._write_key(SimpleNamespace(settings=workspace.settings), "synthetic-openrouter-test-key")
+    keys.for_settings(workspace.settings).set("OPENROUTER", "synthetic-openrouter-test-key")
     for name in ("fast", "standard", "deep"):
         workspace.conn.execute("INSERT INTO ai_models VALUES(?,?,?,?,?,?)", (f"synthetic/{name}", name, "0.000001",
                                "0.000002", 200_000, web_ai._now().isoformat()))
@@ -251,6 +251,40 @@ def test_a_request_over_the_daily_budget_waits_for_approval(build, workspace, op
     app.rika.decide(workspace.conn, approval["id"], "approve")
     assert of(until(events, finished), "message")[-1]["message"]["text"] == "Start with kinematics."
     assert len(openrouter.requests) == 1
+
+
+def test_a_model_date_that_disagrees_with_the_users_words_is_asked_about_instead_of_written(build, workspace, openrouter):
+    """The model's date is not what was said: nothing is written, the model is told the user is being asked,
+    and the turn ends with one question whose choices are the words' reading and the model's date."""
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    zone = ZoneInfo(workspace.conn.execute("SELECT timezone FROM calendar_calendars WHERE id='personal'").fetchone()["timezone"])
+    today = datetime.now(zone).date()
+    said, wrong = (today + timedelta(days=3)).isoformat(), (today + timedelta(days=30)).isoformat()
+    openrouter.replies = [_tool_call("create_task", json.dumps({"title": "Send the essay", "due": wrong, "said": "in 3 days"})),
+                          _text("Which day did you mean?")]
+    app, events = build()
+    app.rika.submit(workspace.conn, "please remind me to send the essay in 3 days or so")
+    seen = until(events, finished)
+    assert not of(seen, "action")
+    assert workspace.conn.execute("SELECT count(*) FROM calendar_tasks").fetchone()[0] == 0
+    told = json.loads(openrouter.requests[1][1]["messages"][-1]["content"])
+    assert told["status"] == "needs_user"
+    [plan] = [event["plan"] for event in of(seen, "plan")]
+    assert plan["plan_kind"] == "confirm" and len(plan["items"][0]["question"]["choices"]) == 2
+    reply = of(seen, "message")[-1]["message"]
+    assert reply["status"] == "done" and reply["text"].endswith(plan["items"][0]["question"]["text"])
+    app.rika.decide_plan(workspace.conn, plan["id"], "approve", ["i1"], {"i1": 0})
+    until(events, finished)
+    [row] = workspace.conn.execute("SELECT data FROM calendar_tasks").fetchall()
+    assert json.loads(row["data"])["due"] == said
+    # A date that agrees with the words is written at once.
+    openrouter.replies = [_tool_call("create_task", json.dumps({"title": "Print it", "due": said, "said": "in 3 days"})),
+                          _text("Added.")]
+    app.rika.submit(workspace.conn, "and remind me to print it in 3 days as well please")
+    seen = until(events, finished)
+    assert [event["action"]["tool"] for event in of(seen, "action")] == ["create_task"] and not of(seen, "plan")
 
 
 def test_without_a_key_rika_still_does_commands_and_asks_for_one_otherwise(build, workspace, no_network):

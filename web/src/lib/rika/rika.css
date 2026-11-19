@@ -7,9 +7,7 @@
   border: 1px solid color-mix(in srgb, var(--tone, var(--muted)) 45%, transparent);
   border-radius: 999px;
   color: var(--tone, var(--muted));
-  font: 500 9.5px/1.6 var(--font-mono);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  font: 500 11px/1.5 var(--font-ui);
   white-space: nowrap;
 }
 .rika-dot {
@@ -24,31 +22,41 @@
 }
 @keyframes rika-dot {
   50% {
-    box-shadow: 0 0 0 4px color-mix(in srgb, var(--tone) 18%, transparent);
+    opacity: 0.45;
   }
 }
-:is(.rika-chip, .rika-agent, .rika-agent-chip)[data-tier="fast"] {
+@media (prefers-reduced-motion: reduce) {
+  [data-state="working"] > .rika-dot {
+    animation: none;
+  }
+}
+:is(.rika-chip, .rika-agent)[data-tier="fast"] {
   --tone: var(--c2, var(--accent));
 }
-:is(.rika-chip, .rika-agent, .rika-agent-chip)[data-tier="standard"] {
+:is(.rika-chip, .rika-agent)[data-tier="standard"] {
   --tone: var(--c3, var(--accent));
 }
-:is(.rika-chip, .rika-agent, .rika-agent-chip)[data-tier="deep"] {
+:is(.rika-chip, .rika-agent)[data-tier="deep"] {
   --tone: var(--c1, var(--accent));
 }
 /* Q13: a deterministic or shortcut reply ran with no model. */
-:is(.rika-chip, .rika-agent, .rika-agent-chip)[data-tier="direct"] {
+:is(.rika-chip, .rika-agent)[data-tier="direct"] {
   --tone: var(--success);
 }
-:is(.rika-chip, .rika-agent, .rika-agent-chip)[data-state="working"] {
+:is(.rika-chip, .rika-agent)[data-state="working"] {
   --tone: var(--accent);
 }
-:is(.rika-chip, .rika-agent, .rika-agent-chip)[data-state="blocked"] {
+:is(.rika-chip, .rika-agent)[data-state="blocked"] {
   --tone: var(--warning);
 }
-:is(.rika-chip, .rika-agent, .rika-agent-chip)[data-state="done"] {
+:is(.rika-chip, .rika-agent)[data-state="done"] {
   --tone: var(--success);
 }
-:is(.rika-chip, .rika-agent, .rika-agent-chip)[data-state="idle"] {
+:is(.rika-chip, .rika-agent)[data-state="idle"] {
   --tone: var(--muted);
+}
+
+/* Rika's page → Customise → Text size: the whole conversation a step larger. */
+:root[data-rika-text="large"] .conversation {
+  zoom: 1.2;
 }

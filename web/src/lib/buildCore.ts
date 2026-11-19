@@ -43,11 +43,22 @@ export type BuildUi = {
   notes: { pen_only: boolean };
   terminal: { coding_agent: "omp" | "claude" | "codex" };
   appearance: AppearancePreference;
-  home: { look: "brain" | "2d" };
+  /** `columns`/`hidden`: home's widgets, `widths`/`rika`: the columns' shares, `rika_side`: where Rika's panel stands and `heights` the widgets' (home/layout.ts); `template_offered`: Rika made its one offer. */
+  home: { look: "brain" | "2d"; columns: string[][]; hidden: string[]; widths: number[]; rika: number; rika_side: "left" | "middle" | "right"; template_offered: boolean; /** Colour-coded widgets (home/tones.ts). */ tones: string[]; heights: string[] };
   brain: BrainPreference;
   notifications: { quiet: QuietPreference };
   flashcards: { look: "tiles" | "graph" };
   study: { guide_view: "columns" | "rail"; plans_view: "timeline" | "days" };
+  /** The Themes module: the extra themes kept in the picker (themes/installed.ts). */
+  themes: { installed: string[] };
+  /** The Icons module: icons beside names (`<html data-icons>`, shown by `.module-icon`). */
+  icons: { on: boolean };
+  /** The Animations module (motion.ts, the `animations` pack). */
+  animations: { on: boolean };
+  /** Page edit mode: the blocks moved or resized on each page (pageEdit/moves.ts) and the home widgets placed on it (pageEdit/widgets.ts). */
+  pages: { moves: string[]; widgets: string[] };
+  /** Rika's conversation text size (`<html data-rika-text>`, rika.css). */
+  rika: { text: "normal" | "large" };
 };
 export type Build = {
   schema: number;
@@ -90,7 +101,7 @@ export const DEFAULT_BUILD: Build = {
   name: "",
   author: "",
   description: "",
-  modules: ["applyai", "workspace", "terminal"],
+  modules: ["applyai", "workspace", "math", "learnharness", "terminal", "voice"],
   settings: {},
   theme: { base: "kitty", tokens: {}, css: "" },
   ui: {
@@ -98,15 +109,20 @@ export const DEFAULT_BUILD: Build = {
     atlas: { hidden: [] },
     notes: { pen_only: false },
     terminal: { coding_agent: "omp" },
-    appearance: { title_font: "fraunces", density: "compact", motion: "full", motif: true, background: "nebula" },
-    home: { look: "brain" },
+    appearance: { title_font: "plain", density: "compact", motion: "full", motif: true, background: "nebula" },
+    home: { look: "brain", columns: [["agenda", "note"], ["next", "agents"]], hidden: [], widths: [1, 1], rika: 0, rika_side: "left", template_offered: false, tones: [], heights: [] },
     brain: {
-      layout: "anatomy", group_by: "section", labels: "hover", turning: true, speed: 1, lines: false,
+      layout: "anatomy", group_by: "section", labels: "hover", turning: true, speed: 0.5, lines: false,
       scaffold: true, point_size: 1, background: "transparent", colors: { section: {}, group: {}, type: {} },
     },
     notifications: { quiet: { enabled: false, from: 1320, to: 450, let_calendar: true, digest: true } },
     flashcards: { look: "tiles" },
     study: { guide_view: "columns", plans_view: "timeline" },
+    themes: { installed: [] },
+    icons: { on: false },
+    animations: { on: false },
+    pages: { moves: [], widgets: [] },
+    rika: { text: "normal" },
   },
 };
 
@@ -201,7 +217,7 @@ export function collectLegacy(storage: Reader): { patch: { ui?: Record<string, u
   const appearance = parse(read("kitty.appearance"));
   if (isObject(appearance)) {
     ui.appearance = {
-      title_font: oneOf(appearance.titleFont, ["fraunces", "plain"] as const, "fraunces"),
+      title_font: oneOf(appearance.titleFont, ["fraunces", "plain"] as const, "plain"),
       density: oneOf(appearance.density, ["compact", "comfortable"] as const, "compact"),
       motion: oneOf(appearance.motion, ["full", "reduced"] as const, "full"),
       motif: typeof appearance.motif === "boolean" ? appearance.motif : true,

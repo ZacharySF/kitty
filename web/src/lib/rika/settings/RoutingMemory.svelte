@@ -140,7 +140,7 @@
   }
   .num {
     color: var(--muted);
-    font: 11px var(--font-mono);
+    font: 11px var(--font-ui);
     font-variant-numeric: tabular-nums;
   }
   .set-row.table,
@@ -189,11 +189,11 @@
   }
   td code {
     color: var(--muted);
-    font: 11px var(--font-mono);
+    font: 11px var(--font-ui);
     overflow-wrap: anywhere;
   }
   .n {
-    font: 11px var(--font-mono);
+    font: 11px var(--font-ui);
     font-variant-numeric: tabular-nums;
     text-align: right;
     white-space: nowrap;

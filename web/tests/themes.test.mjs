@@ -80,15 +80,29 @@ test('Scythe draws frames, not glass', () => {
   assert.equal(getTheme('scythe').focus, 'bracket');
 });
 
-test('Kitty is frosted pink glass with petal focus and calm motion', () => {
-  const kitty = getTheme('kitty');
-  assert.equal(kitty.surface.style, 'glass');
-  assert.equal(kitty.focus, 'petal');
-  assert.equal(kitty.motion, 'calm');
+test('Kitty, the default, is Apple-black: flat, no accent hue, neutral greys, a lightness ramp for data', () => {
+  const {roles, graph, surface} = getTheme('kitty');
+  assert.equal(surface.style, 'flat');
+  assert.equal(roles.void, '#000000');
+  assert.equal(roles.signal, roles.ink, 'the primary is inverted ink, not a colour');
+  for (const role of ['void', 'panel', 'inset', 'raised', 'line', 'ink', 'mute', 'dim', 'structure'])
+    assert.ok(chroma(roles[role]) < 0.012, `${role} ${roles[role]} has a hue`);
+  for (const role of ['ink', 'mute', 'dim']) assert.ok(contrast(roles[role], roles.panel) >= 4.5, role);
+  assert.ok(contrast(roles.panel, roles.void) >= 1.1, 'panels lift off the ground');
+  for (let i = 1; i < graph.length; i += 1)
+    assert.ok(oklab(graph[i - 1])[0] - oklab(graph[i])[0] >= 0.07, `data colours ${graph[i - 1]} and ${graph[i]} are too close in lightness`);
+  assert.ok(chroma(roles.danger) >= 0.1, 'danger keeps a red');
 });
 
-test('Kitty has a real palette: lifted panels, an accent apart from structure, six distinct data colours', () => {
-  const {roles, graph} = getTheme('kitty');
+test('Blossom is frosted pink glass with petal focus and calm motion', () => {
+  const blossom = getTheme('blossom');
+  assert.equal(blossom.surface.style, 'glass');
+  assert.equal(blossom.focus, 'petal');
+  assert.equal(blossom.motion, 'calm');
+});
+
+test('Blossom has a real palette: lifted panels, an accent apart from structure, six distinct data colours', () => {
+  const {roles, graph} = getTheme('blossom');
   // Today: panel on void 1.08:1, accent vs structure 1.11:1, four of six graph colours pink.
   assert.ok(contrast(roles.panel, roles.void) >= 1.2, `panel/void ${contrast(roles.panel, roles.void).toFixed(2)}`);
   assert.ok(contrast(roles.signal, roles.structure) >= 1.25, `accent/structure ${contrast(roles.signal, roles.structure).toFixed(2)}`);

@@ -17,20 +17,30 @@ def test_install_launcher_preserves_workspace_and_runtime_environment(tmp_path):
     build = tmp_path / "build files"
     build.mkdir()
     binary = build / "kitty-workspace"
-    binary.write_text('#!/bin/sh\nprintf "%s\\n" "$LD_LIBRARY_PATH" "$GST_PLUGIN_SYSTEM_PATH_1_0" "$@"\nexec "$(dirname "$0")/kitty-web"\n')
+    binary.write_text('#!/bin/sh\nprintf "%s\\n" "$LD_LIBRARY_PATH" "$GST_PLUGIN_SYSTEM_PATH_1_0" "$@"\n'
+                      'exec "$(dirname "$0")/rika-server"\n')
     binary.chmod(0o755)
-    sidecar = build / "kitty-web-x86_64-unknown-linux-gnu"
-    sidecar.write_text('#!/bin/sh\nprintf "sidecar started\\n"\n')
-    sidecar.chmod(0o755)
-    herdr = build / "kitty-herdr-x86_64-unknown-linux-gnu"
-    herdr.write_text('#!/bin/sh\nprintf "herdr\\n"\n')
-    herdr.chmod(0o755)
+    backend = build / "kitty-web"
+    (backend / "_internal").mkdir(parents=True)
+    (backend / "_internal/website.txt").write_text("bundled data")
+    (backend / "kitty-web").write_text('#!/bin/sh\nprintf "sidecar started\\n"\n')
+    (backend / "kitty-web").chmod(0o755)
+    # The shell starts rika-server beside it, which starts the backend behind itself.
+    server = build / "rika-server-x86_64-unknown-linux-gnu"
+    server.write_text('#!/bin/sh\nprintf "front started\\n"\n'
+                      'exec "$(dirname "$0")/../libexec/kitty-workspace/kitty-web/kitty-web"\n')
+    server.chmod(0o755)
     workshop = build / "kitty-workshop-x86_64-unknown-linux-gnu"
     workshop.write_text('#!/bin/sh\nprintf "workshop\\n"\n')
     workshop.chmod(0o755)
     icon = build / "icon.png"
     icon.write_bytes(b"fixture icon")
     data = tmp_path / "user data"
+    # A flat onefile installation from before the unpacked backend.
+    (data / "kitty/application/bin").mkdir(parents=True)
+    (data / "kitty/application/kitty-web").write_bytes(b"old onefile")
+    # herdr used to be installed beside the app; it is a pack now.
+    (data / "kitty/application/bin/kitty-herdr").write_bytes(b"old herdr")
     workspace = tmp_path / "existing workspace"
     workspace.mkdir()
     database = workspace / "apply.db"
@@ -42,8 +52,7 @@ def test_install_launcher_preserves_workspace_and_runtime_environment(tmp_path):
     env = os.environ | {"XDG_DATA_HOME": str(data), "XDG_BIN_HOME": str(tmp_path / "user bin"),
                         "LD_LIBRARY_PATH": "/fixture/nix/lib", "GST_PLUGIN_SYSTEM_PATH_1_0": "/fixture/nix/gstreamer"}
     result = subprocess.run([sys.executable, str(ROOT / "scripts/install-desktop.py"),
-                             "--binary", str(binary), "--sidecar", str(sidecar), "--herdr", str(herdr),
-                             "--workshop", str(workshop),
+                             "--binary", str(binary), "--backend", str(backend), "--server", str(server), "--workshop", str(workshop),
                              "--icon", str(icon), "--workspace", str(workspace)], env=env, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     entry = (data / "applications/com.zacharysf.kitty.desktop").read_text()
@@ -51,18 +60,29 @@ def test_install_launcher_preserves_workspace_and_runtime_environment(tmp_path):
     # This fixture uses spaces, not desktop-entry escape-sensitive shell syntax.
     launch = subprocess.run(shlex.split(command), env={"PATH": os.environ["PATH"], "HOME": str(tmp_path)}, capture_output=True, text=True)
     assert launch.returncode == 0, launch.stderr
-    assert launch.stdout.splitlines() == ["/fixture/nix/lib", "/fixture/nix/gstreamer", "--workspace", str(workspace), "sidecar started"]
+    assert launch.stdout.splitlines() == ["/fixture/nix/lib", "/fixture/nix/gstreamer", "--workspace", str(workspace),
+                                          "front started", "sidecar started"]
     assert database.read_bytes() == b"untouched database"
     assert sentinel.read_text() == "keep user configuration"
     assert "Terminal=false" in entry
-    assert (data / "kitty/application/kitty-workspace").is_file()
-    assert (data / "kitty/application/kitty-web").is_file()
-    # The desktop app runs rika!'s pinned herdr only from beside its own executable.
-    installed_herdr = data / "kitty/application/kitty-herdr"
-    assert installed_herdr.read_bytes() == herdr.read_bytes() and os.access(installed_herdr, os.X_OK)
-    # So does the Resume Workshop's Rust engine.
-    installed_workshop = data / "kitty/application/kitty-workshop"
+    application = data / "kitty/application"
+    assert (application / "bin/kitty-workspace").is_file()
+    assert (application / "libexec/kitty-workspace/kitty-web/_internal/website.txt").read_text() == "bundled data"
+    assert not (application / "kitty-web").exists()
+    assert not (application / "bin/kitty-herdr").exists()
+    installed_server = application / "bin/rika-server"
+    assert installed_server.read_bytes() == server.read_bytes() and os.access(installed_server, os.X_OK)
+    # The desktop app runs the Resume Workshop's Rust engine only from beside its own executable.
+    installed_workshop = application / "bin/kitty-workshop"
     assert installed_workshop.read_bytes() == workshop.read_bytes() and os.access(installed_workshop, os.X_OK)
+    # Reinstalling swaps in a whole new backend directory and keeps the replaced one.
+    (backend / "_internal/website.txt").write_text("new data")
+    again = subprocess.run([sys.executable, str(ROOT / "scripts/install-desktop.py"),
+                            "--binary", str(binary), "--backend", str(backend), "--server", str(server), "--workshop", str(workshop),
+                            "--icon", str(icon), "--workspace", str(workspace)], env=env, capture_output=True, text=True)
+    assert again.returncode == 0, again.stderr
+    assert (application / "libexec/kitty-workspace/kitty-web/_internal/website.txt").read_text() == "new data"
+    assert (application / "libexec/kitty-workspace/kitty-web.previous/_internal/website.txt").read_text() == "bundled data"
 
 
 def test_install_without_workspace_uses_native_default(tmp_path):
@@ -73,8 +93,11 @@ def test_install_without_workspace_uses_native_default(tmp_path):
     icon.write_bytes(b"icon")
     data = tmp_path / "data"
     env = os.environ | {"XDG_DATA_HOME": str(data), "XDG_BIN_HOME": str(tmp_path / "bin")}
+    backend = tmp_path / "backend"
+    backend.mkdir()
+    (backend / "kitty-web").write_bytes(binary.read_bytes())
     result = subprocess.run([sys.executable, str(ROOT / "scripts/install-desktop.py"), "--binary", str(binary),
-                             "--sidecar", str(binary), "--herdr", str(binary), "--workshop", str(binary), "--icon", str(icon)],
+                             "--backend", str(backend), "--server", str(binary), "--workshop", str(binary), "--icon", str(icon)],
                             env=env, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     launch = subprocess.run([str(tmp_path / "bin/kitty-workspace")], env=env, capture_output=True, text=True)
@@ -174,6 +197,44 @@ printf "%s\\n" "$LD_LIBRARY_PATH" "$@"
                             env=env, capture_output=True, text=True, timeout=10)
     assert launch.returncode == 0, launch.stderr
     assert launch.stdout.splitlines() == ["runner", "runner", "/working/runtime", "--workspace", str(tmp_path / "synthetic")]
+
+
+def test_appimage_launcher_names_itself_so_start_at_login_goes_through_the_runner(tmp_path):
+    # The app writes its login unit from KITTY_DESKTOP_LAUNCHER; under appimage-run (NixOS) the
+    # bare AppImage cannot start, so the unit must run this launcher. A v0.3.41 launcher
+    # (KITTY_DESKTOP_LAUNCHER=1) is still recognized and upgraded on reinstall.
+    data, bin_dir = tmp_path / "data", tmp_path / "bin"
+    application = data / "kitty/application"
+    application.mkdir(parents=True)
+    bin_dir.mkdir()
+    installed = application / "kitty.AppImage"
+    installed.write_text("#!/bin/sh\nexit 0\n")
+    runner = tmp_path / "appimage-run"
+    runner.write_text('#!/bin/sh\nimage="$1"; shift\nexec "$image" "$@"\n')
+    runner.chmod(0o755)
+    launcher = bin_dir / "kitty-workspace"
+    launcher.write_text("#!/bin/sh\nunset KITTY_HOME KITTY_DB\nexport APPIMAGE_EXTRACT_AND_RUN=1\n"
+                        "export KITTY_DESKTOP_LAUNCHER=1\nwhile :; do\n"
+                        f"  {shlex.quote(str(runner))} {shlex.quote(str(installed))} --workspace /synthetic \"$@\"\n"
+                        '  result=$?\n  [ "$result" -eq 42 ] || exit "$result"\ndone\n')
+    image = tmp_path / "download.AppImage"
+    image.write_text('#!/bin/sh\nprintf "%s\\n" "$KITTY_DESKTOP_LAUNCHER" "$@"\n')
+    image.chmod(0o755)
+    icon = tmp_path / "icon.png"
+    icon.write_bytes(b"icon")
+    env = os.environ | {"XDG_DATA_HOME": str(data), "XDG_BIN_HOME": str(bin_dir)}
+    install = subprocess.run([sys.executable, str(ROOT / "scripts/install-desktop.py"),
+                              "--appimage", str(image), "--icon", str(icon)],
+                             env=env, capture_output=True, text=True)
+    assert install.returncode == 0, install.stderr
+    launch = subprocess.run([str(launcher), "--background"], env=env, capture_output=True, text=True, timeout=10)
+    assert launch.returncode == 0, launch.stderr
+    assert launch.stdout.splitlines() == [str(launcher), "--workspace", "/synthetic", "--background"]
+    # A second reinstall reads the new form back.
+    again = subprocess.run([sys.executable, str(ROOT / "scripts/install-desktop.py"),
+                            "--appimage", str(image), "--icon", str(icon)],
+                           env=env, capture_output=True, text=True)
+    assert again.returncode == 0, again.stderr
 
 
 def test_legacy_appimage_launcher_is_upgraded_without_recapturing_runtime(tmp_path):

@@ -116,7 +116,7 @@
     padding: .8rem;
     border: 1px solid var(--hairline, var(--border));
     border-radius: 8px;
-    font: 11px var(--font-mono);
+    font: 11px var(--font-ui);
     letter-spacing: 0.08em;
   }
   header {
@@ -184,7 +184,7 @@
     border-radius: 999px;
     background: transparent;
     color: var(--ink);
-    font: 11px var(--font-mono);
+    font: 11px var(--font-ui);
   }
   .run select { flex: 0 1 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .run input { flex: 1; }
@@ -194,7 +194,7 @@
     background: transparent;
     color: var(--muted);
     padding: 3px 10px;
-    font: 500 10px var(--font-mono);
+    font: 500 10px var(--font-ui);
     letter-spacing: 0.12em;
     text-transform: uppercase;
     cursor: pointer;

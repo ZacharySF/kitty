@@ -8,13 +8,14 @@
    * uses QuickAdd). Generalised from the calendar's event drawer: one glass surface
    * on the right edge, non-modal so the page behind stays visible and live, a
    * hairline under the header and over the footer. It focuses the first field on
-   * open, closes on Escape and returns focus to where it came from.
+   * open (unless `autofocus` is off), closes on Escape and returns focus to where it came from.
    */
   let {
     title,
     meta = "",
     accent = "",
     closeLabel = "Close",
+    autofocus = true,
     onclose,
     children,
     footer,
@@ -25,6 +26,8 @@
     /** A CSS colour for the item's tone bar (an event's calendar, a subject). */
     accent?: string;
     closeLabel?: string;
+    /** Off when the opener keeps focus: a clicked calendar event stays the target of its keys. */
+    autofocus?: boolean;
     onclose: () => void;
     children: Snippet;
     /** Actions, right-aligned (Cancel, Save); a destructive one may lead. */
@@ -33,10 +36,16 @@
   const id = $props.id();
   const reduced = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  /** Focuses the first field on open and returns focus to where it came from on close. */
+  let drawer: HTMLElement | undefined;
+  /** Moves focus to the drawer's first field. */
+  export function focusField() {
+    drawer?.querySelector<HTMLElement>("input:not([type=checkbox], [type=radio], [type=hidden]), textarea, [data-autofocus]")?.focus();
+  }
+  /** Focuses the first field on open (unless the opener keeps focus) and returns focus to where it came from on close. */
   function focusTrail(node: HTMLElement) {
     const previous = document.activeElement as HTMLElement | null;
-    node.querySelector<HTMLElement>("input:not([type=checkbox], [type=radio], [type=hidden]), textarea, [data-autofocus]")?.focus();
+    drawer = node;
+    if (autofocus) focusField();
     return { destroy: () => previous?.isConnected && previous.focus({ preventScroll: true }) };
   }
 
@@ -66,7 +75,7 @@
     position: fixed;
     top: calc(var(--workbench-top, 0px) + 0.75rem);
     right: 0.75rem;
-    bottom: calc(var(--rika-space, 0px) + 0.75rem);
+    bottom: 0.75rem;
     z-index: 90;
     display: flex;
     flex-direction: column;
@@ -112,7 +121,7 @@
   }
   .meta {
     color: var(--muted);
-    font-size: 12px;
+    font-size: 13px;
   }
   .body {
     flex: 1;

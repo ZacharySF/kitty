@@ -1,15 +1,18 @@
-"""Deterministic local backlinks: matching boundaries, sources, bounds and safe linking."""
+"""Deterministic local backlinks: matching boundaries, sources, bounds and safe linking.
+
+`kitty.core.backlinks` is the reference here; the routes are rika-server's
+(server/src/backlinks, compared with the core by tests/test_backlinks_parity.py) and the web
+tests below go through the front."""
 import json
 import sqlite3
-from types import SimpleNamespace
 
 import pytest
+from terminal_support import front_site
 
-from kitty import web_schema
 from kitty.core import backlinks, jobs, notes, schema_maps as schema, search
-from kitty.web_server import APIError
 
 STAMP = '2026-01-01T00:00:00+00:00'
+APPLY = '/api/schema/backlinks/apply'
 
 
 def node(key, label, **extra):
@@ -134,27 +137,24 @@ def test_apply_links_once_reuses_sourced_nodes_and_rejects_stale_revisions(works
     item = mapped(conn, node('graphs', 'Graph theory'), node('calc', 'Calculus', kind='class', source={'kind': 'subject', 'id': subject}))
     suggested = backlinks.suggestions(conn, item['id'])
     assert {ref['kind'] for ref in refs(suggested, 'calc')} == {'note_page'}  # its own subject is not a backlink
-    app = SimpleNamespace(_no_query=lambda query: None)
-    linked = web_schema.post(app, conn, '/api/schema/backlinks/apply',
-                             {'map_id': item['id'], 'revision': item['revision'], 'node_ids': ['graphs', 'calc']})
-    target = backlinks.target_id('note_page', note)
-    added = next(n for n in linked['graph']['nodes'] if n['id'] == target)
-    assert added['kind'] == 'topic' and added['label'] == 'Graph theory intro' and added['url'] == ''
-    assert added['notes'] == 'Linked from note page: Graph theory intro'
-    assert sorted((e['from'], e['to'], e['label']) for e in linked['graph']['edges']) == [
-        ('calc', target, 'mentioned in'), ('graphs', target, 'mentioned in')]
-    assert linked['revision'] == item['revision'] + 1
-    again = backlinks.apply(conn, {'map_id': item['id'], 'revision': linked['revision'], 'node_ids': ['graphs', 'calc']})
-    assert again['revision'] == linked['revision'] and again['graph'] == linked['graph']
-    assert all(ref['linked'] for s in backlinks.suggestions(conn, item['id'])['suggestions'] for ref in s['references'])
-    with pytest.raises(APIError) as caught:
-        web_schema.post(app, conn, '/api/schema/backlinks/apply',
-                        {'map_id': item['id'], 'revision': item['revision'], 'node_ids': ['graphs']})
-    assert caught.value.status == 409
-    with pytest.raises(APIError) as caught:
-        web_schema.post(app, conn, '/api/schema/backlinks/apply',
-                        {'map_id': item['id'], 'revision': linked['revision'], 'node_ids': ['missing']})
-    assert caught.value.status == 400
+    conn.commit()
+    conn.close()
+    with front_site(workspace.settings) as site:
+        status, linked = site.request(APPLY, {'map_id': item['id'], 'revision': item['revision'], 'node_ids': ['graphs', 'calc']})
+        assert status == 200
+        target = backlinks.target_id('note_page', note)
+        added = next(n for n in linked['graph']['nodes'] if n['id'] == target)
+        assert added['kind'] == 'topic' and added['label'] == 'Graph theory intro' and added['url'] == ''
+        assert added['notes'] == 'Linked from note page: Graph theory intro'
+        assert sorted((e['from'], e['to'], e['label']) for e in linked['graph']['edges']) == [
+            ('calc', target, 'mentioned in'), ('graphs', target, 'mentioned in')]
+        assert linked['revision'] == item['revision'] + 1
+        status, again = site.request(APPLY, {'map_id': item['id'], 'revision': linked['revision'], 'node_ids': ['graphs', 'calc']})
+        assert status == 200 and again['revision'] == linked['revision'] and again['graph'] == linked['graph']
+        status, suggested = site.request(f"/api/schema/backlinks?map_id={item['id']}")
+        assert status == 200 and all(ref['linked'] for s in suggested['suggestions'] for ref in s['references'])
+        assert site.request(APPLY, {'map_id': item['id'], 'revision': item['revision'], 'node_ids': ['graphs']})[0] == 409
+        assert site.request(APPLY, {'map_id': item['id'], 'revision': linked['revision'], 'node_ids': ['missing']})[0] == 400
 
 
 def test_apply_links_tracked_jobs_to_existing_sourced_node(workspace):
@@ -175,12 +175,12 @@ def test_web_backlink_queries(workspace):
     conn = workspace.conn
     page(conn, 'Optics', 'Optics lab')
     item = mapped(conn, node('optics', 'Optics'))
-    app = SimpleNamespace(_no_query=lambda query: None)
-    by_map = web_schema.get(app, conn, '/api/schema/backlinks', {'map_id': str(item['id'])})
-    assert by_map['map_id'] == item['id'] and by_map['suggestions'][0]['label'] == 'Optics'
-    by_term = web_schema.get(app, conn, '/api/schema/backlinks', {'term': 'optics'})
-    assert by_term['term'] == 'optics' and by_term['references'][0]['title'] == 'Optics'
-    for query in ({}, {'map_id': 'x'}, {'map_id': '1', 'term': 'a'}, {'term': 'optics', 'exclude': 'bogus'}):
-        with pytest.raises(APIError) as caught:
-            web_schema.get(app, conn, '/api/schema/backlinks', query)
-        assert caught.value.status == 400
+    conn.commit()
+    conn.close()
+    with front_site(workspace.settings) as site:
+        status, by_map = site.request(f"/api/schema/backlinks?map_id={item['id']}")
+        assert status == 200 and by_map['map_id'] == item['id'] and by_map['suggestions'][0]['label'] == 'Optics'
+        status, by_term = site.request('/api/schema/backlinks?term=optics')
+        assert status == 200 and by_term['term'] == 'optics' and by_term['references'][0]['title'] == 'Optics'
+        for query in ('', '?map_id=x', '?map_id=1&term=a', '?term=optics&exclude=bogus'):
+            assert site.request('/api/schema/backlinks' + query)[0] == 400

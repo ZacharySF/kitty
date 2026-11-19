@@ -331,6 +331,12 @@ class JobSpyAdapter:
         plan = plan_searches(self.ctx.config.tracks.tracks, options)
         if not plan:
             return AdapterResult([], "error", "no track lists jobspy in its sources, so nothing to search")
+        # python-jobspy is the ApplyAI module's `discovery` pack (kitty.packs): without it this
+        # source is an error, never an empty healthy result.
+        from kitty import packs
+
+        if self.scrape is scrape_with_jobspy and not packs.loaded("discovery"):
+            return AdapterResult([], "error", str(packs.PackMissing("discovery")))
 
         # The source's own pacing and TTL, as configured in sources.yaml.
         http = self.ctx.http_for(self.name)

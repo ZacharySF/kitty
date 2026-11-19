@@ -1,7 +1,7 @@
 <script lang="ts">
   import { duration } from "./plan";
 
-  /** Twelve mini months; each day is tinted by its booked hours. Hover reads out, click pins. */
+  /** Twelve months of day numbers; a day's circle deepens with its booked hours and today's is filled. Hover reads out, click pins. */
   let { year, busy, today, onopen }: {
     year: number;
     /** Booked minutes per `YYYY-MM-DD`. */
@@ -24,7 +24,6 @@
       total: days.reduce((sum, day) => sum + (busy[day] ?? 0), 0),
     };
   }));
-  const busiest = $derived(Math.max(1, ...months.map((m) => m.total)));
   let hover = $state<string | null>(null);
   let pinned = $state<string | null>(null);
   const shown = $derived(hover ?? pinned ?? (today.startsWith(String(year)) ? today : `${year}-01-01`));
@@ -33,15 +32,11 @@
 </script>
 
 <section class="year" aria-label="Year overview">
-  <header>
-    <strong>{year}</strong>
-    <span class="legend" aria-hidden="true">quiet {#each [0, 1, 2, 3, 4] as l}<i class="l{l}"></i>{/each} packed</span>
-  </header>
   <div class="months">
     {#each months as m, index (m.name)}
       <div class="month" class:current={today.startsWith(`${year}-${String(index + 1).padStart(2, "0")}`)}
         role="group" aria-label={`${m.name} ${year}, ${duration(m.total)} booked`}>
-        <h3>{m.name.slice(0, 3)}<span style:width={`${(m.total / busiest) * 100}%`}></span></h3>
+        <h3>{m.name}{#if m.total}<span>{duration(m.total)}</span>{/if}</h3>
         <div class="grid">
           {#each WEEKDAYS as w, i (i)}<b aria-hidden="true">{w}</b>{/each}
           {#each Array(m.lead) as _, i (i)}<span></span>{/each}
@@ -50,16 +45,16 @@
               aria-pressed={day === pinned} aria-label={`${day}: ${duration(busy[day] ?? 0)} booked`}
               onmouseenter={() => (hover = day)} onmouseleave={() => (hover = null)}
               onfocus={() => (hover = day)} onblur={() => (hover = null)}
-              onclick={() => (pinned = pinned === day ? null : day)}></button>
+              onclick={() => (pinned = pinned === day ? null : day)}>{Number(day.slice(8))}</button>
           {/each}
         </div>
       </div>
     {/each}
   </div>
   <footer role="status">
-    <i class="l{level(busy[shown] ?? 0)}"></i>
     <strong>{longDate(shown)}</strong>
     <span>{duration(busy[shown] ?? 0)} booked{shown === today ? " · today" : ""}</span>
+    <span class="legend" aria-hidden="true">Free {#each [1, 2, 3, 4] as l}<i class="l{l}"></i>{/each} Busy</span>
     <button class="open" onclick={() => onopen(shown)}>Open day</button>
   </footer>
 </section>
@@ -67,133 +62,121 @@
 <style>
   .year {
     display: grid;
-    padding-bottom: 3.6rem;
   }
-  header {
-    display: flex;
-    align-items: center;
-    padding: 10px 14px 2px;
-  }
-  header strong {
-    font: 700 1.2rem var(--font-ui);
-  }
-  .legend {
+  footer .legend {
     display: inline-flex;
     align-items: center;
-    gap: 3px;
+    gap: 5px;
     margin-left: auto;
-    color: var(--muted);
-    font: 500 0.6rem var(--font-mono);
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    font-size: 13px;
   }
-  .legend i,
-  footer i {
-    width: 10px;
-    height: 10px;
-    border-radius: 3px;
+  .legend i {
+    width: 12px;
+    height: 12px;
+    border-radius: 999px;
   }
   .months {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-    gap: 14px 18px;
-    padding: 10px 14px 14px;
+    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+    gap: 18px 36px;
+    padding-bottom: 16px;
   }
   h3 {
-    position: relative;
-    margin: 0 0 5px;
-    padding-bottom: 3px;
-    color: var(--muted);
-    font: 500 0.68rem var(--font-mono);
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin: 0 0 2px;
+    font: 600 16px/1.3 var(--font-ui);
   }
   h3 span {
-    position: absolute;
-    left: 0;
-    bottom: 0;
-    height: 2px;
-    border-radius: 2px;
-    background: color-mix(in srgb, var(--c1) 55%, transparent);
-  }
-  .current h3 {
-    color: var(--accent);
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 400;
   }
   .grid {
     display: grid;
     grid-template-columns: repeat(7, minmax(0, 1fr));
-    gap: 2px;
   }
   .grid b {
+    height: 22px;
     color: var(--subtle);
-    font: 500 0.5rem var(--font-mono);
+    font: 400 13px/22px var(--font-ui);
     text-align: center;
   }
   .d {
-    aspect-ratio: 1;
+    position: relative;
+    isolation: isolate;
+    height: 26px;
     min-width: 0;
     padding: 0;
     border: 0;
-    border-radius: 3px;
+    background: transparent;
+    color: var(--ink);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
     cursor: pointer;
-    transition: transform 120ms ease;
   }
-  .d:hover,
-  .d:focus-visible {
-    position: relative;
-    z-index: 1;
-    transform: scale(1.35);
+  /* Each day's circle: empty when free, deeper with every step of booked time. */
+  .d::before {
+    content: "";
+    position: absolute;
+    inset: 1px calc(50% - 12px);
+    z-index: -1;
+    border-radius: 999px;
+    background: var(--heat, transparent);
   }
-  .l0 {
-    background: color-mix(in srgb, var(--ink) 6%, transparent);
+  .d:hover::before,
+  .d:focus-visible::before {
+    box-shadow: 0 0 0 1px var(--muted);
   }
   .l1 {
-    background: color-mix(in srgb, var(--c1) 22%, transparent);
+    --heat: color-mix(in srgb, var(--ink) 10%, transparent);
   }
   .l2 {
-    background: color-mix(in srgb, var(--c1) 45%, transparent);
+    --heat: color-mix(in srgb, var(--ink) 19%, transparent);
   }
   .l3 {
-    background: color-mix(in srgb, var(--c1) 70%, transparent);
+    --heat: color-mix(in srgb, var(--ink) 29%, transparent);
   }
   .l4 {
-    background: var(--c1);
+    --heat: color-mix(in srgb, var(--ink) 40%, transparent);
+  }
+  .legend i {
+    background: var(--heat);
   }
   .d.today {
+    --heat: var(--ink);
+    color: var(--solid-void);
+    font-weight: 600;
+  }
+  .d[aria-pressed="true"]::before {
     box-shadow: 0 0 0 1.5px var(--ink);
   }
-  .d[aria-pressed="true"] {
-    outline: 1.5px solid var(--accent);
-    outline-offset: 1px;
+  .d.today[aria-pressed="true"]::before {
+    box-shadow: 0 0 0 2px var(--solid-void), 0 0 0 3.5px var(--ink);
   }
   footer {
     display: flex;
-    align-items: center;
-    gap: 8px;
-    min-height: 34px;
-    padding: 0 14px 0 14px;
+    align-items: baseline;
+    gap: 10px;
+    padding-top: 12px;
     border-top: 1px solid var(--hairline);
-    background: color-mix(in srgb, var(--solid-panel) 85%, transparent);
-    font-size: 0.8rem;
+    font-size: 15px;
   }
   footer span {
     color: var(--muted);
-    font: 500 0.68rem var(--font-mono);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-size: 14px;
   }
   .open {
-    margin-left: auto;
-    padding: 2px 10px;
-    border: 1px solid var(--hairline);
+    padding: 4px 10px;
+    border: 0;
     border-radius: 999px;
     background: transparent;
-    color: var(--ink);
-    font-size: 0.75rem;
+    color: var(--muted);
+    font-size: 14px;
   }
-  @media (prefers-reduced-motion: reduce) {
-    .d {
-      transition: none;
-    }
+  .open:hover {
+    background: color-mix(in srgb, var(--ink) 8%, transparent);
+    color: var(--ink);
   }
 </style>

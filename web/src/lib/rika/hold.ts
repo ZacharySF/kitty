@@ -1,5 +1,5 @@
 /**
- * Hold Space in the Rika bar to talk (docs/rika-design.md Q3 A). Pure, so the timing is
+ * Hold Space in Rika's field to talk (docs/rika-design.md Q3 A). Pure, so the timing is
  * testable without a browser:
  *
  * - a tap (released before HOLD_MS) types a space;

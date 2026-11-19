@@ -271,7 +271,7 @@
     position: fixed;
     top: 0;
     right: 0;
-    bottom: var(--rika-space, 0px);
+    bottom: 0;
     z-index: 35;
     display: flex;
     flex-direction: column;
@@ -302,7 +302,7 @@
     border-bottom: 1px solid var(--hairline);
   }
   h2 { margin: 0; font-size: 0.95rem; }
-  .file { flex: 1; color: var(--muted); font: 11px var(--font-mono); }
+  .file { flex: 1; color: var(--muted); font: 11px var(--font-ui); }
   .conflict, .note {
     display: flex;
     flex-wrap: wrap;
@@ -323,7 +323,7 @@
     border-radius: 8px;
     overflow: hidden;
     background: var(--solid-inset, #111111);
-    font: 12.5px/20px var(--font-mono);
+    font: 12.5px/20px var(--font-code);
   }
   .gutter {
     flex: none;

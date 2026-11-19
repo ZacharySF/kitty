@@ -20,11 +20,19 @@
   --chrome: var(--br-inset);
   --wash: color-mix(in srgb, var(--br-structure) 9%, var(--br-panel));
   --violet: var(--br-structure);
+  /* What home's tiles draw with (the points of a goal, a stage, a minute): the theme's six
+     data colours, unless the theme names its own for them (themes/kitty). */
+  --tile-1: var(--c1);
+  --tile-2: var(--c2);
+  --tile-3: var(--c3);
+  --tile-4: var(--c4);
+  --tile-5: var(--c5);
+  --tile-6: var(--c6);
   --font-ui: "Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
-  /* Q5: three faces, one job each. Fraunces sets the page title (h1, --font-title
-     below), Inter everything else in the UI, JetBrains Mono the navigation chrome,
-     key caps, code and tabular figures; Fredoka is the wordmark only. */
+  /* Design labs (Type): no monospace in the interface. The fixed-width face is for code blocks
+     (code, pre, samp, code editors) and the terminal only; everything else is --font-ui.
+     Fraunces is an optional page-title face (Settings → Titles); Fredoka is the wordmark only. */
+  --font-code: "JetBrains Mono Variable", ui-monospace, monospace;
   --font-wordmark: "Fredoka Variable", var(--font-ui);
   --br-font-ui: var(--font-ui);
   --br-font-display: var(--font-ui);
@@ -83,10 +91,9 @@ summary {
 }
 code,
 pre,
-kbd,
 samp,
 .br-code {
-  font-family: var(--font-mono);
+  font-family: var(--font-code);
 }
 button:not([class*="br-"]),
 input:not([class*="br-"]),
@@ -199,13 +206,155 @@ textarea::placeholder {
   color: var(--subtle);
   opacity: 1;
 }
+/* Calm forms (class `calm` on a page or section): soft filled fields without boxes, one
+   height, one radius; the file picker is a quiet button that names the chosen file. */
+:root body .calm :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="file"]), textarea, select) {
+  box-sizing: border-box;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 6%, transparent);
+  color: var(--ink);
+  font: 400 15px/1.4 var(--font-ui);
+  transition: box-shadow 120ms ease, background-color 120ms ease;
+}
+:root body .calm textarea {
+  padding: 10px 14px;
+}
+:root body .calm :is(input, textarea, select):hover {
+  background: color-mix(in srgb, var(--ink) 9%, transparent);
+}
+:root body .calm :is(input, textarea, select):focus-visible {
+  outline: 0;
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--ink) 55%, transparent);
+}
+:root body .calm ::placeholder {
+  color: var(--muted);
+}
+.calm .calm-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.calm .calm-row > .grow {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.calm .calm-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 15px;
+}
+:root body .calm .calm-inline input[type="number"] {
+  width: 76px;
+  text-align: center;
+}
+.calm .calm-file {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-height: 40px;
+  margin: 0;
+  padding: 0 16px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 6%, transparent);
+  color: var(--ink);
+  font-size: 15px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.calm .calm-file:hover {
+  background: color-mix(in srgb, var(--ink) 11%, transparent);
+}
+.calm .calm-file:has(input:focus-visible) {
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--ink) 55%, transparent);
+}
+/* The real input covers the button, invisible, so a click, the keyboard and "required" reach it. */
+.calm .calm-file input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+/* Checkboxes are drawn, not the platform's: a soft square with a hairline that fills with the
+   theme's pressed pair when ticked; the tick is a mask, so it takes the pair's ink. */
 input[type="checkbox"] {
-  appearance: auto;
-  -webkit-appearance: auto;
-  accent-color: var(--accent);
-  width: 16px;
-  height: 16px;
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  box-sizing: border-box;
+  /* min and max as well: a component's `width: auto` on its inputs must not resize the box. */
+  width: 18px;
+  min-width: 18px;
+  max-width: 18px;
+  height: 18px;
+  min-height: 18px;
+  max-height: 18px;
   flex-shrink: 0;
+  margin: 0;
+  padding: 0;
+  border: 1.5px solid color-mix(in srgb, var(--ink) 38%, transparent);
+  border-radius: 6px;
+  background: transparent;
+  vertical-align: -3px;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+input[type="checkbox"]:hover {
+  border-color: color-mix(in srgb, var(--ink) 70%, transparent);
+}
+input[type="checkbox"]:is(:checked, :indeterminate) {
+  border-color: var(--press-fill, var(--accent));
+  background: var(--press-fill, var(--accent));
+}
+input[type="checkbox"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--press-ink, var(--on-accent));
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'%3E%3Cpath d='M4.6 9.4l2.9 2.9 5.9-6.3' fill='none' stroke='black' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 100% 100% no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'%3E%3Cpath d='M4.6 9.4l2.9 2.9 5.9-6.3' fill='none' stroke='black' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 100% 100% no-repeat;
+  opacity: 0;
+  transform: scale(0.6);
+  transition: opacity 120ms ease, transform 140ms ease;
+}
+input[type="checkbox"]:checked::after {
+  opacity: 1;
+  transform: none;
+}
+input[type="checkbox"]:indeterminate::after {
+  -webkit-mask: none;
+  mask: none;
+  inset: 7px 4px;
+  border-radius: 2px;
+  opacity: 1;
+  transform: none;
+}
+input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+input[type="checkbox"]:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+@media (prefers-reduced-motion: reduce) {
+  input[type="checkbox"],
+  input[type="checkbox"]::after {
+    transition: none;
+  }
 }
 input[type="radio"] {
   appearance: auto;
@@ -275,25 +424,37 @@ details[open] > summary {
   flex-direction: column;
   gap: 12px;
 }
-/* The atlas home fills the window above the Rika bar (padding-bottom, below). Each
-   level passes the height down; the atlas's own floor (GraphNavigator) is the
-   only content that can grow the page, so cramped windows scroll, never clip. */
+/* Home and the Brain fill the window. Each level passes the height down; their
+   own floor (Home, GraphNavigator) is the only content that can grow the page, so
+   cramped windows scroll, never clip. */
 .workbench.atlas-home {
   height: 100vh;
   height: 100dvh;
   min-height: min-content;
 }
+/* Design lab top bar C: one row. Brand (and a breadcrumb inside nested schemas) left,
+   the groups centred like signage, the tab switcher and search right. */
 .system-bar {
-  min-height: 44px;
-  display: flex;
+  min-height: 52px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   padding: 0 12px;
   gap: 16px;
-  flex-wrap: wrap;
   border: 1px solid var(--border);
   background: var(--chrome);
   border-radius: 10px;
   flex-shrink: 0;
+}
+.bar-start, .bar-end {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.bar-end {
+  justify-content: flex-end;
+  gap: 6px;
 }
 .wordmark {
   text-decoration: none;
@@ -343,38 +504,28 @@ details[open] > summary {
   align-items: center;
   gap: 6px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
   min-width: 0;
-  flex: 1 1 220px;
   white-space: nowrap;
   overflow-x: auto;
-  scrollbar-width: thin;
-  padding: 5px 0;
+  scrollbar-width: none;
 }
-.breadcrumb:empty { display: none; }
-.schema-tab, .schema-back {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 32px;
-  flex: 0 0 auto;
-  padding: 5px 10px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--chrome);
+.schema-tab {
+  display: inline-block;
+  flex: 0 1 auto;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
   color: var(--muted);
   font: inherit;
-  text-decoration: none;
 }
-button.schema-tab, .schema-back { cursor: pointer; }
-.schema-tab { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
-.schema-back { font-size: 18px; padding: 2px 8px; }
-.schema-tab:hover, .schema-back:hover { color: var(--ink); border-color: var(--accent); }
-.schema-tab.current-schema {
-  color: var(--ink);
-  border-color: color-mix(in srgb, var(--accent) 65%, var(--border));
-  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
-}
+button.schema-tab { cursor: pointer; }
+button.schema-tab:hover { color: var(--ink); }
+.schema-tab.current-schema { color: var(--ink); }
 .separator {
   color: var(--subtle);
   font-weight: 400;
@@ -402,20 +553,19 @@ button.schema-tab, .schema-back { cursor: pointer; }
   flex-shrink: 0;
 }
 .system-command {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  height: var(--control-h);
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
   color: var(--muted);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r-control);
-  padding: 0 12px;
-  font-size: 12px;
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
 }
 .system-command:hover {
-  border-color: var(--gold-border);
   color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
 }
 .icon-button {
   width: var(--control-h);
@@ -447,7 +597,7 @@ main.atlas-main {
   flex-direction: column;
   gap: 8px;
 }
-main.atlas-main > [role="tabpanel"]:not([hidden]) {
+main.atlas-main > [data-kitty-panel="view"]:not([hidden]) {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
@@ -709,7 +859,7 @@ h1 {
   outline: 0;
 }
 kbd {
-  font: 11px var(--font-mono);
+  font: 11px var(--font-ui);
   border: 1px solid var(--border);
   padding: 2px 4px;
   border-radius: 3px;
@@ -773,9 +923,6 @@ kbd {
   font-size: 12px;
   padding-bottom: 18px;
   line-height: 1.6;
-}
-.demo-notice .badge {
-  color: var(--warning);
 }
 .page-footer {
   display: flex;
@@ -936,25 +1083,14 @@ main .notes-workspace {
   }
   .system-bar {
     padding: 0 8px;
-    min-height: 48px;
-    gap: 10px;
+    gap: 8px;
   }
   .system-state,
   .help-link {
     display: none;
   }
-  .system-command {
-    margin-left: auto;
-    min-height: 38px;
-  }
-  .system-command > span {
-    display: none;
-  }
   .breadcrumb {
-    order: 10;
-    flex-basis: 100%;
-    margin: 0;
-    padding-top: 0;
+    display: none;
   }
   main {
     padding: 18px 6px 0;
@@ -1211,11 +1347,27 @@ main > :is(.panel, .br-panel, .br-card) {
   select option:focus-visible { background: var(--wash); }
 }
 
-.workspace-groups { display: flex; gap: 3px; padding: 3px; border: 1px solid var(--border); border-radius: 7px; }
-.workspace-groups button { border: 1px solid transparent; background: transparent; color: var(--muted); padding: 5px 8px; font: 500 11px var(--br-font-body); white-space: nowrap; }
-.workspace-groups button[aria-current="page"] { color: var(--ink); border-color: color-mix(in srgb, var(--violet) 35%, var(--border)); background: var(--wash); }
-.workspace-groups button:hover { color: var(--ink); background: var(--surface-raised); }
-@media (max-width: 760px) { .workspace-groups { order: 9; overflow-x: auto; } }
+.workspace-groups { display: flex; gap: 4px; }
+/* The Icons module (ui.icons.on): an icon beside a name, drawn only while the module is on. */
+.module-icon { display: none; }
+:root[data-icons="on"] .module-icon { display: inline-flex; align-items: center; align-self: center; flex: none; margin-right: 7px; color: var(--muted); vertical-align: -3px; }
+:root[data-icons="on"] [aria-current="page"] > .module-icon { color: inherit; }
+/* Page titles: the view's own icon (App sets --view-icon), as a mask so it takes the text colour. */
+:root[data-icons="on"] [data-kitty-panel="view"] :is(.panel-heading h2, header h1:not(.page-h1, .sr-only))::before {
+  content: "";
+  display: inline-block;
+  width: 0.8em;
+  height: 0.8em;
+  margin-right: 0.4em;
+  vertical-align: -0.06em;
+  background: var(--muted);
+  -webkit-mask: var(--view-icon) center / contain no-repeat;
+  mask: var(--view-icon) center / contain no-repeat;
+}
+.workspace-groups button { border: 0; border-radius: 999px; background: transparent; color: var(--muted); padding: 6px 14px; font: 400 15px var(--font-ui); white-space: nowrap; }
+.workspace-groups button[aria-current="page"] { color: var(--ink); background: var(--wash); }
+.workspace-groups button:hover { color: var(--ink); }
+@media (max-width: 760px) { .workspace-groups button { padding: 6px 8px; } }
 
 /* Settings → Appearance (lib/appearance.ts) mirrors its choices onto <html data-*>. */
 @media (prefers-reduced-motion: reduce) {
@@ -1322,12 +1474,12 @@ main > :is(.panel, .br-panel, .br-card) {
 :root body :is(.eyebrow, .br-section-title) {
   color: var(--violet);
 }
-/* Data chrome stays mono: counts, badges and key caps. */
-:root body :is(.count-pill, .demo-notice .badge, kbd) {
-  font-family: var(--font-mono);
+/* Counts and key caps are set in the text face like everything else (no mono, no tracked caps). */
+:root body :is(.count-pill, kbd) {
+  font-family: var(--font-ui);
   font-size: var(--fs-chrome);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  letter-spacing: 0;
+  text-transform: none;
 }
 :root body :is(.br-btn:not([data-variant="link"]), .button, .pill, .text-button, .br-tab) {
   font-family: var(--font-ui);
@@ -1340,7 +1492,7 @@ main > :is(.panel, .br-panel, .br-card) {
 /* Q1: every control sits on the 28px line; the one or two primary actions of a page
    (Bracket size="lg", or .page-action) step up to 32px. One radius per control type:
    buttons, toggles and segments are pills; fields are --r-field. */
-:root body :is(.br-btn, .br-icon-btn, .button, .pill, .system-command):not(svg *) {
+:root body :is(.br-btn, .br-icon-btn, .button, .pill):not(svg *) {
   height: var(--control-h);
   white-space: nowrap;
 }
@@ -1349,7 +1501,7 @@ main > :is(.panel, .br-panel, .br-card) {
   min-height: var(--control-h-lg);
   padding-inline: 14px;
 }
-:root body :is(.br-btn, .br-icon-btn, .button, .pill, .system-command, .schema-tab, .schema-back, .icon-button) {
+:root body :is(.br-btn, .br-icon-btn, .button, .pill, .icon-button) {
   border-radius: var(--r-control);
 }
 /* Pills with hairlines; primary is LearnHarness's light-on-dark inversion. */
@@ -1405,7 +1557,11 @@ main > :is(.panel, .br-panel, .br-card) {
   border-bottom: 1px solid var(--hairline);
   border-radius: 0;
   background: transparent;
-  padding: 2px 4px 10px;
+  /* The same side margins as main's content, so the bar and the page share one left edge. */
+  padding: 0 max(26px, calc((100% - 1508px) / 2));
+}
+@media (max-width: 760px) {
+  :root body .system-bar { padding: 0 6px; }
 }
 /* Wordmark: rounded lowercase beside the cat in a filled pastel squircle. */
 :root body .wordmark {
@@ -1418,41 +1574,31 @@ main > :is(.panel, .br-panel, .br-card) {
   border-radius: 9px;
   background: var(--c1);
   color: var(--solid-void, var(--br-void));
+  overflow: hidden;
 }
+/* The groups read like signage: words, no box; the current one is a quiet fill. */
 :root body .workspace-groups {
-  border-color: var(--hairline);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--solid-panel, #1c1c1c) 40%, transparent);
+  display: flex;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
 :root body .workspace-groups button {
+  border: 0;
   border-radius: 999px;
-  padding: 5px 12px;
-  font: 500 10.5px var(--font-mono);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  padding: 6px 14px;
+  background: transparent;
+  color: var(--muted);
+  font: 400 15px var(--font-ui);
+}
+:root body .workspace-groups button:hover {
+  background: transparent;
+  color: var(--ink);
 }
 :root body .workspace-groups button[aria-current="page"] {
-  border-color: transparent;
   background: var(--select-fill, color-mix(in srgb, var(--ink) 12%, transparent));
   color: var(--select-ink, var(--ink));
-}
-:root body :is(.schema-tab, .schema-back) {
-  min-height: 28px;
-  border-color: var(--hairline);
-  background: transparent;
-  font: 10.5px var(--font-mono);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-:root body .schema-tab.current-schema {
-  background: color-mix(in srgb, var(--ink) 9%, transparent);
-  border-color: color-mix(in srgb, var(--ink) 30%, transparent);
-}
-:root body .system-command {
-  border-color: var(--hairline);
-  background: color-mix(in srgb, var(--solid-panel, #1c1c1c) 40%, transparent);
-  font: 11px var(--font-mono);
-  letter-spacing: 0.04em;
 }
 :root body kbd {
   border-radius: 6px;
@@ -1477,6 +1623,10 @@ main > :is(.panel, .br-panel, .br-card) {
   border-radius: var(--r-panel);
   backdrop-filter: var(--glass);
   -webkit-backdrop-filter: var(--glass);
+}
+/* Home and the Brain fill main edge to edge; the notice strips keep the page's side margin. */
+:root body main.atlas-main > :is(.demo-notice, .error-banner) {
+  margin-inline: 26px;
 }
 /* Inside a region, groups are sections split by a full-width hairline and a label,
    never another bordered box: a surface nested in a surface drops its box. */
@@ -1518,17 +1668,23 @@ hr.rule {
   background: transparent;
   overflow: hidden;
 }
-:root body :is(input, select, textarea):not([class*="br-"]):not(.quick-note textarea) {
+:root body :is(input:not([type="checkbox"], [type="radio"], [type="range"]), select, textarea):not([class*="br-"]):not(.quick-note textarea) {
   border-color: var(--hairline);
   background: color-mix(in srgb, var(--solid-inset, #111) 45%, transparent);
 }
+/* A quiet one-line strip, not a card: muted words under the bar and a text button. */
 :root body .demo-notice {
-  border-radius: 999px;
-  border: 1px solid var(--hairline);
-  background: color-mix(in srgb, var(--solid-panel, #1c1c1c) 40%, transparent);
-  padding: 6px 14px;
-  width: fit-content;
-  font-size: 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0 0 10px;
+  width: auto;
+  color: var(--muted);
+  font-size: 13px;
+}
+:root body .demo-notice .text-button {
+  color: var(--muted);
+  font-size: 13px;
 }
 
 /* Overlays keep text legible over translucent content. */
@@ -1551,9 +1707,8 @@ hr.rule {
   z-index: 40;
   display: flex;
   flex-direction: column;
-  gap: 10px;
   margin: -10px -16px 0;
-  padding: 10px 16px 0;
+  padding: 0 16px;
   background: color-mix(in srgb, var(--solid-void, #141414) 78%, transparent);
   backdrop-filter: blur(20px) saturate(140%);
   -webkit-backdrop-filter: blur(20px) saturate(140%);
@@ -1601,20 +1756,23 @@ html[data-panel-fullscreen] body .contents:not([data-kitty-panel][data-panel-ful
   visibility: hidden !important;
 }
 
-/* The Rika bar (RikaBar.svelte) along the bottom of the window publishes its height as
-   --rika-space; the page always ends above it, and scrolling a control into view stops
-   above it too. The build editor (BuildEditor.svelte) is docked at the right and
-   publishes --build-editor-space; the workbench narrows beside it. */
-:root {
-  scroll-padding-bottom: var(--rika-space, 0px);
-}
+/* The build editor (BuildEditor.svelte) is docked at the right and publishes
+   --build-editor-space; the workbench narrows beside it. */
 :root body .workbench {
-  padding-bottom: calc(10px + var(--rika-space, 0px));
+  padding-bottom: 10px;
   margin-right: var(--build-editor-space, 0px);
 }
-/* The herdr view fills its workspace tab above the bar. */
+/* Rika's side panel (Ctrl + R, rika/RikaDock.svelte) stands below the bar on the right and
+   publishes --rika-dock-space; the page narrows beside it, the bar keeps its full width. */
+.workbench > main {
+  margin-right: var(--rika-dock-space, 0px);
+}
+@media (max-width: 599.98px) {
+  .workbench > main { margin-right: 0; }
+}
+/* The herdr view fills its workspace tab. */
 .herdr-view {
-  height: calc(100dvh - var(--workbench-top, 0px) - var(--rika-space, 0px) - 34px);
+  height: calc(100dvh - var(--workbench-top, 0px) - 34px);
   min-height: 240px;
 }
 
@@ -1624,4 +1782,47 @@ html[data-panel-fullscreen] body .contents:not([data-kitty-panel][data-panel-ful
   text-decoration: underline dotted color-mix(in srgb, var(--accent) 75%, transparent);
   text-decoration-thickness: 2px;
   text-underline-offset: 3px;
+}
+
+/* A view panel is what its page widgets (pageEdit/PageWidgets.svelte) are placed against. */
+[data-kitty-panel="view"] {
+  position: relative;
+}
+/* The edit modes' bar (home's and page edit mode's): one piece at the bottom of the window. */
+.edit-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 26px;
+  z-index: 41;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100vw - 32px);
+  padding: 8px 10px 8px 20px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-raised);
+  box-shadow: 0 18px 50px rgb(0 0 0 / 0.55);
+  font-size: var(--text-small, 14px);
+  transform: translateX(-50%);
+  white-space: nowrap;
+  pointer-events: auto;
+}
+.edit-bar .count {
+  font-weight: 600;
+}
+.edit-bar .rule {
+  flex: none;
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--border);
+}
+@media (max-width: 640px) {
+  .edit-bar {
+    bottom: 12px;
+    flex-wrap: wrap;
+    justify-content: center;
+    border-radius: 24px;
+  }
 }

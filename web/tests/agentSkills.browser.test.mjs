@@ -1,5 +1,5 @@
 // Agent skills (docs/agent-skills-design.md) in a real browser: the now chip and Skills (N)
-// on Rika's agent cards, the bar chips' tooltip, the All agent skills view, Open file and
+// on Rika's agent cards, the All agent skills view, Open file and
 // Copy path, the per-kind opt-in and the new-agent skill checklist. The page is the real
 // UI; the backend is a scripted stand-in served through Playwright routes, so nothing
 // reaches herdr, an agent or the user's home folder.
@@ -94,12 +94,12 @@ async function harness(options) {
   page.on("pageerror", (error) => problems.push(error.message));
   await page.goto(new URL("tests/agent-skills-harness.html", base).href);
   await page.waitForFunction(() => !!window.skillsHarness);
-  await page.getByRole("region", { name: "Rika" }).waitFor();
+  await page.waitForFunction(() => window.skillsHarness.connected());
   return { page, backend, problems, context };
 }
 const openAgents = async (page) => {
-  await page.getByRole("button", { name: "Rika history", exact: true }).click();
-  const drawer = page.getByRole("dialog", { name: "Rika history" });
+  await page.keyboard.press("Control+j");
+  const drawer = page.getByRole("dialog", { name: "Rika" });
   await drawer.getByRole("button", { name: /^Agents/ }).click();
   return drawer;
 };
@@ -155,16 +155,6 @@ test("turning a kind on from the drawer lists its skills; All agent skills opens
   // The view follows the card's agent kind.
   const view = page.getByRole("region", { name: "All agent skills" });
   await view.getByRole("region", { name: "Claude Code agent skills" }).waitFor();
-  assert.deepEqual(problems, []);
-  await context.close();
-});
-
-test("bar chips carry the now state in their tooltip", async () => {
-  const { page, problems, context } = await harness();
-  const chip = page.getByRole("button", { name: /^omp, working, now: lavish · read: open its window$/ });
-  await chip.waitFor();
-  assert.equal(await chip.getAttribute("title"), "Draw the skills lab\nnow: lavish · read\nReading the lavish skill");
-  assert.equal(await page.getByRole("button", { name: "claude, blocked: open its window" }).getAttribute("title"), "Fix the calendar test");
   assert.deepEqual(problems, []);
   await context.close();
 });

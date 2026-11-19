@@ -17,6 +17,7 @@
   import Icon from "./Icon.svelte";
   import Select from "./ui/Select.svelte";
   import OverflowMenu, { type OverflowItem } from "./ui/OverflowMenu.svelte";
+  import FullscreenButton from "./ui/FullscreenButton.svelte";
   import Popover from "./ui/Popover.svelte";
   import EditDrawer from "./ui/EditDrawer.svelte";
   import { useWorkspaceContext, type SaveStatus } from "./workspaceContext.svelte";
@@ -35,20 +36,10 @@
   let historyOpen = $state(false), trashOpen = $state(false);
   /** The Mirror pane (Q11) beside the writing view: the browser tab the kitty extension mirrors. */
   let mirrorOpen = $state(false);
-  let openTabs = $state<number[]>([]), focusBlock = $state(""), tabDrag = 0;
-  let pageMenu = $state<{id:number;x:number;y:number}|null>(null);
+  let focusBlock = $state("");
   let originals = $state<{id:number;name:string}[]>([]);
-  function persistTabs() { try { localStorage.setItem("kitty.notes.tabs",JSON.stringify(openTabs)); } catch { /* Navigation remains usable. */ } }
-  async function closeTab(id:number) {
-    if(id===pageId && !(await beforeSwitch()))return;
-    if(id===pageId && openTabs.length===1 && fullscreen)await toggleFullscreen();
-    const index=openTabs.indexOf(id);openTabs=openTabs.filter(value=>value!==id);persistTabs();
-    if(id===pageId){const next=openTabs[Math.min(index,openTabs.length-1)];if(next)await openPage(next,false,true);else{pageId=0;presentation="map";}}
-  }
-  function reorderTab(id:number) {
-    if(!tabDrag||tabDrag===id)return;
-    const next=openTabs.filter(value=>value!==tabDrag);next.splice(next.indexOf(id),0,tabDrag);openTabs=next;tabDrag=0;persistTabs();
-  }
+  /** One tab system: this view shows one page; its app tab is named after it and other tabs know what it shows. */
+  $effect(() => { pane.setNotePage(pageId || null, title); });
   async function openBlock(id:number,bid="") {
     focusBlock="";await openPage(id);
     if(!pane.active||pageId!==id||!(await setMode("text")))return;
@@ -95,7 +86,7 @@
     try{if(await noteOutline.moveToPage(ids,{type:"page",number:target}))operationStatus=`Moved ${ids.length===1?"a block":`${ids.length} blocks`} to “${pages.find(page=>page.id===target)?.title??"page"}”`;}
     catch(cause){error=(cause as Error).message;}
   }
-  async function deletePageById(id:number) {pageMenu=null;if(id!==pageId){if(!(await beforeSwitch()))return;await openPage(id,false,true);if(pageId!==id)return;}await deletePage();}
+  async function deletePageById(id:number) {if(id!==pageId){if(!(await beforeSwitch()))return;await openPage(id,false,true);if(pageId!==id)return;}await deletePage();}
   let presentation = $state<"map" | "editor">("map");
   /** Map mode's embedded mind-map editor and the save state it reports (merged into the tab dot). */
   let mapEditor = $state<{flush: () => Promise<boolean>; hasUnsavedChanges: () => boolean}>();
@@ -271,9 +262,11 @@
     edgeContacts.clear(); consumedPointers.clear(); lastEdgeTap=null;
     tabsRevealed=false; clearTimeout(revealTimer);
   }
-  async function switchNoteTab(direction: -1 | 1) {
+  /** The notebook's pages in library order: what a fullscreen swipe or edge tap steps through. */
+  const notebookPages = () => pages.filter(page => page.notebook_id === notebookId);
+  async function switchNotePage(direction: -1 | 1) {
     if (!pane.active || tabSwitchPending) return;
-    const index = openTabs.indexOf(pageId), next = openTabs[index + direction];
+    const siblings = notebookPages(), index = siblings.findIndex(page => page.id === pageId), next = siblings[index + direction]?.id;
     if (index < 0 || !next) return;
     tabSwitchPending = true;
     try {
@@ -398,7 +391,7 @@
   export function isCanvasFullscreen(): boolean {
     return Boolean(stage && document.fullscreenElement === stage);
   }
-  export async function newCanvasTab(): Promise<void> {
+  export async function newCanvasPage(): Promise<void> {
     if (!pane.active) return;
     const previous=pageId;
     await createPage();
@@ -638,6 +631,8 @@
   async function openPage(id: number, force = false, prepared = false) {
     if (!pane.active) return;
     if (id === pageId && !force && presentation === "editor") return;
+    // A page another tab already shows comes forward there; internal steps (prepared) stay in this tab.
+    if (!prepared && pageId && id !== pageId && pane.focusNotePage(id)) return;
     if (!prepared && id !== pageId && noteMode === "map" && mapEditor && !(await mapEditor.flush())) {
       error ||= "The map could not save. Retry before switching pages.";
       return;
@@ -655,7 +650,6 @@
       const blockData = await api<BlocksResult>(`/notes/pages/${id}/blocks`);
       if(page.revision!==blockData.revision)throw new Error("Page changed while opening; open it again to load one consistent revision.");
       outlineText=blockData.blocks.map(block=>block.text).join("\n");blockReferences=blockData.references;citationCounts=blockData.citation_counts;
-      if(!openTabs.includes(id)){openTabs=[...openTabs,id];persistTabs();}
       originals=[];
       void api<{originals:typeof originals}>(`/documents/originals?page_id=${id}`).then(result=>{if(pageId===id)originals=result.originals;}).catch(()=>{});
       pageId = page.id;
@@ -820,13 +814,11 @@
       } catch {
         /* best effort */
       }
-      openTabs=openTabs.filter(id=>id!==pageId);persistTabs();
       pageId = 0;
       doc = emptyDocument();
       title="";
       presentation="map";
       await loadIndex();
-      if(openTabs.length)await openPage(openTabs[openTabs.length-1]);
     } catch (cause) {
       error = (cause as Error).message;
     }
@@ -1218,7 +1210,7 @@
       const now = performance.now();
       if (!edge.moved && now - edge.time <= 260) {
         if (lastEdgeTap && lastEdgeTap.side === edge.side && now - lastEdgeTap.time <= 420 && Math.abs(lastEdgeTap.y - edge.start[1]) <= 40) {
-          lastEdgeTap = null; void switchNoteTab(edge.side);
+          lastEdgeTap = null; void switchNotePage(edge.side);
         } else lastEdgeTap = {side: edge.side, y: edge.start[1], time: now};
       } else lastEdgeTap = null;
       penGuardUntil = Date.now() + 500;
@@ -1236,7 +1228,7 @@
         consumedPointers.delete(event.pointerId);
         if (canvas?.hasPointerCapture(event.pointerId))canvas.releasePointerCapture(event.pointerId);
         resumeAutosave();
-        void switchNoteTab(direction);
+        void switchNotePage(direction);
         return;
       }
     }
@@ -1843,11 +1835,9 @@
     if (!indexReady || pageInitialized) return;
     pageInitialized = true;
     if (initialMode === "map") noteMode = "map";
-    let requested = 0;
+    let requested = pane.notePage ?? 0;
     try {
-      const stored = JSON.parse(localStorage.getItem("kitty.notes.tabs") || "[]");
-      openTabs = Array.isArray(stored) ? stored.filter((id: unknown) => typeof id === "number" && pages.some(page => page.id === id)) : [];
-      requested = Number(sessionStorage.getItem("kitty.notes.open-page"));
+      requested ||= Number(sessionStorage.getItem("kitty.notes.open-page"));
       sessionStorage.removeItem("kitty.notes.open-page");
     } catch { /* Optional saved navigation. */ }
     if (requested && pages.some(page => page.id === requested)) void openPage(requested);
@@ -1897,27 +1887,24 @@
     if (pane.active && event.key === " ") space = false;
   }}
 />
-{#snippet pageTabs()}
-  <nav class="note-tabs" aria-label="Open note pages">
-    {#each openTabs as id (id)}
-      {@const summary = pages.find(page=>page.id===id)}
-      {@const book = notebooks.findIndex(notebook=>notebook.id===(id===pageId?notebookId:summary?.notebook_id))}
-      <div class:active={id===pageId && presentation==="editor"} class="note-tab">
-        <button aria-current={id===pageId && presentation==="editor"?"page":undefined} draggable={!fullscreen}
-          ondragstart={()=>tabDrag=id} ondragover={event=>event.preventDefault()} ondrop={event=>{event.preventDefault();const ids=blockDrag(event);if(ids)void moveBlocksToPage(id,ids);else reorderTab(id);}}
-          oncontextmenu={event=>{event.preventDefault();if(!fullscreen)pageMenu={id,x:event.clientX,y:event.clientY};}}
-          onclick={()=>void openPage(id)}><i class="tab-dot" aria-hidden="true" style:background={book<0?"var(--subtle)":`var(--c${book%6+1})`}></i><span>{id===pageId?title||"Untitled":summary?.title||`Page ${id}`}</span></button>
-        <button class="tab-close" aria-label={`Close ${summary?.title||"page"} tab`} onclick={()=>void closeTab(id)}><Icon name="close" size={12}/></button>
+{#snippet pageList()}
+  <nav class="note-tabs" aria-label="Pages in this notebook">
+    {#each notebookPages() as summary (summary.id)}
+      {@const book = notebooks.findIndex(notebook=>notebook.id===summary.notebook_id)}
+      <div class:active={summary.id===pageId && presentation==="editor"} class="note-tab">
+        <button aria-current={summary.id===pageId && presentation==="editor"?"page":undefined}
+          onclick={()=>void openPage(summary.id,false,true)}><i class="tab-dot" aria-hidden="true" style:background={book<0?"var(--subtle)":`var(--c${book%6+1})`}></i><span>{summary.id===pageId?title||"Untitled":summary.title||`Page ${summary.id}`}</span></button>
       </div>
     {/each}
     <button class="icon-button tab-new" aria-label="New page" title="New page · Ctrl Alt N" disabled={!notebookId||busy||loading} onclick={createPage}><Icon name="plus" size={14}/></button>
   </nav>
 {/snippet}
 <section class="notes-workspace" aria-label="Notes workspace">
-  <!-- Q17: one row. Library, the open pages, the page mode, Find and ⋯ (always last). -->
+  <!-- Q17: one row. Library, a new page, the page mode, Find and ⋯ (always last). The open pages are app tabs (the top bar's switcher). -->
   <header class="notes-heading">
     <button bind:this={libraryToggle} class="icon-button library-toggle" aria-label="Open library" aria-expanded={libraryOpen} aria-controls={`${pane.id}-notes-library`} title="Library" onclick={() => void openLibrary(!libraryOpen)}><Icon name="menu" size={16}/></button>
-    {#if fullscreen}<span class="note-tabs"></span>{:else}{@render pageTabs()}{/if}
+    <button class="icon-button" aria-label="New page" title="New page · Ctrl Alt N" disabled={!notebookId||busy||loading} onclick={createPage}><Icon name="plus" size={16}/></button>
+    <span class="notes-spacer"></span>
     <Select kind="segments" label="Page mode" options={PAGE_MODES} disabled={!pageId}
       bind:value={() => noteMode, (next: string) => void chooseMode(next as NoteMode)} />
     <Popover bind:open={findOpen} label="Find in page" placement="bottom-end" class="notes-find">
@@ -1932,6 +1919,7 @@
       aria-label={mirrors.list.length ? `Mirror (${mirrors.list.length} live)` : "Mirror"}
       title="Mirror: the browser tab the rika! extension is mirroring, beside this page"
       onclick={()=>mirrorOpen=!mirrorOpen}><Icon name="external" size={15}/>{#if mirrors.list.length}<span class="mirror-live" aria-hidden="true"></span>{/if}</button>
+    <FullscreenButton />
     <OverflowMenu items={pageActions} label="More page actions" />
   </header>
   {#if operationStatus}<p class="op-status" role="status">{operationStatus}</p>{/if}
@@ -1954,7 +1942,7 @@
     {#if libraryOpen}<button class="library-scrim" tabindex="-1" aria-label="Close library" onclick={() => void openLibrary(false)}></button>{/if}
     <aside bind:this={libraryDrawer} id={`${pane.id}-notes-library`} class="notebook-sidebar" aria-label="Notes library" hidden={!libraryOpen}>
       <NotesLibrary {folders} {notebooks} {pages} {notebookId} {pageId} {search} {folderFocus}
-        busy={loading || busy} onrefresh={loadIndex} onopenpage={openFromLibrary} onselectnotebook={notebookSchema}
+        busy={loading || busy} onrefresh={loadIndex} onopenpage={openFromLibrary} onopentab={id => { libraryOpen = false; pane.openNotePageTab(id); }} onselectnotebook={notebookSchema}
         onnewpage={async () => { libraryOpen = false; await createPage(); }} onbeforeswitch={beforeSwitch} onerror={message => error = message} ondeletepage={deletePageById}
         onblocksdrop={(page, event) => { const ids = blockDrag(event); if (ids) void moveBlocksToPage(page, ids); return !!ids; }}
         onsearch={value => { search = value; clearTimeout(searchTimer); searchTimer = setTimeout(() => void loadIndex(), 250); }} />
@@ -2024,8 +2012,8 @@
       <div class="canvas-stage" bind:this={stage} onpointerdowncapture={event=>{if(event.pointerType==="touch")revealTabs();}}>
         {#if fullscreen}
           <div class="focus-tab-dock" class:revealed={tabsRevealed} onpointerenter={revealTabs} role="group" aria-label="Fullscreen page navigation">
-            <button class="focus-tab-handle" aria-label="Show note page tabs" onclick={revealTabs} onfocus={revealTabs}>Pages ▾</button>
-            <div class="focus-tab-strip">{@render pageTabs()}</div>
+            <button class="focus-tab-handle" aria-label="Show the notebook's pages" onclick={revealTabs} onfocus={revealTabs}>Pages ▾</button>
+            <div class="focus-tab-strip">{@render pageList()}</div>
           </div>
           <div class="focus-corner">
             <button class="button focus-exit" onclick={toggleFullscreen} aria-label="Exit canvas fullscreen">Exit fullscreen · Esc</button>
@@ -2037,7 +2025,7 @@
         <canvas
           bind:this={canvas}
           style={`width:${width}px;height:${height}px;`}
-          aria-label="Infinite drawing canvas. Write with a pressure-sensitive pen. Two-finger horizontal swipe changes page tabs. In fullscreen, pen double-tap the middle of the far left or right edge to change tabs; that narrow edge is reserved. Use drawing tools or the accessible text outline for notes."
+          aria-label="Infinite drawing canvas. Write with a pressure-sensitive pen. Two-finger horizontal swipe turns to the notebook's next or previous page. In fullscreen, pen double-tap the middle of the far left or right edge to turn the page; that narrow edge is reserved. Use drawing tools or the accessible text outline for notes."
           tabindex="0"
           onblur={() => {
             space = false;
@@ -2065,7 +2053,7 @@
           oncontextmenu={contextDeleteDrawing}
         ></canvas>
         {#if !pageId}<div class="canvas-empty">
-            <h3>A place for your next idea</h3>
+            <h3>No page open</h3>
             <p>Create a notebook and page to start drawing.</p>
           </div>{/if}
         <CanvasPill label="Drawing tools" id={`${pane.id}-drawing-tools`} storageKey="kitty.notes.canvas-tools" moreLabel="More canvas tools" menuLabel="Canvas options" stageHeight={height} disabled={!pageId}>
@@ -2214,7 +2202,6 @@
     </div>
   </div>
 </section>
-{#if pageMenu}<div class="note-page-menu" role="menu" style:left={`${Math.min(pageMenu.x,window.innerWidth-180)}px`} style:top={`${Math.min(pageMenu.y,window.innerHeight-70)}px`}><button class="button" role="menuitem" onclick={()=>pageMenu&&void deletePageById(pageMenu.id)}>Delete page…</button><button class="button" role="menuitem" onclick={()=>pageMenu=null}>Cancel</button></div>{/if}
 {#if importOpen}
   <EditDrawer title="Import PDF or Markdown" meta={activeNotebook?.title ?? ""} onclose={() => (importOpen = false)}>
     <DocumentImport {notebookId} onimport={id=>{importOpen=false;void loadIndex().then(()=>openBlock(id));}}/>
@@ -2314,34 +2301,32 @@
 {/if}
 
 <style>
-  /* Q2: the workspace is one surface; header, page and stage are split by hairlines only. */
+  /* Views are part of the app: Notes sits on the page ground; the header's hairline is its only line. */
   .notes-workspace {
-    background: var(--surface);
+    background: transparent;
     color: var(--ink);
-    border: 1px solid var(--hairline);
-    border-radius: var(--r-panel);
     /* clip, not hidden: hidden would make this the sticky outline's scroll container. */
     overflow: clip;
     display: flex;
     flex-direction: column;
   }
-  /* Q17: one row. ☰, the open pages, then the page mode, Find and ⋯ on the right. */
+  /* Q17: one row. ☰ and a new page, then the page mode, Find and ⋯ on the right. */
   .notes-heading {
     display: flex;
     align-items: center;
     gap: 6px;
     height: 44px;
-    padding: 0 10px 0 8px;
+    padding: 0;
     box-sizing: border-box;
     border-bottom: 1px solid var(--hairline);
   }
   .notes-heading > :global(*) { flex-shrink: 0; }
-  .notes-heading .note-tabs { flex: 1 1 auto; }
+  .notes-heading .notes-spacer { flex: 1 1 auto; }
   .library-toggle[aria-expanded="true"] { background: var(--wash); color: var(--ink); }
   :global(.kitty-popover.notes-find) { width: 260px; padding: 8px; }
   .find-field { width: 100%; box-sizing: border-box; }
 
-  /* Q43: the open pages as pill tabs on the control line. */
+  /* Fullscreen only: the notebook's pages as pills in the dock (the open pages themselves are app tabs). */
   .note-tabs { display: flex; align-items: center; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
   .note-tab { display: flex; align-items: center; flex-shrink: 0; max-width: 200px; height: var(--control-h); padding: 0 4px 0 12px; box-sizing: border-box; border-radius: var(--r-control); font-size: var(--fs-control); color: var(--muted); }
   .note-tab:hover { background: var(--wash); color: var(--ink); }
@@ -2349,17 +2334,13 @@
   .note-tab > button:first-child { display: flex; align-items: center; gap: 7px; min-width: 0; height: 100%; padding: 0; background: none; color: inherit; font: inherit; }
   .note-tab > button:first-child span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .tab-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
-  .tab-close { display: grid; place-items: center; width: 20px; height: 20px; margin-left: 4px; padding: 0; border-radius: var(--r-control); background: none; color: var(--subtle); opacity: 0; }
-  .note-tab:hover .tab-close, .note-tab.active .tab-close, .tab-close:focus-visible { opacity: 1; }
-  .tab-close:hover { background: var(--wash); color: var(--ink); }
   .note-tabs .tab-new { flex-shrink: 0; margin-left: 2px; }
-  .note-page-menu { position: fixed; z-index: 90; display: flex; gap: 8px; padding: 8px; background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--r-menu); box-shadow: var(--overlay-shadow); }
 
   .op-status { margin: 6px 14px 0; color: var(--muted); font-size: 12px; }
   .error-banner { display: flex; align-items: center; gap: 8px; margin: 8px 12px 0; padding: 6px 6px 6px 12px; border: 1px solid color-mix(in srgb, var(--warning) 55%, transparent); border-radius: var(--r-field); color: var(--warning); font-size: 12.5px; overflow-wrap: anywhere; }
   .error-banner > span { flex: 1; }
 
-  /* The canvas and map fill the window above the Rika bar under whatever sits above the page (fitHeight). */
+  /* The canvas and map fill the window under whatever sits above the page (fitHeight). */
   .notebook-layout { --stage-h: var(--fit-h, 480px); position: relative; display: flex; flex-direction: column; flex: 1; min-height: 0; }
   .notebook-layout > .canvas-main { flex: 1; }
   /* Q43: the library slides over the page instead of taking a column. */
@@ -2442,13 +2423,13 @@
   .page-toc li button:hover { color: var(--ink); }
   .page-toc li button.on { color: var(--ink); background: var(--wash); }
   .page-toc li button.on::before { background: var(--accent); }
-  .toc-words { margin-top: 6px; padding: 6px 8px 0; border-top: 1px solid var(--hairline); color: var(--subtle); font: 10px var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; }
+  .toc-words { margin-top: 6px; padding: 6px 8px 0; border-top: 1px solid var(--hairline); color: var(--subtle); font: 10px var(--font-ui); letter-spacing: 0.08em; text-transform: uppercase; }
 
   /* Map (Q19): the one mind-map editor, full-bleed in the stage. */
   .map-stage { display: flex; flex-direction: column; height: var(--stage-h); min-height: 0; overflow: hidden; }
   .map-stage > :global(*) { flex: 1; min-height: 0; }
 
-  /* Canvas: the stage fills the window above the Rika bar; the tools float in its bottom pill. */
+  /* Canvas: the stage fills the window; the tools float in its bottom pill. */
   .canvas-stage { position: relative; height: var(--stage-h); min-width: 0; overflow: hidden; background: var(--solid-void); }
   .canvas-stage:fullscreen { width: 100vw; height: 100dvh; min-width: 0; min-height: 0; background: var(--solid-void); color: var(--ink); }
   .canvas-stage canvas { display: block; touch-action: none; cursor: crosshair; outline-offset: -3px; }

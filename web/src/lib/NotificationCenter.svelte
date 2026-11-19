@@ -20,13 +20,13 @@
   }
   function outside(event: PointerEvent) {
     const target = event.target as Element;
-    if (notifier.drawer && !drawer?.contains(target) && !target.closest?.("[data-notification-bell]")) notifier.drawer = false;
+    if (notifier.drawer && !drawer?.contains(target) && !target.closest?.("[data-notification-anchor]")) notifier.drawer = false;
   }
   function key(event: KeyboardEvent) {
     if (event.key !== "Escape" || !notifier.drawer) return;
     event.preventDefault();
     notifier.drawer = false;
-    document.querySelector<HTMLElement>("[data-notification-bell]")?.focus();
+    document.querySelector<HTMLElement>("[data-notification-anchor]")?.focus();
   }
   const when = (notice: Notice) => {
     const due = new Date(notice.due);
@@ -56,7 +56,7 @@
     <ul>
       {#each items as notice (notice.key)}
         {@const unread = !notifier.ledger.read.includes(notice.key)}
-        {@const clearLabel = notice.source === "job" ? "Done" : notice.source === "rika" ? "Not relevant" : "Dismiss"}
+        {@const clearLabel = notice.source === "job" ? "Done" : notice.target.kind === "rika" && notice.target.goal_id !== null ? "Not relevant" : "Dismiss"}
         <li class:unread data-source={notice.source}>
           <button class="item" onclick={() => open(notice)}>
             <span class="meta">
@@ -94,7 +94,7 @@
     display: flex;
     flex-direction: column;
     width: min(340px, calc(100vw - 24px));
-    max-height: calc(100vh - var(--workbench-top, 56px) - var(--rika-space, 0px) - 24px);
+    max-height: calc(100vh - var(--workbench-top, 56px) - 24px);
     border: 1px solid var(--hairline);
     border-radius: 16px;
     background: color-mix(in srgb, var(--solid-panel, #1c1c1c) 94%, transparent);
@@ -124,7 +124,7 @@
     border: 0;
     background: none;
     color: var(--violet);
-    font: 10px var(--font-mono);
+    font: 10px var(--font-ui);
     letter-spacing: 0.08em;
     text-transform: uppercase;
     cursor: pointer;
@@ -153,7 +153,7 @@
     border-radius: 999px;
     background: transparent;
     color: var(--muted);
-    font: 500 10px var(--font-mono);
+    font: 500 10px var(--font-ui);
     letter-spacing: 0.1em;
     text-transform: uppercase;
     cursor: pointer;
@@ -227,7 +227,7 @@
     align-items: center;
     gap: 6px;
     color: var(--muted);
-    font: 9.5px var(--font-mono);
+    font: 9.5px var(--font-ui);
     letter-spacing: 0.1em;
     text-transform: uppercase;
   }
@@ -265,7 +265,7 @@
     border-radius: 999px;
     background: transparent;
     color: var(--muted);
-    font: 9.5px var(--font-mono);
+    font: 9.5px var(--font-ui);
     letter-spacing: 0.08em;
     text-transform: uppercase;
     cursor: pointer;
@@ -295,7 +295,7 @@
     padding: 8px 14px 10px;
     border-top: 1px solid var(--hairline);
     color: var(--subtle);
-    font: 9.5px var(--font-mono);
+    font: 9.5px var(--font-ui);
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }

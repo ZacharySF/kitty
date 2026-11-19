@@ -50,6 +50,9 @@
     drawers = { ...drawers, [side]: open };
     try { localStorage.setItem(DRAWERS_KEY, JSON.stringify(drawers)); } catch { /* The state still applies in this session. */ }
   }
+  /** The session ring fills the room the session page has: 240–380px, leaving space for the chip, controls and drawer row. */
+  let focusWidth = $state(0), focusHeight = $state(0);
+  const ringSize = $derived(Math.round(Math.max(240, Math.min(380, focusWidth - 32, focusHeight - 290))));
   let data = $state<Workspace | null>(null);
   let error = $state("");
   let notice = $state("");
@@ -452,7 +455,7 @@
     return () => pane.setStatus(null);
   });
 
-  /** Sizes the session page to the window above the Rika bar, so it never scrolls. */
+  /** Sizes the session page to the window, so it never scrolls. */
   function fill(node: HTMLElement) {
     let frame = 0;
     const size = () => {
@@ -522,7 +525,7 @@
   <header class="section-header">
     <h2>Study</h2>
     {#if data}
-      <nav class="tabs" aria-label="Study tools">
+      <nav class="tabs" aria-label="Study tools" data-page-tabs>
         {#each TABS as item (item.id)}<Button size="sm" aria-pressed={tab === item.id} onclick={() => (tab = item.id)}>{item.label}</Button>{/each}
       </nav>
     {/if}
@@ -533,17 +536,17 @@
   {#if data}
     {#if tab === "session"}
       {@const open = data.tasks.filter((item) => !item.done).length}
-      <div class="focus-first" class:left-open={drawers.left} class:right-open={drawers.right} use:fill>
+      <div class="focus-first" class:left-open={drawers.left} class:right-open={drawers.right} use:fill bind:clientWidth={focusWidth} bind:clientHeight={focusHeight}>
         <section class="solo" aria-label="Focus">
-          <TimerPanel {data} bind:targetId {subjectId} {projectId} {remaining} {clockLabel} {phaseTotal} disabled={busy || !online} ontimer={timerAction} onsettings={saveSettings} />
+          <TimerPanel {data} bind:targetId {subjectId} {projectId} {remaining} {clockLabel} {phaseTotal} {ringSize} disabled={busy || !online} ontimer={timerAction} onsettings={saveSettings} />
         </section>
         <button type="button" class="edge left" aria-label="Subjects & tasks" aria-controls="study-drawer-left" aria-expanded={drawers.left}
           title="Subjects & tasks ([)" onclick={() => toggleDrawer("left")}>
-          <Icon name="study" size={14} /><span>Subjects & tasks</span>{#if open}<span class="count">{open}</span>{/if}
+          <Icon name="study" size={16} /><span>Subjects & tasks</span>{#if open}<span class="count">{open}</span>{/if}
         </button>
         <button type="button" class="edge right" aria-label="Guide & notes" aria-controls="study-drawer-right" aria-expanded={drawers.right}
           title="Guide & notes (])" onclick={() => toggleDrawer("right")}>
-          <Icon name="notes" size={14} /><span>Guide & notes</span>
+          <Icon name="notes" size={16} /><span>Guide & notes</span>
         </button>
         {#if drawers.left}
           <aside id="study-drawer-left" class="drawer left" aria-label="Subjects & tasks" transition:fly={{ x: -40, duration: 180 }}>
@@ -621,8 +624,11 @@
     gap: 4px;
     flex-wrap: wrap;
   }
-  /* Focus-first: the timer alone, centred; the drawers slide over it from the edges. */
+  /* Focus-first: the timer alone, centred. The drawer buttons sit in a row along the top,
+     and the drawers slide in from the edges below that row, so they never cover a button. */
   .focus-first {
+    --edge-row: 56px;
+    --drawer-w: min(320px, calc(100% - 48px));
     position: relative;
     display: grid;
     min-height: 420px;
@@ -632,64 +638,50 @@
     display: grid;
     place-items: center;
     min-width: 0;
+    padding-block: var(--edge-row);
   }
   .solo :global(.timer-card) {
-    width: min(100%, 420px);
+    width: min(100%, calc(var(--ring, 260px) + 48px));
   }
   .edge {
     position: absolute;
-    top: 50%;
+    top: 6px;
     z-index: 3;
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    justify-content: center;
     gap: 8px;
-    width: 30px;
-    height: 200px;
-    padding: 0;
+    min-width: 120px;
+    height: 44px;
+    padding: 0 16px;
     border: 1px solid var(--hairline);
+    border-radius: 999px;
     background: color-mix(in srgb, var(--solid-panel, #1c1c1c) 62%, transparent);
     color: var(--muted);
-    font: 500 12px/1 var(--font-ui);
-    writing-mode: vertical-rl;
+    font: 500 14px/1 var(--font-ui);
+    white-space: nowrap;
     cursor: pointer;
-    transform: translateY(-50%);
-    transition: left 180ms ease, right 180ms ease, color 120ms;
+    transition: color 120ms, border-color 120ms;
   }
   .edge:hover,
   .edge[aria-expanded="true"] {
     color: var(--ink);
   }
+  .edge[aria-expanded="true"] {
+    border-color: color-mix(in srgb, var(--ink) 28%, var(--hairline));
+  }
   .edge.left {
     left: 0;
-    border-left: 0;
-    border-radius: 0 12px 12px 0;
-    transform: translateY(-50%) rotate(180deg);
   }
   .edge.right {
     right: 0;
-    border-right: 0;
-    border-radius: 12px 0 0 12px;
-  }
-  .edge :global(svg) {
-    transform: rotate(90deg);
   }
   .edge .count {
     color: var(--muted);
-    font: 500 10.5px var(--font-mono);
-  }
-  .left-open .edge.left {
-    left: var(--drawer-w);
-  }
-  .right-open .edge.right {
-    right: var(--drawer-w);
-  }
-  .focus-first {
-    --drawer-w: min(320px, calc(100% - 48px));
+    font: 500 12px var(--font-ui);
   }
   .drawer {
     position: absolute;
-    top: 0;
+    top: var(--edge-row);
     bottom: 0;
     z-index: 2;
     display: grid;

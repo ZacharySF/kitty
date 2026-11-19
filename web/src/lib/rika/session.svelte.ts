@@ -1,6 +1,9 @@
 import { api, socketProtocols } from "../api";
+import { activeModules } from "../modules.svelte";
+import { notifier } from "../notifications.svelte";
+import { NOTICE_EVENT, sendSystem } from "../systemNotify";
 import { Mic, MicError } from "./mic";
-import { mergeEntries, rikaSocketUrl, type Entry, type History, type Id, type RikaAction, type RikaAgent, type RikaApproval, type RikaDraft, type RikaMessage, type RikaPlan, type Segment, type StreamEvent, type VoiceMode } from "./rika";
+import { askedAt, mergeEntries, rikaSocketUrl, voiceEnabled, type Entry, type History, type Id, type PlanChoice, type RikaAction, type RikaAgent, type RikaApproval, type RikaDraft, type RikaMessage, type RikaPlan, type Segment, type StreamEvent, type VoiceMode } from "./rika";
 
 /** How long a finished reply's toast stays before it leaves for the drawer. */
 export const RIKA_TOAST_MS = 9000;
@@ -28,7 +31,7 @@ const IDLE: VoiceState = { phase: "idle", mode: "command", session: "", partial:
 /**
  * The browser side of Rika (docs/rika-design.md Q2 D, Q3–Q8, Q19, Q20): the conversation,
  * its actions, approvals and brain-dump plans, voice input, the live worker agents, the
- * reply toasts and the history drawer. One socket (`/api/rika/stream`) carries every
+ * home panel, and elsewhere the reply toasts and the drawer. One socket (`/api/rika/stream`) carries every
  * live event and the microphone's audio; REST loads history and agents and sends
  * requests, dumps, decisions, undos and opens.
  */
@@ -40,6 +43,10 @@ export class RikaSession {
   error = $state("");
   connected = $state(false);
   drawer = $state<{ open: boolean; section: DrawerSection; auto: boolean }>({ open: false, section: "conversation", auto: false });
+  /** Home panels on screen (the active tab's home). While one is, it stands in for the drawer and the toasts. */
+  private panels = $state(0);
+  /** Bumped to ask the visible panel to focus its field. */
+  focusRequest = $state(0);
   voice = $state<VoiceState>({ ...IDLE });
   /** The Whisper model's first-use download, while it runs. */
   model = $state<{ received: number; total: number } | null>(null);
@@ -68,6 +75,7 @@ export class RikaSession {
         !this.pending.some((approval) => String(approval.message_id) === String(entry.id))),
   );
   readonly listening = $derived(this.voice.phase !== "idle");
+  readonly panelVisible = $derived(this.panels > 0);
 
   /** Connects; returns the disconnect. `onnavigate` runs Rika's "open view" client actions. */
   start(onnavigate: (view: string) => void): () => void {
@@ -76,7 +84,27 @@ export class RikaSession {
     void this.connect();
     void this.loadHistory();
     void this.loadAgents();
-    return () => this.stop();
+    // A click on an agent's system notification opens that agent.
+    const clicked = (event: Event) => {
+      const key = (event as CustomEvent<{ key?: string }>).detail?.key ?? "";
+      const agent = key.startsWith("agent:") ? this.agents.find((item) => `agent:${item.id}` === key) : undefined;
+      if (agent) void this.open(agent);
+    };
+    window.addEventListener(NOTICE_EVENT, clicked);
+    return () => {
+      window.removeEventListener(NOTICE_EVENT, clicked);
+      this.stop();
+    };
+  }
+
+  /** An agent that starts waiting for you is the one agent event that reaches the system's notifications. */
+  private watchAgents(next: RikaAgent[]) {
+    for (const agent of next) {
+      const before = this.agents.find((item) => item.id === agent.id);
+      if (agent.status === "blocked" && before && before.status !== "blocked" && notifier.system)
+        void sendSystem({ key: `agent:${agent.id}`, title: `${agent.name} is waiting for you`, body: agent.line || agent.task, actions: false });
+    }
+    this.agents = next;
   }
 
   stop() {
@@ -170,7 +198,7 @@ export class RikaSession {
         this.approval(event.approval);
         break;
       case "agents":
-        this.agents = event.agents;
+        this.watchAgents(event.agents);
         break;
       case "navigate":
         this.onnavigate(event.view);
@@ -250,7 +278,8 @@ export class RikaSession {
    * drawer, which opens by itself, and is planned when it ends.
    */
   async listen(mode: VoiceMode, prefix = "") {
-    if (this.listening) return;
+    // Without the voice module Rika is text only.
+    if (this.listening || !voiceEnabled(activeModules)) return;
     this.error = "";
     const session = `v${Date.now().toString(36)}${this.nextVoice++}`;
     this.voice = { ...IDLE, phase: "starting", mode, session, prefix };
@@ -338,12 +367,15 @@ export class RikaSession {
     }
   }
 
-  /** Approve the ticked items of a plan (with the chosen answer to its question) or dismiss it. */
-  async decidePlan(id: Id, decision: "approve" | "dismiss", items: string[] = [], choices: Record<string, number> = {}) {
+  /** Approve the ticked items of a plan (with the chosen answer to each question) or dismiss it. */
+  async decidePlan(id: Id, decision: "approve" | "dismiss", items: string[] = [], choices: Record<string, PlanChoice> = {}) {
     try {
       const body = decision === "approve" ? { decision, items, choices } : { decision };
       const { plan } = await api<{ plan: RikaPlan }>(`/rika/plans/${encodeURIComponent(String(id))}`, body);
-      this.plan(plan);
+      // The live channel can be ahead of this answer: a plan it already finished is not set back to running.
+      const known = this.entries.find((entry) => entry.kind === "plan" && String(entry.id) === String(plan.id));
+      const finished = known?.kind === "plan" && (known.status === "applied" || known.status === "failed");
+      if (!(plan.status === "running" && finished)) this.plan(plan);
     } catch (cause) {
       this.error = (cause as Error).message;
     }
@@ -385,6 +417,12 @@ export class RikaSession {
   }
 
   /** Focuses the agent's Tern window; without Tern, the server names a view to show it in. */
+  /** Hands a saved agent skill to a running agent (a drop on its card, or Use in its skill list). */
+  async giveSkill(agent: RikaAgent, path: string): Promise<string> {
+    const result = await api<{ skill: string }>(`/rika/agents/${encodeURIComponent(agent.id)}/skill`, { path });
+    return result.skill;
+  }
+
   async open(agent: RikaAgent) {
     try {
       const opened = await api<{ ok: boolean; view?: string | null }>(`/rika/agents/${encodeURIComponent(agent.id)}/open`, {});
@@ -399,8 +437,24 @@ export class RikaSession {
     this.onnavigate(view);
   }
 
+  /** A home panel came into view: it holds the conversation, so the drawer and toasts go. Returns its removal. */
+  showPanel(): () => void {
+    this.panels += 1;
+    this.toasts = [];
+    if (this.drawer.open) this.drawer = { ...this.drawer, open: false, auto: false };
+    let shown = true;
+    return () => {
+      if (shown) this.panels -= 1;
+      shown = false;
+    };
+  }
+
+  /** Opens the drawer on `section`; with the home panel in view, the panel shows it and takes focus instead. */
   showDrawer(section: DrawerSection = this.drawer.section) {
-    this.drawer = { open: true, section, auto: false };
+    if (this.panelVisible) {
+      this.drawer = { ...this.drawer, section };
+      this.focusRequest += 1;
+    } else this.drawer = { open: true, section, auto: false };
   }
   closeDrawer() {
     this.drawer = { ...this.drawer, open: false, auto: false };
@@ -431,20 +485,23 @@ export class RikaSession {
 
   /** Q20 A: a brain dump's plan opens the drawer by itself too, and deciding it closes what that opened. */
   private plan(plan: RikaPlan) {
-    this.upsert({ kind: "plan", ...plan });
-    if (plan.status === "pending") this.openAuto();
+    this.upsert({ kind: "plan", ...plan, created_at: askedAt(plan, this.message(plan.message_id)) });
+    // A plan or a date question answers something you just asked: it opens the drawer. A
+    // check-in is Rika's own question; it waits in the conversation and never opens anything.
+    if (plan.status === "pending" && plan.plan_kind !== "checkin") this.openAuto();
     else this.releaseAuto();
   }
 
   private openAuto() {
-    if (!this.drawer.open) this.drawer = { open: true, section: "conversation", auto: true };
+    if (!this.drawer.open && !this.panelVisible) this.drawer = { open: true, section: "conversation", auto: true };
     else if (this.drawer.section !== "conversation") this.drawer = { ...this.drawer, section: "conversation" };
   }
 
   /** Closes a drawer that opened by itself once nothing in it waits for the user. */
   private releaseAuto() {
     const dumping = this.listening && this.voice.mode === "dump";
-    if (this.drawer.open && this.drawer.auto && !this.pending.length && !this.pendingPlans.length && !dumping) this.closeDrawer();
+    const asked = this.pendingPlans.some((plan) => plan.plan_kind !== "checkin");
+    if (this.drawer.open && this.drawer.auto && !this.pending.length && !asked && !dumping) this.closeDrawer();
   }
 
   /** Q6 C: a reply to something said aloud is spoken back as a short summary, when a local engine can. */
@@ -477,6 +534,8 @@ export class RikaSession {
 
   /** One toast per live reply, newest last; finished replies count down. */
   private raise(message: Id) {
+    // The home panel shows the reply itself.
+    if (this.panelVisible) return;
     const key = String(message);
     if (this.toasts.some((toast) => toast.message === key)) {
       this.toasts = this.toasts.map((toast) => (toast.message === key ? { ...toast, left: RIKA_TOAST_MS } : toast));

@@ -22,7 +22,9 @@ Only core confirmation rules record submissions::
                                  authorize_authentication?, authorize_recovery_ai?} -> status
     POST /api/automation/restart-firefox  {confirmed: true} -> status (phase restarting, then
         restarted or failed): a restart_firefox: handoff's button; refused while a worker runs
-    GET  /api/apply/health  -> kitty.core.apply.health.report (read-only attempt records)
+
+GET /api/apply/health and POST /api/questions (logging a question) are answered by
+rika-server (server/src/insights).
 """
 from __future__ import annotations
 
@@ -34,7 +36,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from types import SimpleNamespace
 
-from kitty import web_effects
+from kitty import web_auth
 from kitty.core import effects, form_questions, jobs, questions
 from kitty.config import AuthenticationSettings, _authentication_origin
 from kitty.core.apply import autofill, filler
@@ -517,7 +519,7 @@ def propose(app, conn, body: dict) -> dict:
     """Propose the plan for review: the public plan and its effect's id, digest and expiry."""
     ctx = Review(SimpleNamespace(config=copy.deepcopy(app.config), settings=app.settings), conn)
     try:
-        effect = effects.propose(conn, PREPARE_APPLICATIONS.name, body, actor=web_effects.user(app), ctx=ctx)
+        effect = effects.propose(conn, PREPARE_APPLICATIONS.name, body, actor=web_auth.window_user(app), ctx=ctx)
     except effects.EffectError as exc:
         raise _error(exc.status, str(exc)) from None
     plan = {key: value for key, value in ctx.plan.items() if not key.startswith("_")}
@@ -561,7 +563,7 @@ def approve(app, conn, body: dict) -> Approved:
     ctx = Review(SimpleNamespace(config=copy.deepcopy(app.config), settings=app.settings), conn)
     try:
         effect, result = effects.approve_and_execute(conn, stored.id, presented, kinds={PREPARE_APPLICATIONS.name},
-                                                     actor=web_effects.user(app), ctx=ctx, options=options)
+                                                     actor=web_auth.window_user(app), ctx=ctx, options=options)
     except effects.Refused as exc:
         from kitty.web_server import APIError
         raise APIError(409, filler.APPROVAL_CHANGED,
@@ -577,10 +579,6 @@ def get(app, conn, path: str, query: dict) -> dict | None:
     if path == "/api/automation/status":
         _keys(query, set())
         return app.automation.snapshot()
-    if path == "/api/apply/health":
-        _keys(query, set())
-        from kitty.core.apply import health
-        return health.report(conn)
     if path == "/api/questions":
         _keys(query, {"kind", "job_id", "min_jobs"})
         from kitty.web_server import _integer
@@ -636,23 +634,6 @@ def post(app, conn, path: str, body: dict) -> dict | None:
         with transaction(conn):
             count = questions.refresh_answered_flags(conn, app.config)
         return {"answered": count}
-    if path == "/api/questions":
-        _keys(body, {"text", "job_id"})
-        text = body.get("text")
-        if not isinstance(text, str) or not text.strip() or len(text) > 4000 or "\x00" in text:
-            raise _error(400, "Question must contain 1–4000 characters")
-        try:
-            text.encode("utf-8")
-        except UnicodeError:
-            raise _error(400, "Question must be valid Unicode") from None
-        job_id = body.get("job_id")
-        if job_id is not None:
-            _positive(job_id, "job_id", 2**53 - 1)
-            if jobs.get_job(conn, job_id) is None:
-                raise _error(404, "Job not found")
-        with transaction(conn):
-            question = questions.log_question(conn, text, job_id=job_id)
-        return {"id": question.id}
     if path == "/api/questions/collect":
         _keys(body, {"confirmed", "limit", "states", "tiers"})
         _confirm(app, body)
