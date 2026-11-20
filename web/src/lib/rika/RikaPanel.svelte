@@ -2,6 +2,7 @@
   import { untrack, type Snippet } from "svelte";
   import HomeWidget from "../HomeWidget.svelte";
   import RikaConversation from "./RikaConversation.svelte";
+  import RikaFocus from "./RikaFocus.svelte";
   import RikaInput from "./RikaInput.svelte";
   import { rika } from "./session.svelte";
 
@@ -11,7 +12,8 @@
    * drawer and the reply toasts: Ctrl + J, Ctrl K and anything that would open the drawer
    * focus its field or switch its section instead. `lead` is home's own line above the
    * conversation (the template offer); `tail` puts controls at the right of its title row
-   * (the side panel's Close, rika/RikaDock.svelte).
+   * (the side panel's Close, rika/RikaDock.svelte). Above the field: what is open, shared with
+   * her next message, and a few things to ask about it (RikaFocus.svelte).
    */
   let { id, active, lead, tail }: { id: string; active: boolean; lead?: Snippet; tail?: Snippet } = $props();
   let field = $state<RikaInput>();
@@ -36,7 +38,7 @@
     <div class="scroll">
       <RikaConversation brief={active} />
     </div>
-    <div class="foot"><RikaInput bind:this={field} /></div>
+    <div class="foot"><RikaFocus /><RikaInput bind:this={field} /></div>
   </HomeWidget>
 </div>
 

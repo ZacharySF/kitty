@@ -43,6 +43,8 @@
   import Loader from "./Loader.svelte";
   // The Brain is the brain module's download (its pack): loaded on demand, never in the base.
   import type BrainStageView from "./brain/BrainStage.svelte";
+  import AskRika from "./rika/AskRika.svelte";
+  import { useFocus } from "./rika/focus.svelte";
 
   const pane = useWorkspaceContext();
 
@@ -123,6 +125,8 @@
   });
   const graph = $derived(atlasGraph(sections, hidden, visibleRelations(enabled), itemCounts));
   const current = $derived(selected?.id.startsWith("view:") ? (selected.id.slice(5) as AnyView) : null);
+  useFocus(() => look === "2d" && selected ? { kind: "brain_node", id: selected.id, title: selected.label,
+    detail: [selected.group, selected.kind, selected.detail].filter(Boolean).join(" · ") || undefined } : null);
 
   function sectionNode(view: AnyView) {
     return graph.nodes.find((node) => node.id === `view:${view}`) ?? null;
@@ -326,6 +330,7 @@
 {#snippet lookSwitch()}
   <div class="corner" data-home-corner>
     {#if lookError}<span class="look-error" role="alert">{lookError}</span>{/if}
+    <AskRika />
     <Select
       label="Look"
       kind="segments"

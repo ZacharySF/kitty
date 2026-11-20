@@ -14,6 +14,7 @@
   import Select, { type SelectOption } from "./ui/Select.svelte";
   import Popover from "./ui/Popover.svelte";
   import EditDrawer from "./ui/EditDrawer.svelte";
+  import AskRika from "./rika/AskRika.svelte";
   let {
     view,
     workspace,
@@ -609,6 +610,7 @@
           {#if view !== "jobs" && view !== "inbox" && !marked.length}
             <PostingAvailability jobIds={jobs.map(job => job.id)} label="Check they are still open" demo={workspace?.demo ?? true} oncomplete={checkedAvailability} />
           {/if}
+          <AskRika />
           <button type="button" class="text-button" title="Prepare another group or check Firefox progress" onclick={() => (preparationOpen = true)}>Progress</button>
           {#if view === "queue" && !marked.length}
             <button type="button" class="pill" disabled={busy || loading || (selected === null && !jobs[cursor])} onclick={prepareSelected}

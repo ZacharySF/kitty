@@ -51,10 +51,11 @@ def test_every_tool_declares_a_closed_documented_schema_and_an_honest_effect():
                 validate(schema, {})
     # The spec's approval list (Q9): sending email, deleting without Trash, settings and
     # modules, starting a worker agent and shell commands all wait for a tap. So do the
-    # Resume Workshop's public-web company research and preparing a cloud edit payload.
+    # Resume Workshop's public-web company research and preparing a cloud edit payload, and
+    # changing an application's status (applicant data).
     assert {name for name, tool in REGISTRY.items() if tool.effect == "outward"} == {
         "delete_page", "set_modules", "start_worker", "run_command", "send_reply",
-        "research_resume_company", "prepare_resume_edit"}
+        "research_resume_company", "prepare_resume_edit", "update_application_status"}
 
 
 @pytest.mark.parametrize("args", [

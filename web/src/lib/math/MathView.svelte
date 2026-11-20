@@ -25,6 +25,8 @@
   import TextbookCard from "./TextbookCard.svelte";
   import TopicDetail from "./TopicDetail.svelte";
   import TopicGraph from "./TopicGraph.svelte";
+  import AskRika from "../rika/AskRika.svelte";
+  import { useFocus } from "../rika/focus.svelte";
 
   /**
    * rika! math (design Q5 A): focus-first like Study. One centred problem, lesson or
@@ -96,6 +98,9 @@
   const item = $derived(mixed?.items[mixedAt]);
   const due = $derived((topics ?? []).filter((topic) => isDue(topic, now)).length);
   const selectedTopic = $derived(byId[selected]);
+  const focusTopic = $derived(mode === "lessons" && lessonTopic ? byId[lessonTopic] : selectedTopic);
+  useFocus(() => focusTopic ? { kind: "math_topic", id: focusTopic.id, title: focusTopic.title,
+    detail: `${MODES.find((item) => item.id === mode)?.label ?? mode} · ${focusTopic.state}${typeof focusTopic.progress === "number" ? ` · ${Math.round(focusTopic.progress * 100)}% learned` : ""}` } : null);
   const lessonChoices = $derived((topics ?? []).filter((topic) => topic.state === "learning" || topic.state === "ready"));
   const focusActive = $derived(focus !== null && focus.timer.status !== "idle");
   const focusLeft = $derived(
@@ -286,6 +291,7 @@
         · {clock(focusLeft)}{focus.timer.status === "paused" ? " paused" : ""}
       </span>
     {/if}
+    <AskRika push />
   </header>
   {#if error}<p class="error" role="alert">{error}<button class="dismiss" aria-label="Dismiss message" onclick={() => (error = "")}>×</button></p>{/if}
 

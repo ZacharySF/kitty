@@ -25,6 +25,8 @@
   import QuickUnderstood from "./calendar/QuickUnderstood.svelte";
   import { parseQuickEvent, type QuickEvent } from "./calendar/quickParse";
   import { notifier } from "./notifications.svelte";
+  import AskRika from "./rika/AskRika.svelte";
+  import { useFocus } from "./rika/focus.svelte";
   import CalendarIntegrations from "./calendar/CalendarIntegrations.svelte";
   import EventDelete from "./calendar/EventDelete.svelte";
   import { deleteBody, deleteTarget, eventKey, lockedCalendars } from "./calendar/eventDelete";
@@ -257,6 +259,10 @@
           ? dateTitle(anchor, { weekday: "long", month: "long", day: "numeric", year: "numeric" })
           : spanTitle(firstDay, days[days.length - 1]),
   );
+  useFocus(() => editor?.id
+    ? { kind: "calendar_event", id: editor.id, title: editor.title || "Untitled event",
+        detail: [editor.all_day ? `${editor.start.slice(0, 10)} all day` : `${editor.start} to ${editor.end}`, editor.location].filter(Boolean).join(" · ") }
+    : section === "calendar" ? { kind: "calendar_range", title: rangeHeading, detail: `${view} view, ${firstDay} to ${days[days.length - 1] ?? firstDay}` } : null);
   /** "Nov 9 – 15, 2026", naming the month and the year again only where they change. */
   function spanTitle(from: string, to: string) {
     const start = dateTitle(from, { month: "short", day: "numeric", ...(from.slice(0, 4) === to.slice(0, 4) ? {} : { year: "numeric" }) });
@@ -1185,6 +1191,7 @@
       {#if undoId}{@const id = undoId}<Button size="sm" disabled={pending > 0} onclick={() => undo(id)}>Undo last change</Button>{/if}
       <label class="calendar-search"><span class="sr-only">Search</span><input type="search" bind:value={search}
         aria-label="Search" placeholder="Search events, tasks or tags" /></label>
+      <AskRika />
     </div>
   </header>
   {#if error}<div role="alert" class="error">

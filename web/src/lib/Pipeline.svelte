@@ -6,6 +6,7 @@
   import Loader from "./Loader.svelte";
   import { beginDrag } from "./pointerDrag";
   import RikaPanel from "./rika/RikaPanel.svelte";
+  import AskRika from "./rika/AskRika.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
   const pane = useWorkspaceContext();
   let {
@@ -305,6 +306,7 @@
               .join(" · ")}</span
           ><button class="pill" onclick={undo}>Undo</button>
         </div>{/if}
+      <AskRika />
       <button class="button" onclick={onmail}>Review mail proposals</button>
       <button class="button" disabled={loading} onclick={() => load()}>Refresh</button>
     </div>
@@ -377,6 +379,7 @@
 {#if selected !== null}{#key selected}<JobDetail
       bind:this={detail}
       id={selected}
+      focus="application"
       initialCommand={pending}
       demo={workspace?.demo ?? true}
       onclose={() => (selected = null)}

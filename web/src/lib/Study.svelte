@@ -21,6 +21,8 @@
   import TimerPanel from "./study/TimerPanel.svelte";
   import type { Collection, Guide, GuideState, Item, Session, Settings, Workspace } from "./study/types";
   import Select from "./ui/Select.svelte";
+  import AskRika from "./rika/AskRika.svelte";
+  import { useFocus } from "./rika/focus.svelte";
 
   let { revision = 0, demo = false }: { revision?: number; demo?: boolean } =
     $props();
@@ -66,6 +68,9 @@
   let historyPeriod = $state<"week" | "month">("week");
   let historyDate = $state("");
   let subjectId = $state("");
+  const focusSubject = $derived(subjectId ? data?.subjects.find((item) => String(item.id) === subjectId) : undefined);
+  useFocus(() => focusSubject && data ? { kind: "study_subject", id: focusSubject.id, title: focusSubject.name || focusSubject.title || "Subject",
+    detail: `${data.tasks.filter((item) => item.subject_id === focusSubject.id && !item.done).length} open tasks · timer ${data.timer.status}` } : null);
   let projectId = $state("");
   let targetId = $state("");
   let notes = $state("");
@@ -529,6 +534,7 @@
         {#each TABS as item (item.id)}<Button size="sm" aria-pressed={tab === item.id} onclick={() => (tab = item.id)}>{item.label}</Button>{/each}
       </nav>
     {/if}
+    <AskRika push />
   </header>
   {#if error}<p class="error" role="alert">{error}<button class="dismiss-message" aria-label="Dismiss message" onclick={() => (error = "")}>×</button></p>{/if}
   {#if notice}<p class="notice" role="status">{notice}<button class="dismiss-message" aria-label="Dismiss message" onclick={() => (notice = "")}>×</button></p>{/if}

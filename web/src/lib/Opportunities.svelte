@@ -11,6 +11,8 @@
   import OverflowMenu, { type OverflowItem } from "./ui/OverflowMenu.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
   import type { Snippet } from "svelte";
+  import AskRika from "./rika/AskRika.svelte";
+  import { useFocus } from "./rika/focus.svelte";
   /**
    * Q21: map first. The category → source → opportunity map fills the page's one
    * surface; Filters, List, Add (a quick-add popover) and ⋯ float over it in one row;
@@ -149,6 +151,10 @@
   let selected = $state<number[]>([]),
     focused = $state<number | null>(null),
     detail = $state<Opportunity | null>(null);
+  const focusOpportunity = $derived(detail ?? items.find((item) => item.id === focused) ?? null);
+  useFocus(() => focusOpportunity ? { kind: "opportunity", id: focusOpportunity.id, title: focusOpportunity.title,
+    detail: [focusOpportunity.category, focusOpportunity.location, focusOpportunity.deadline ? `deadline ${focusOpportunity.deadline}` : "", focusOpportunity.status]
+      .filter(Boolean).join(" · ") } : null);
   let search = $state(""),
     source = $state(""),
     category = $state(""),
@@ -661,6 +667,7 @@
         </div>
         {#if filterCount}<div class="filter-foot"><button type="button" class="text-button" onclick={clearFilters}>Clear filters</button></div>{/if}
       </Popover>
+      <AskRika />
       <button type="button" class="pill" aria-pressed={listOpen} onclick={() => showList(!listOpen)} title="Show the list beside the map"
         ><Icon name="menu" size={14} />List<span class="count">{items.length}</span></button
       >

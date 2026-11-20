@@ -622,6 +622,24 @@ and opening it marks the brief seen.
 When Rika opens a page ("open calendar"), the workspace tab navigates there; when an
 agent has no Tern window to focus, its card opens the herdr view.
 
+**Rika beside any page.** **Ctrl+R** (from anywhere but a terminal) opens Rika's panel
+on the right of the page you are on, and the page narrows beside it; Ctrl+R again,
+**Escape** or **Close** puts it away. Pages with Rika's panel already on them (home, the
+Rika page) focus her field instead. Every module also has an **Ask Rika** button in its
+header row that opens the same panel. **Rika knows what you are looking at.** Each
+request you send says which view is open and, when the page has one open, which item:
+the note page, calendar week or event, deck, study subject, math topic, job or
+application, resume, document, opportunity, mind map, goal, atlas node, quick note or
+reminder. It sends the view, the item's kind, its id, its name and a short summary such
+as "3 cards due", and nothing else from the page; Rika uses them only as context and
+reads "this" and "here" as that item. Above the field, **Looking at · <title>** names
+it, with two or three things to ask about it (for a note page **Summarize this page**
+or **Make flashcards from this page**; for a deck **Quiz me on this deck**); press one
+to send it. Press **×** on
+the chip and your next message goes without the item (the chip says **Not sharing**
+until then, and **Share** takes it back). On home with nothing open and on the Rika
+page nothing is sent.
+
 **Talk to Rika.** Voice is the **voice** module's (its pack holds the speech engine);
 without it Rika is text only: Space types and there is no Brain dump. Hold **Space** in
 Rika's field for at least 0.3 s and speak;
@@ -1994,6 +2012,33 @@ its panel on home or its drawer (Ctrl+J), and it does the work through the app's
   **Undo**. Calendar undo uses the calendar's own history and mind-map undo uses
   the map's own undo snapshot. Undo refuses, and keeps the record, when you edited
   it since.
+- **Every module.** Rika can look into every workspace module: list your flashcard
+  decks and quiz you on due cards in chat (reviews still happen in Flashcards), fix a
+  card, show the week's events and open tasks, list study subjects with open tasks and
+  exams, log study time you already did, report math progress and what to practise
+  next, jot a quick note, find and read documents (text only when notes may go to AI),
+  list opportunities, find anything in the Brain, and open the Brain, Math and Rika
+  views.
+- **Job search.** With ApplyAI on, Rika can list and read your jobs (`list_jobs`,
+  `read_job`), your applications and pipeline (`list_applications`,
+  `pipeline_summary`) and job-search reminders due soon (`list_reminders`), queue,
+  skip or star a job as the job list does (with Undo), and compare a posting's skills
+  with your resume and confirmed Workshop facts (`match_job_to_resume`, only after you
+  allow hosted resume editing). Changing an application's status
+  (`update_application_status`) waits for your approval; Rika never applies, records a
+  submission, fills a form or contacts a company.
+- **Career memory.** With ApplyAI on, Rika learns from the postings you save, queue,
+  star, apply to or skip (applied and interviews count most, skips count against,
+  older activity fades) and from the Resume Workshop edits you accept or reject, all
+  on this device without a model call. Rika's page → Memory → Career memory shows the
+  skills those postings keep asking for (larger when they count more, solid when a
+  confirmed Workshop fact backs one; open one to see its postings), the kinds of jobs
+  you keep choosing, your edit habits and notes you add with "Add something to
+  remember"; pin an item to keep it first, or forget it for good. Rika reads it
+  through her `career_memory` tool when recommending jobs, and every Workshop
+  tailoring preview includes it (forgotten items left out) as patterns, never as
+  facts about you; the Workshop's Tailor tab shows the top five skills under "Rika
+  remembers".
 - **What waits for one tap.** Rika asks first, and the reply pauses until you
   decide, before it:
   - deletes anything that has no Trash (note pages);
@@ -2009,11 +2054,14 @@ its panel on home or its drawer (Ctrl+J), and it does the work through the app's
   maximum cost in the same ledger as the reviewed requests. It is sent with those
   prices as the provider's ceiling, with no fallbacks and no retries. Providers
   must decline data collection. What you ask Rika is sent, along with what its
-  tools return for that request. Note text is included only while **Allow
+  tools return for that request and what you are looking at (the view, and the open
+  item's kind, id, title and short detail; × on the **Looking at** chip leaves the
+  item out of the next message). Note text is included only while **Allow
   selected-text AI sharing** (Notes → Privacy & storage) is on: then Rika can read
   the notes a request needs, never whole notebooks at once, and selected-text
   requests work as before; while it is off, Rika gets titles and ids only. Text that
-  tools return is treated as data, never as instructions.
+  tools return, and the titles of what you are looking at, are treated as data, never
+  as instructions.
 - **Voice, on this computer.** Speech-to-text is [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
   (OpenAI's multilingual Whisper, CTranslate2 int8 on the CPU) inside rika!'s own
   backend; audio never leaves the machine. While you talk the page streams 16 kHz

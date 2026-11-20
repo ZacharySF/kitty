@@ -325,3 +325,29 @@ def test_rika_goals_mail_and_memory_tables(tmp_path):
         assert conn.execute("SELECT count(*) FROM goal_matches").fetchone()[0] == 0
     finally:
         conn.close()
+
+
+def test_rika_learnings_table_keeps_kinds_json_and_one_row_per_key(tmp_path):
+    """065: Rika's career memory and its one-row refresh signature."""
+    import sqlite3
+
+    conn = connect(tmp_path / "learnings.sqlite")
+    try:
+        migrate(conn)
+        conn.execute("INSERT INTO rika_learnings(kind,key,text,created_at,updated_at) VALUES('posting_skill','Python','Python','t','t')")
+        row = conn.execute("SELECT weight,evidence,detail,pinned,forgotten FROM rika_learnings").fetchone()
+        assert tuple(row) == (0, "[]", "{}", 0, 0)
+        conn.execute("INSERT INTO rika_learning_state(id,signature,refreshed_at) VALUES(1,'s','t')")
+        for statement in (
+            "INSERT INTO rika_learnings(kind,key,text,created_at,updated_at) VALUES('posting_skill','Python','again','t','t')",
+            "INSERT INTO rika_learnings(kind,key,text,created_at,updated_at) VALUES('hunch','x','x','t','t')",
+            "INSERT INTO rika_learnings(kind,key,text,created_at,updated_at) VALUES('note','n','  ','t','t')",
+            "INSERT INTO rika_learnings(kind,key,text,evidence,created_at,updated_at) VALUES('note','m','x','{}','t','t')",
+            "INSERT INTO rika_learnings(kind,key,text,detail,created_at,updated_at) VALUES('note','o','x','[]','t','t')",
+            "INSERT INTO rika_learnings(kind,key,text,pinned,created_at,updated_at) VALUES('note','p','x',2,'t','t')",
+            "INSERT INTO rika_learning_state(id,signature,refreshed_at) VALUES(2,'s','t')",
+        ):
+            with pytest.raises(sqlite3.IntegrityError):
+                conn.execute(statement)
+    finally:
+        conn.close()

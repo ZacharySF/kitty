@@ -36,6 +36,7 @@
   import QuickCard from "./lib/flashcards/QuickCard.svelte";
   import Rika from "./lib/rika/Rika.svelte";
   import { rika } from "./lib/rika/session.svelte";
+  import { onAskRika, setFocusView } from "./lib/rika/focus.svelte";
   import RikaDock from "./lib/rika/RikaDock.svelte";
   import { templatePicker } from "./lib/home/templatePicker.svelte";
   import { goalHash } from "./lib/goals/goals";
@@ -69,6 +70,12 @@
   let activeId = $state("workspace-1");
   const activeTab = $derived(tabs.find(tab => tab.id === activeId) ?? tabs[0]);
   const view = $derived(activeTab.view);
+  // What Rika is told the owner is looking at (rika/focus.svelte.ts): the view, before its open
+  // item reports itself (views' effects run after this pre-effect).
+  $effect.pre(() => {
+    const next = view;
+    untrack(() => setFocusView(next));
+  });
   const emptyTrail: WorkspaceTrail = { section: null, root: null, nodes: [] };
   const trail = $derived(activeTab.pane?.breadcrumbs() ?? emptyTrail);
   let workspace = $state<Bootstrap | null>(null);
@@ -449,13 +456,21 @@
     if (event.repeat || !workspace || document.querySelector('dialog[open], [role="dialog"][aria-modal="true"]')) return;
     event.stopPropagation();
     if (dockShown) void closeDock();
-    else if (ownRika) rika.showDrawer();
+    else if (ownRika || rika.panelVisible) rika.showDrawer();
     else void openDock();
   }
   $effect(() => {
     window.addEventListener("keydown", rikaChord, { capture: true });
     return () => window.removeEventListener("keydown", rikaChord, { capture: true });
   });
+  /** Any view's "Ask Rika" (rika/focus.svelte.ts `askRika`): Rika beside the page (or the page's own
+   *  Rika panel, as on home and Track), then the prompt if one came. */
+  $effect(() => onAskRika(async prompt => {
+    if (!workspace) return;
+    if (ownRika || rika.panelVisible) rika.showDrawer();
+    else await openDock();
+    if (prompt) await rika.send(prompt);
+  }));
   /** Ctrl + O: every tab as a card to pick from. Ctrl + Y: the theme carousel. */
   let overview = $state(false);
   let carousel = $state(false);

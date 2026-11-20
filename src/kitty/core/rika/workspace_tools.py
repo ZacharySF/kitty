@@ -22,7 +22,7 @@ from kitty.core.rika.tools import Context, Result, Tool, ToolError, boolean, int
 
 #: Views Rika may open (web/src/lib/workspace.ts) and the module that owns each.
 VIEWS: dict[str, str | None] = {
-    "today": None, "ai": None, "settings": None, "goals": None,
+    "today": None, "ai": None, "settings": None, "goals": None, "rika": None, "brain": "brain", "math": "math",
     "calendar": "workspace", "opportunities": "workspace", "study": "workspace", "learnharness": "learnharness",
     "flashcards": "workspace", "notes": "workspace", "quick-notes": "workspace", "documents": "workspace",
     "schema": "workspace",
@@ -39,7 +39,8 @@ VIEW_ALIASES = {
     "maps": "schema", "canvas": "notes", "notes": "notes", "cards": "flashcards", "terminal": "tern",
     "agent skills": "agent-skills", "all agent skills": "agent-skills",
     "jobs": "jobs", "applications": "pipeline", "documents": "documents", "pdf": "documents", "goal": "goals",
-    "resume workshop": "workshop", "resume editor": "workshop",
+    "resume workshop": "workshop", "resume editor": "workshop", "maths": "math", "mathematics": "math",
+    "math practice": "math", "rika chat": "rika", "chat": "rika",
 }
 #: Canvas defaults of a new sticky note, matching the Notes view's (web/src/lib/Notes.svelte).
 STICKY = {"color": "#e7dfef", "fill": "#fff2a8", "width": 3, "w": 240, "h": 180, "fontSize": 20}
@@ -604,11 +605,13 @@ def _undo_task_change(ctx: Context, undo: dict) -> None:
 # Navigation and search --------------------------------------------------------
 
 def view_for(name: str) -> str | None:
-    """The view id for a view id or spoken name."""
+    """The view id for a view id or spoken name, with or without "my" or "the"."""
     key = " ".join(name.casefold().replace("-", " ").split())
     if key.replace(" ", "-") in VIEWS:
         return key.replace(" ", "-")
-    return VIEW_ALIASES.get(key) or VIEW_ALIASES.get(key.removeprefix("my ").removeprefix("the "))
+    bare = key.removeprefix("my ").removeprefix("the ")
+    found = VIEW_ALIASES.get(key) or VIEW_ALIASES.get(bare)
+    return found or (bare.replace(" ", "-") if bare.replace(" ", "-") in VIEWS else None)
 
 
 def _open_view(ctx: Context, args: dict) -> Result:

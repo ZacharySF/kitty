@@ -9,6 +9,8 @@
   import { documentHTML } from './notesDocument';
   import { useWorkspaceContext } from './workspaceContext.svelte';
   import { onBlockChange } from './live';
+  import AskRika from './rika/AskRika.svelte';
+  import { useFocus } from './rika/focus.svelte';
   const pane = useWorkspaceContext();
   type Doc = {id: number; title: string; content: string; format: 'markdown' | 'text'; notebook_id: number | null; revision: number; updated_at: string};
   type Book = {id: number; title: string; folder_id: number | null};
@@ -36,6 +38,8 @@
   const lineCount = $derived(content.split('\n').length);
   const words = $derived(content.split(/\s+/).filter(word => /[\p{L}\p{N}]/u.test(word)).length);
   const status = $derived(id ? `Revision ${revision}${dirty ? ' · unsaved edits' : ' · saved'}` : `Not saved${dirty ? ' · unsaved edits' : ''}`);
+  useFocus(() => id ? { kind: 'document', id, title: title.trim() || 'Untitled document',
+    detail: `${format === 'markdown' ? 'Markdown' : 'Plain text'}${dirty ? ' · unsaved edits' : ''}` } : null);
   onMount(() => {
     baseline = signature;
     void load();
@@ -203,6 +207,7 @@
       <button type="button" aria-pressed={!rich} onclick={() => editing = 'source'}>Source</button>
       <button type="button" aria-pressed={rich} disabled={format !== 'markdown'} onclick={() => editing = 'rich'}>Rich text</button>
     </div>
+    <AskRika compact />
     <FullscreenButton class="pill icon-pill" />
     <Popover bind:open={configuring} placement="bottom-end" arrow={false}>
       {#snippet trigger(props)}<button {...props} type="button" class="pill icon-pill" aria-label="Document settings" title="Format and notes destination"><Icon name="settings" size={15} /></button>{/snippet}

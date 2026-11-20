@@ -4,7 +4,10 @@
   import Select from './ui/Select.svelte';
   import { api, ApiError, apiObjectUrl, downloadApi, type TaskRecord } from './api';
   import { workshop, taskResult, fileBase64, encodeText, decodeText, type WorkshopDoc, type WorkshopIndex, type Revision, type Compile, type Settings, type Fact, type Proposal, type Preview, type Research, type BatchIndex, type AtsResult } from './workshopApi';
-  let { onview }: { onview: (view: 'resumes') => void } = $props();
+  import AskRika from './rika/AskRika.svelte';
+  import { useFocus } from './rika/focus.svelte';
+  import RikaRemembers from './rika/RikaRemembers.svelte';
+  let { onview }: { onview: (view: 'resumes' | 'rika') => void } = $props();
   let index = $state<WorkshopIndex | null>(null), doc = $state<WorkshopDoc | null>(null);
   let source = $state(''), title = $state(''), assets = $state<Record<string,string>>({}), revisions = $state<Revision[]>([]);
   let error = $state(''), notice = $state(''), busy = $state(false), saving = $state(false), conflict = $state(false), loading = $state(true);
@@ -62,6 +65,8 @@
   const dirty = $derived(!!doc && (source !== doc.source || title !== doc.title || JSON.stringify(assets) !== JSON.stringify(doc.assets)));
   export function hasUnsavedChanges() { return dirty || saving; }
   const stale = $derived(!!compiled && (dirty || compiled.revision !== doc?.revision));
+  useFocus(() => doc ? { kind: 'resume_document', id: doc.id, title: title.trim() || doc.title,
+    detail: doc.kind === 'tailored' ? [doc.company, doc.role].filter(Boolean).join(' · ') || 'Tailored version' : 'Master resume' } : null);
   function message(cause: unknown) { return cause instanceof Error ? cause.message : String(cause); }
   async function act(work: () => Promise<void>) { busy = true; error = ''; notice = ''; try { await work(); } catch (cause) { if (!lifetime.signal.aborted) error = message(cause); } finally { busy = false; } }
   async function refresh() { index = await workshop.index(); if (!template) template = index.templates[0]?.id || ''; }
@@ -171,7 +176,8 @@
   <header class="top">
     <h1>Resume Workshop</h1>
     <span class="privacy" data-on={settings.enabled} title={settings.enabled ? 'Rika may send previewed, contact-redacted requests you confirm.' : 'Nothing leaves this computer.'}><i aria-hidden="true"></i>{settings.enabled ? 'Cloud help on' : 'Stays on this computer'}</span>
-    <button class="button ghost push" onclick={() => onview('resumes')}>Existing resumes library</button>
+    <AskRika push />
+    <button class="button ghost" onclick={() => onview('resumes')}>Existing resumes library</button>
   </header>
   {#if error}<p class="message error" role="alert">{error}</p>{/if}
   {#if notice}<p class="message" role="status">{notice}</p>{/if}
@@ -337,6 +343,7 @@
               {/if}
 
             {:else if tab === 'tailor'}
+              <RikaRemembers onopen={() => onview('rika')} />
               <div class="segmented" role="radiogroup" aria-label="Tailor mode">
                 <button role="radio" aria-checked={tailorMode === 'one'} onclick={() => tailorMode = 'one'}>This resume</button>
                 <button role="radio" aria-checked={tailorMode === 'many'} onclick={() => tailorMode = 'many'}>Many jobs at once</button>
