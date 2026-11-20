@@ -66,6 +66,7 @@
   let math: { handleKey: (event: KeyboardEvent) => boolean } | undefined = $state();
   let profile: { hasUnsavedChanges: () => boolean } | undefined = $state();
   let documents: { hasUnsavedChanges: () => boolean } | undefined = $state();
+  let workshop: { hasUnsavedChanges: () => boolean } | undefined = $state();
   let settings: { hasUnsavedChanges: () => boolean } | undefined = $state();
   let notes: {
     hasUnsavedChanges: () => boolean;
@@ -79,6 +80,7 @@
   export function hasUnsavedChanges(): boolean {
     if (view === "profile") return profile?.hasUnsavedChanges() ?? false;
     if (view === "documents") return documents?.hasUnsavedChanges() ?? false;
+    if (view === "workshop") return workshop?.hasUnsavedChanges() ?? false;
     if (view === "settings") return settings?.hasUnsavedChanges() ?? false;
     if (view === "notes") return notes?.hasUnsavedChanges() ?? false;
     if (view === "schema") return maps?.hasUnsavedChanges() ?? false;
@@ -207,6 +209,10 @@
   {:else if view === "reminders"}
     {#await import("./Reminders.svelte")}{@render pending()}{:then { default: Reminders }}
       <Reminders {onopenjob} onchange={onchange} />
+    {/await}
+  {:else if view === "workshop"}
+    {#await import("./ResumeWorkshop.svelte")}{@render pending()}{:then { default: ResumeWorkshop }}
+      <ResumeWorkshop bind:this={workshop} {onview} />
     {/await}
   {:else if view === "resumes"}
     <JobsNav {view} {onview} />

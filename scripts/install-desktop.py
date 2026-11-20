@@ -5,7 +5,7 @@ On NixOS invoke inside the build dependency shell. Only runtime library/schema
 settings are captured, never API keys, shell setup or a reference to the checkout.
 
 Loose files mirror the .deb layout under ``application/``: ``bin/kitty-workspace``,
-``bin/rika-server`` and the unpacked backend in ``libexec/kitty-workspace/kitty-web/``,
+``bin/rika-server``, ``bin/kitty-workshop`` (the Resume Workshop engine) and the unpacked backend in ``libexec/kitty-workspace/kitty-web/``,
 where the desktop binary looks for them (desktop/src/main.rs ``sidecar`` and ``BACKEND``).
 herdr, like every module's payload, is a pack the app downloads (server/src/packs.rs).
 """
@@ -99,23 +99,26 @@ def main() -> None:
     parser.add_argument("--appimage", type=Path, help="Install a signed published AppImage instead of loose build files")
     parser.add_argument("--backend", type=Path, help="Packaged backend directory (default: desktop/binaries/kitty-web)")
     parser.add_argument("--server", type=Path, help="rika-server front (default: sole desktop/binaries/rika-server-* file)")
+    parser.add_argument("--workshop", type=Path, help="Resume Workshop engine (default: sole desktop/binaries/kitty-workshop-* file)")
     parser.add_argument("--icon", type=Path, default=root / "desktop/icons/icon.png")
     parser.add_argument("--workspace", type=Path, help="Reuse this workspace; omitted means the native default")
     parser.add_argument("--appimage-runner", type=Path, help="Launch the AppImage through this runner (NixOS: appimage-run)")
     args = parser.parse_args()
-    if args.appimage is not None and (args.backend is not None or args.server is not None):
-        parser.error("--appimage excludes --backend and --server")
+    if args.appimage is not None and any(getattr(args, name) is not None for name in ("backend", "server", "workshop")):
+        parser.error("--appimage excludes --backend, --server and --workshop")
     if args.appimage is None:
         if args.backend is None:
             args.backend = root / "desktop/binaries/kitty-web"
-        for option, pattern, label in (("server", "rika-server-*", "staged rika-server"),):
+        for option, pattern, label in (("server", "rika-server-*", "staged rika-server"),
+                                       ("workshop", "kitty-workshop-*", "staged Resume Workshop engine")):
             if getattr(args, option) is None:
                 candidates = list((root / "desktop/binaries").glob(pattern))
                 if len(candidates) != 1:
                     parser.error(f"pass --{option} when there is not exactly one {label}")
                 setattr(args, option, candidates[0])
     executables = ([(args.appimage, "kitty.AppImage")] if args.appimage is not None else
-                   [(args.binary, "bin/kitty-workspace"), (args.server, "bin/rika-server")])
+                   [(args.binary, "bin/kitty-workspace"), (args.server, "bin/rika-server"),
+                    (args.workshop, "bin/kitty-workshop")])
     for source in [*(source for source, _ in executables), args.icon]:
         if not source.is_file():
             parser.error(f"missing build artifact: {source}")

@@ -44,6 +44,12 @@ jobs:
         # Ubuntu 24.04's AppArmor default makes Chrome abort in its zygote; the
         # resume PDF renderer tests launch the runner's Chrome.
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test and build the Resume Workshop engine
+        # The workshop tests drive the real Rust engine binary.
+        run: |
+          cargo test --locked --manifest-path workshop-engine/Cargo.toml
+          cargo build --release --locked --manifest-path workshop-engine/Cargo.toml
       - name: Run pytest
         # Firefox ships on the runner image, so the browser-driving tests run too.
         run: uv run --locked pytest -q -n auto

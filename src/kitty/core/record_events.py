@@ -53,6 +53,8 @@ NON_CONTENT_PREFIXES = frozenset({
     # transactions: op_log is their history. Mirror frames live in memory only.
     "blocks", "tags", "mirror",
     "math",  # practice controls; math_attempts and math_sprints are their own history
+    # Resume Workshop: workshop_revisions, proposals and batch items are its own history.
+    "workshop", "workshop-ai", "workshop-batches",
 })
 #: Non-content routes inside content sections.
 SKIP = tuple(re.compile(pattern) for pattern in (

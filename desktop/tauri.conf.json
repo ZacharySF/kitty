@@ -20,7 +20,7 @@
     "category": "Productivity",
     "shortDescription": "Private local opportunities, learning and planning workspace",
     "icon": ["icons/icon.png", "icons/icon.ico"],
-    "externalBin": ["binaries/rika-server"],
+    "externalBin": ["binaries/rika-server", "binaries/kitty-workshop"],
     "resources": {
       "../third_party/grinstead-snell/LICENSE": "licenses/grinstead-snell/LICENSE",
       "../third_party/grinstead-snell/SOURCE.txt": "licenses/grinstead-snell/SOURCE.txt"

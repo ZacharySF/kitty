@@ -30,6 +30,9 @@ def test_install_launcher_preserves_workspace_and_runtime_environment(tmp_path):
     server.write_text('#!/bin/sh\nprintf "front started\\n"\n'
                       'exec "$(dirname "$0")/../libexec/kitty-workspace/kitty-web/kitty-web"\n')
     server.chmod(0o755)
+    workshop = build / "kitty-workshop-x86_64-unknown-linux-gnu"
+    workshop.write_text('#!/bin/sh\nprintf "workshop\\n"\n')
+    workshop.chmod(0o755)
     icon = build / "icon.png"
     icon.write_bytes(b"fixture icon")
     data = tmp_path / "user data"
@@ -49,7 +52,7 @@ def test_install_launcher_preserves_workspace_and_runtime_environment(tmp_path):
     env = os.environ | {"XDG_DATA_HOME": str(data), "XDG_BIN_HOME": str(tmp_path / "user bin"),
                         "LD_LIBRARY_PATH": "/fixture/nix/lib", "GST_PLUGIN_SYSTEM_PATH_1_0": "/fixture/nix/gstreamer"}
     result = subprocess.run([sys.executable, str(ROOT / "scripts/install-desktop.py"),
-                             "--binary", str(binary), "--backend", str(backend), "--server", str(server),
+                             "--binary", str(binary), "--backend", str(backend), "--server", str(server), "--workshop", str(workshop),
                              "--icon", str(icon), "--workspace", str(workspace)], env=env, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     entry = (data / "applications/com.zacharysf.kitty.desktop").read_text()
@@ -69,10 +72,13 @@ def test_install_launcher_preserves_workspace_and_runtime_environment(tmp_path):
     assert not (application / "bin/kitty-herdr").exists()
     installed_server = application / "bin/rika-server"
     assert installed_server.read_bytes() == server.read_bytes() and os.access(installed_server, os.X_OK)
+    # The desktop app runs the Resume Workshop's Rust engine only from beside its own executable.
+    installed_workshop = application / "bin/kitty-workshop"
+    assert installed_workshop.read_bytes() == workshop.read_bytes() and os.access(installed_workshop, os.X_OK)
     # Reinstalling swaps in a whole new backend directory and keeps the replaced one.
     (backend / "_internal/website.txt").write_text("new data")
     again = subprocess.run([sys.executable, str(ROOT / "scripts/install-desktop.py"),
-                            "--binary", str(binary), "--backend", str(backend), "--server", str(server),
+                            "--binary", str(binary), "--backend", str(backend), "--server", str(server), "--workshop", str(workshop),
                             "--icon", str(icon), "--workspace", str(workspace)], env=env, capture_output=True, text=True)
     assert again.returncode == 0, again.stderr
     assert (application / "libexec/kitty-workspace/kitty-web/_internal/website.txt").read_text() == "new data"
@@ -91,7 +97,7 @@ def test_install_without_workspace_uses_native_default(tmp_path):
     backend.mkdir()
     (backend / "kitty-web").write_bytes(binary.read_bytes())
     result = subprocess.run([sys.executable, str(ROOT / "scripts/install-desktop.py"), "--binary", str(binary),
-                             "--backend", str(backend), "--server", str(binary), "--icon", str(icon)],
+                             "--backend", str(backend), "--server", str(binary), "--workshop", str(binary), "--icon", str(icon)],
                             env=env, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     launch = subprocess.run([str(tmp_path / "bin/kitty-workspace")], env=env, capture_output=True, text=True)

@@ -132,6 +132,7 @@ ROUTE_MODULES: tuple[tuple[str, str], ...] = tuple(sorted((
         "/api/dashboard", "/api/job-options", "/api/jobs", "/api/pipeline", "/api/reminders",
         "/api/job-tools", "/api/automation", "/api/questions", "/api/resumes", "/api/profile",
         "/api/sources", "/api/finder", "/api/reports", "/api/mail", "/api/triage",
+        "/api/workshop", "/api/workshop-ai", "/api/workshop-batches",
         "/api/postings", "/api/schema/jobs", "/api/schema/import-jobs", "/api/atlas/sections/jobs")),
     *((prefix, "workspace") for prefix in (
         "/api/calendar", "/api/opportunities", "/api/study", "/api/flashcards", "/api/notes",
@@ -155,6 +156,7 @@ ROUTE_PACKS: tuple[tuple[str, str], ...] = (
 EXTENSIONS: tuple[tuple[str | None, str], ...] = (
     (None, "web_live"), (None, "web_build"),
     ("applyai", "web_jobs"), ("applyai", "web_automation"), ("applyai", "web_resumes"),
+    ("applyai", "web_workshop"), ("applyai", "web_workshop_ai"), ("applyai", "web_workshop_batches"),
     ("applyai", "web_profile"), ("applyai", "web_insights"), ("applyai", "web_apply_accounts"),
     ("workspace", "web_calendar"), ("workspace", "web_opportunities"), ("workspace", "web_study"),
     ("workspace", "web_notes"), ("workspace", "web_documents"),
@@ -539,7 +541,9 @@ class RequestHandler(BaseHTTPRequestHandler):
                 if path == "/api/desktop/command" and not self.headers.get_all("Origin", []):
                     raise APIError(403, "Missing local request origin")
                 self.server.app._no_query(query)
-                body = self._body()
+                # 16 MiB workshop assets grow to ~22 MiB in base64 JSON.
+                workshop_upload = path == "/api/workshop" or path.startswith("/api/workshop/")
+                body = self._body(maximum=24 * 1024 * 1024 if workshop_upload else MAX_BODY)
                 with self.server.app.mutation_lock:
                     with closing(connect(self.server.app.settings.db_path)) as conn:
                         result = self.server.app.mutate(conn, path, body)
@@ -601,11 +605,11 @@ class RequestHandler(BaseHTTPRequestHandler):
                 return
         raise APIError(404, "API route not found")
 
-    def _body(self) -> dict:
+    def _body(self, *, maximum: int = MAX_BODY) -> dict:
         lengths = self.headers.get_all("Content-Length", [])
         if self.headers.get_all("Transfer-Encoding") or len(lengths) != 1:
             raise APIError(400, "A single Content-Length is required")
-        length = _integer(lengths[0], "Content-Length", 1, MAX_BODY)
+        length = _integer(lengths[0], "Content-Length", 1, maximum)
         raw = self.rfile.read(length)
         if len(raw) != length:
             raise APIError(400, "Incomplete JSON body")
@@ -872,7 +876,7 @@ def main() -> None:
             example_dir = root / "config"
             if not (example_dir / "tracks.yaml.example").is_file():
                 example_dir = Path(__file__).resolve().parents[2] / "config"
-            for name in ("profile", "tracks", "sources", "watchlist", "answers", "views"):
+            for name in ("profile", "tracks", "sources", "watchlist", "answers", "views", "resume_terms"):
                 shutil.copyfile(example_dir / f"{name}.yaml.example", config_dir / f"{name}.yaml")
             # The demo shows every module, the Brain too: a source checkout's website carries
             # its pack, and without it the home says how to download it.

@@ -34,6 +34,9 @@ uv run --locked --with pyinstaller==6.16.0 python desktop/package_backend.py
 cargo build --release --locked --manifest-path server/Cargo.toml
 triple="$(rustc -vV | sed -n 's/^host: //p')"
 install -m 0755 server/target/release/rika-server "desktop/binaries/rika-server-$triple"
+# The Resume Workshop's Rust engine: sandboxed compiles, PDF inspection and imports.
+cargo build --release --locked --manifest-path workshop-engine/Cargo.toml
+install -D -m 0755 workshop-engine/target/release/kitty-workshop "desktop/binaries/kitty-workshop-$triple"
 # CI delegates the native build/sign/upload to the official Tauri action.
 if [ "$prepare_only" = true ]; then
   exit 0

@@ -283,6 +283,10 @@ fn start_backend(root: &Path, safe: bool) -> Result<Started, Box<dyn std::error:
     // The Terminal module runs only rika!'s pinned herdr, never one from the environment:
     // rika-server hands the worker the signed `herdr` pack's binary (server/src/packs.rs).
     command.env_remove("KITTY_HERDR");
+    // The Resume Workshop compiles only through the bundled engine; rika-server passes the
+    // variable on to the worker it starts.
+    command.env_remove("KITTY_WORKSHOP");
+    if let Some(engine) = sidecar(directory, "kitty-workshop", staging.as_deref()) { command.env("KITTY_WORKSHOP", engine); }
     command.args(front_arguments(&binary, root, safe));
     let child = command
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
