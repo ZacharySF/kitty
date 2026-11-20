@@ -10,6 +10,8 @@
   import GoalDetail from "./GoalDetail.svelte";
   import GoalForm from "./GoalForm.svelte";
   import { daysLeftLabel, goalFromHash, goalHash, percent, statusLabel, type Goal, type Id, type LinkKind } from "./goals";
+  import AskRika from "../rika/AskRika.svelte";
+  import { useFocus } from "../rika/focus.svelte";
 
   /**
    * Goals (docs/rika-design.md Q14 A): first-class goals with a why, a target date and
@@ -23,6 +25,8 @@
   let goals = $state<Goal[] | null>(null);
   let selected = $state<string | null>(goalFromHash(location.hash));
   let detail = $state<Goal | null>(null);
+  useFocus(() => detail ? { kind: "goal", id: detail.id, title: detail.title,
+    detail: [statusLabel(detail.status), `${percent(detail.progress)}% done`, daysLeftLabel(detail.days_left), `${detail.links_count} linked`].filter(Boolean).join(" · ") } : null);
   let error = $state("");
   /** The create/edit drawer: `goal` null creates. */
   let editor = $state<{ goal: Goal | null } | null>(null);
@@ -117,6 +121,7 @@
         <span class="eyebrow">Plan</span>
         <h2>Goals{#if goals?.length}<span class="count-pill">{goals.length}</span>{/if}</h2>
       </div>
+      <AskRika push />
       <button type="button" class="pill primary" onclick={() => (editor = { goal: null })}><Icon name="plus" size={13} />New goal</button>
     </header>
     {#if !goals}

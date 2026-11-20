@@ -20,6 +20,8 @@
   import { focusContext } from "./panelFullscreen";
   import type { Crumb } from "./breadcrumb.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
+  import AskRika from "./rika/AskRika.svelte";
+  import { useFocus } from "./rika/focus.svelte";
   const pane = useWorkspaceContext();
   let { revision = 0, demo = false }: { revision?: number; demo?: boolean } =
     $props();
@@ -288,6 +290,8 @@
   let selectedType = $derived(overview?.types.find((t) => t.id === typeId));
   let selectedDeck = $derived(overview?.decks.find((deck) => deck.id === deckId));
   let scopeLabel = $derived(selectedDeck?.name || "All decks");
+  useFocus(() => selectedDeck ? { kind: "deck", id: selectedDeck.id, title: selectedDeck.name,
+    detail: `${selectedDeck.due} due · ${selectedDeck.new} new` } : null);
   let editorView = $derived(["editor", "deck-editor", "type-editor"].includes(view));
   /** Whether any deck can take a new card. */
   let canAdd = $derived(!!overview?.decks.some((deck) => !deck.archived));
@@ -1092,6 +1096,7 @@
       onchange={(next) => setScope(Number(next))} oncreate={(name) => editDeck(null, name)} createAlways
       createLabel={(name) => (name ? `New deck “${name}”` : "New deck")} /></span>{/if}
     {#if !editorView}<div class="toolbar primary-actions">
+      <AskRika />
       <Button size="sm" onclick={quickCard} disabled={!overview || busy || !overview.decks.some(deck => !deck.archived)} title="New card · N"
         >New card <kbd aria-hidden="true">N</kbd></Button>
       <Button intent="primary" onclick={reviewDue} disabled={!overview || busy || !overview.stats.total}>Review due</Button>

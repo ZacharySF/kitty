@@ -17,6 +17,8 @@
   import EditDrawer from "./ui/EditDrawer.svelte";
   import QuickAdd from "./ui/QuickAdd.svelte";
   import { fitHeight } from "./fitHeight";
+  import AskRika from "./rika/AskRika.svelte";
+  import { useFocus } from "./rika/focus.svelte";
   /**
    * The one mind-map editor (Q18 D, Q19 A): Notes' Map mode (embedded, the page's own map),
    * Study's Mind map tab and the Mind maps view (Ctrl K) all open it. Chrome: a slim top bar
@@ -1993,6 +1995,11 @@
     const n = current?.graph.nodes.find(item => item.source?.kind === "subject");
     return n ? name(n) : "";
   });
+  // Inside Notes (Map mode) and Study the host reports its page or subject instead.
+  useFocus(() => !embedded && section === "schema" && current && view !== "network"
+    ? { kind: "map", id: current.id, title: current.title || "Untitled map",
+        detail: [current.mode, subjectName, `${current.graph.nodes.length} nodes`].filter(Boolean).join(" · ") }
+    : null);
   const TEMPLATES = ["Blank", "Lecture", "Chapter", "Exam review"].map(value => ({value, label: value}));
   const MODES = [{value: "study", label: "Study"}, {value: "general", label: "General"}, {value: "jobs", label: "Jobs"}];
   const KINDS: Record<string, string> = {topic: "Topic", class: "Study class", idea: "Idea", skill: "Skill or goal", company: "Company", job: "Job note", task: "Task"};
@@ -2094,6 +2101,7 @@
           {#each LAYOUTS as [id, text] (id)}<button type="button" role="menuitem" class="menu-item" onclick={() => { layoutOpen = false; arrange(id); }}>{text}</button>{/each}
         </Popover>
       {/if}
+      {#if section === "schema"}<AskRika />{/if}
       <OverflowMenu label="More map actions" items={mapActions} />
     </header>
   {/if}

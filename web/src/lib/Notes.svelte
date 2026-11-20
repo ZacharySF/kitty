@@ -26,6 +26,8 @@
   import { followMirrors, mirrors } from "./mirrorStore.svelte";
   import { buildStore, setPreferences } from "./build.svelte";
   import type { OutlineBlock } from "./BlockEditor.svelte";
+  import AskRika from "./rika/AskRika.svelte";
+  import { useFocus } from "./rika/focus.svelte";
   const pane = useWorkspaceContext();
   /** Q17/Q19: a page is written (Write), drawn (Canvas) or mapped in the one mind-map editor (Map). */
   type NoteMode = "text" | "canvas" | "map";
@@ -356,6 +358,8 @@
     if (days < 7) return `edited ${days} ${days === 1 ? "day" : "days"} ago`;
     return `edited ${new Date(at).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}`;
   });
+  useFocus(() => pageId ? { kind: "note_page", id: pageId, title: title.trim() || "Untitled",
+    detail: notebooks.find((book) => book.id === notebookId)?.title || undefined } : null);
   let doc = $state<CanvasDocument>(emptyDocument()),
     view = $state<Viewport>({ x: 0, y: 0, zoom: 1 });
   let tool = $state<Tool>("pen"),
@@ -1919,6 +1923,7 @@
       aria-label={mirrors.list.length ? `Mirror (${mirrors.list.length} live)` : "Mirror"}
       title="Mirror: the browser tab the rika! extension is mirroring, beside this page"
       onclick={()=>mirrorOpen=!mirrorOpen}><Icon name="external" size={15}/>{#if mirrors.list.length}<span class="mirror-live" aria-hidden="true"></span>{/if}</button>
+    <AskRika />
     <FullscreenButton />
     <OverflowMenu items={pageActions} label="More page actions" />
   </header>

@@ -1,5 +1,7 @@
 import { api, socketProtocols } from "../api";
 import { activeModules } from "../modules.svelte";
+import { isView } from "../workspace";
+import { currentContext, focusSent } from "./focus.svelte";
 import { notifier } from "../notifications.svelte";
 import { NOTICE_EVENT, sendSystem } from "../systemNotify";
 import { Mic, MicError } from "./mic";
@@ -229,13 +231,18 @@ export class RikaSession {
     return () => this.listeners.delete(listener);
   }
 
+  /** Sends a request, with what the owner is looking at (focus.svelte.ts) as its `context`. */
   async send(text: string, tier?: RikaMessage["tier"], spoken = false) {
     const request = text.trim();
     if (!request) return false;
     const body: Record<string, unknown> = { text: request };
     if (tier) body.tier = tier;
     if (spoken) body.spoken = true;
-    return this.request("/rika/messages", body, request, spoken ? "voice" : "typed");
+    const context = currentContext(isView);
+    if (context) body.context = context;
+    const sent = await this.request("/rika/messages", body, request, spoken ? "voice" : "typed");
+    if (sent) focusSent();
+    return sent;
   }
 
   /** Sends a brain dump's transcript; its dump note is saved and its plan comes back as a `plan` event. */

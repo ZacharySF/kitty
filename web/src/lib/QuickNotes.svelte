@@ -2,8 +2,10 @@
   import { onMount } from "svelte";
   import EmptyState from "./EmptyState.svelte";
   import QuickNoteCard from "./QuickNoteCard.svelte";
-  import { listQuickNotes, popOutQuickNote, type QuickNote } from "./quickNotes";
+  import { listQuickNotes, noteTitle, popOutQuickNote, type QuickNote } from "./quickNotes";
   import { onBlockChange } from "./live";
+  import AskRika from "./rika/AskRika.svelte";
+  import { useFocus } from "./rika/focus.svelte";
 
   let notes = $state<QuickNote[]>([]);
   let drafts = $state<{ key: number; id: number | null }[]>([]);
@@ -15,6 +17,15 @@
   const owned = $derived(new Set(drafts.map(draft => draft.id).filter((id): id is number => id !== null)));
   const needle = $derived(query.trim().toLocaleLowerCase());
   const visible = $derived(notes.filter(note => !owned.has(note.id) && (!needle || note.body.toLocaleLowerCase().includes(needle))));
+  /** The note last focused on the board: what Rika is told is open. */
+  let focusedNote = $state<number | null>(null);
+  const openNote = $derived(notes.find(note => note.id === focusedNote));
+  useFocus(() => openNote ? { kind: "quick_note", id: openNote.id, title: noteTitle(openNote.body) || "Quick note",
+    detail: openNote.pinned ? "pinned" : undefined } : null);
+  function focusIn(event: FocusEvent) {
+    const id = (event.target as HTMLElement | null)?.closest<HTMLElement>("[data-quick-note]")?.dataset.quickNote;
+    if (id) focusedNote = Number(id);
+  }
 
   async function refresh() {
     try {
@@ -62,6 +73,7 @@
         <span class="sr-only">Search quick notes</span>
         <input type="search" placeholder="Search notes…" bind:value={query} />
       </label>
+      <AskRika />
       <button type="button" class="pill" onclick={() => popOutQuickNote()}>↗ Floating note</button>
       <button type="button" class="pill primary" onclick={add}>+ New note</button>
     </div>
@@ -69,7 +81,7 @@
 
   {#if error}<p class="error" role="alert">{error} <button type="button" class="pill" onclick={refresh}>Try again</button></p>{/if}
 
-  <div class="board">
+  <div class="board" onfocusin={focusIn}>
     {#each drafts as draft (draft.key)}
       <QuickNoteCard autofocus onsaved={note => saved(note, draft.key)} ondeleted={id => deleted(id, draft.key)}
         note={draft.id === null ? null : notes.find(note => note.id === draft.id) ?? null} />

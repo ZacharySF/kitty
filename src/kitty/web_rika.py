@@ -1,9 +1,11 @@
 """Rika, rika!'s own agent (kitty.core.rika), always on beside the core.
 
-POST /api/rika/messages {text, tier?, conversation_id?, spoken?}  ->  {conversation_id, message_id}
+POST /api/rika/messages {text, tier?, conversation_id?, spoken?, context?}  ->  {conversation_id, message_id}
     Queues one request; the reply streams on the socket. ``tier`` (fast|standard|deep)
     overrides the router for this request; ``spoken`` marks what the user said aloud
-    (it routes to the fast tier and its reply may be spoken back).
+    (it routes to the fast tier and its reply may be spoken back). ``context``
+    ``{view, item?: {kind, id?, title, detail?}}`` is what the user has open as they ask
+    (kitty.core.rika.focus): a built-in view and one item, checked strictly (400 otherwise).
 POST /api/rika/dumps {transcript, segments: [{start, end, text}], duration, conversation_id?}
     ->  {conversation_id, message_id}
     A brain dump: its dump note is saved and its plan arrives as a ``plan`` event.
@@ -132,9 +134,10 @@ def post(app, conn, path, body):
     if not path.startswith(PREFIX + "/"):
         return None
     if path == PREFIX + "/messages":
-        _keys(body, {"text", "tier", "conversation_id", "spoken"}, {"text"})
+        _keys(body, {"text", "tier", "conversation_id", "spoken", "context"}, {"text"})
         return _call(app.rika.submit, conn, body["text"], tier=body.get("tier"),
-                     conversation_id=body.get("conversation_id"), spoken=body.get("spoken", False))
+                     conversation_id=body.get("conversation_id"), spoken=body.get("spoken", False),
+                     context=body.get("context"))
     if path == PREFIX + "/dumps":
         _keys(body, {"transcript", "segments", "duration", "conversation_id"}, {"transcript", "segments", "duration"})
         return _call(app.rika.dump, conn, body["transcript"], body["segments"], body["duration"],

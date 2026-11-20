@@ -12,6 +12,7 @@ import { createBuildStub } from "./buildStub.js";
 import Rika from "/src/lib/rika/Rika.svelte";
 import RikaPanel from "/src/lib/rika/RikaPanel.svelte";
 import { rika } from "/src/lib/rika/session.svelte.ts";
+import { setFocus, setFocusView } from "/src/lib/rika/focus.svelte.ts";
 
 const build = createBuildStub();
 const served = window.fetch.bind(window);
@@ -27,4 +28,5 @@ if (query.has("panel")) {
   view.classList.add("with-panel");
   mount(RikaPanel, { target: view, props: { id: "harness-rika", active: true } });
 }
-window.rikaHarness = { navigations, connected: () => rika.connected };
+// `focus(view, item)` stands in for App and the open view (rika/focus.svelte.ts).
+window.rikaHarness = { navigations, connected: () => rika.connected, focus: (view, item) => { setFocusView(view); setFocus(item); } };

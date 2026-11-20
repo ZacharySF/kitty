@@ -5,6 +5,8 @@
   import Select from "./ui/Select.svelte";
   import ResumeReview, { type ResumeAudit } from "./ResumeReview.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
+  import AskRika from "./rika/AskRika.svelte";
+  import { useFocus } from "./rika/focus.svelte";
   const pane = useWorkspaceContext();
   let {
     demo = false,
@@ -48,6 +50,8 @@
   let track = $state(""),
     selected = $state<ResumeAudit | null>(null),
     reports = $state<Report[]>([]);
+  useFocus(() => selected ? { kind: "resume_version", id: selected.id, title: `Resume version for ${selected.track || "every track"}`,
+    detail: [selected.status, selected.is_default ? "default" : "", selected.validation.valid ? "" : "fails validation"].filter(Boolean).join(" · ") } : null);
   let loading = $state(false),
     busy = $state(false),
     error = $state(""),
@@ -305,6 +309,7 @@
     <div>
       <h2 id={`${pane.id}-library-title`}>My resumes</h2>
     </div>
+    <AskRika push />
     <button class="button" disabled={loading || busy} onclick={load}
       >Refresh</button
     >

@@ -515,6 +515,39 @@ test("on screen, the home panel holds the conversation: replies land in it, neve
   await context.close();
 });
 
+test("the panel names what is open and sends it with each message; a suggestion sends at once and × skips one message", async () => {
+  const { page, rika, problems, context } = await harness({ panel: true });
+  const panel = page.getByRole("region", { name: "Rika" });
+  await panel.waitFor();
+  assert.equal(await panel.getByText("Looking at").count(), 0, "a chip shows with nothing open");
+  const deck = { kind: "deck", id: 7, title: "Cell biology", detail: "3 cards due" };
+  await page.evaluate((item) => window.rikaHarness.focus("flashcards", item), deck);
+  await panel.getByText("Cell biology").waitFor();
+  assert.match(await panel.locator(".rika-focus").innerText(), /Looking at · Cell biology/);
+  await panel.getByRole("group", { name: "Ask about this" }).getByRole("button", { name: "Quiz me on this deck" }).click();
+  const sent = () => rika.posts.filter((post) => post.path === "/api/rika/messages").map((post) => post.body);
+  await until(() => sent().length === 1, "the suggestion");
+  assert.deepEqual(sent()[0], { text: "Quiz me on this deck", context: { view: "flashcards", item: deck } });
+  // × leaves the item out of the next message only.
+  await panel.getByRole("button", { name: "Don't share Cell biology with the next message" }).click();
+  await panel.getByText("Not sharing").waitFor();
+  assert.equal(await panel.getByRole("group", { name: "Ask about this" }).count(), 0, "suggestions stay while not sharing");
+  await ask(page, "what is due today");
+  await until(() => sent().length === 2, "the typed request");
+  assert.deepEqual(sent()[1], { text: "what is due today", context: { view: "flashcards" } });
+  await panel.getByText("Looking at").waitFor();
+  await ask(page, "and tomorrow");
+  await until(() => sent().length === 3, "the next request");
+  assert.deepEqual(sent()[2].context, { view: "flashcards", item: deck });
+  // On Rika's own page with nothing open, nothing is sent.
+  await page.evaluate(() => window.rikaHarness.focus("rika", null));
+  await ask(page, "hello");
+  await until(() => sent().length === 4, "the request on Rika's page");
+  assert.deepEqual(sent()[3], { text: "hello" });
+  assert.deepEqual(problems, []);
+  await context.close();
+});
+
 test("without the voice module Rika is text only: Space types, no Brain dump, no hint", async () => {
   const { page, rika, problems, context } = await harness({ panel: true, modules: [] });
   const panel = page.getByRole("region", { name: "Rika" });

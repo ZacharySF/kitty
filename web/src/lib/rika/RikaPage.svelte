@@ -6,15 +6,18 @@
   import Select from "../ui/Select.svelte";
   import UsageSection from "../usage/UsageSection.svelte";
   import { useWorkspaceContext } from "../workspaceContext.svelte";
+  import { activeModules } from "../modules.svelte";
   import type { View } from "../workspace";
   import RikaAgents from "./RikaAgents.svelte";
   import RikaConversation from "./RikaConversation.svelte";
   import RikaCustomise from "./RikaCustomise.svelte";
   import RikaInput from "./RikaInput.svelte";
+  import RikaMemory from "./RikaMemory.svelte";
   import RikaVoiceSettings from "./RikaVoiceSettings.svelte";
   import EmailSettings from "./settings/EmailSettings.svelte";
   import MemorySettings from "./settings/MemorySettings.svelte";
   import RoutingMemory from "./settings/RoutingMemory.svelte";
+  import { memoryRequest } from "./memoryRequest.svelte";
   import { rika } from "./session.svelte";
 
   /**
@@ -46,6 +49,12 @@
       tab = "chat";
       field?.focus();
     }
+  });
+  // "Memory" from the Workshop's "Rika remembers" strip, whether this page was open or opens for it.
+  $effect(() => {
+    if (!memoryRequest.pending) return;
+    memoryRequest.pending = false;
+    tab = "memory";
   });
   $effect(() => {
     if (tab !== "usage" || spend) return;
@@ -97,7 +106,7 @@
     <!-- data-settings-page: themes draw a Settings page's panels flat, as part of the page. -->
     <div class="column settings-rows" data-settings-page="rika">
       {#if tab === "customise"}<RikaCustomise />
-      {:else if tab === "memory"}<MemorySettings />
+      {:else if tab === "memory"}{#if activeModules.enabled.includes("applyai")}<RikaMemory />{/if}<MemorySettings />
       {:else if tab === "email"}<EmailSettings />
       {:else if tab === "routing"}<RoutingMemory />
       {:else if tab === "voice"}<RikaVoiceSettings />

@@ -14,7 +14,7 @@ import re
 import secrets
 from uuid import uuid4
 
-from kitty.core.rika import llm
+from kitty.core.rika import learnings, llm
 from kitty.db.connection import transaction
 from kitty.core.workshop import store
 
@@ -108,18 +108,27 @@ def save_fact(conn, *, text: str, source: str, confirmed: bool, id=None, revisio
     return next(f for f in list_facts(conn) if f["id"] == id)
 
 
-def preferences(conn):
-    rows = conn.execute("SELECT r.accepted_json,r.rejected_json,p.proposal_json FROM workshop_ai_reviews r JOIN workshop_proposals p ON p.id=r.proposal_id ORDER BY r.created_at DESC LIMIT 100").fetchall()
+def review_groups(conn):
+    """Reviewed hunks grouped by their reason, newest reviews first: accepted and rejected
+    counts and the proposals they came from (kitty.core.rika.learnings reads these too)."""
+    rows = conn.execute("SELECT r.proposal_id,r.accepted_json,r.rejected_json,p.proposal_json FROM workshop_ai_reviews r JOIN workshop_proposals p ON p.id=r.proposal_id ORDER BY r.created_at DESC LIMIT 100").fetchall()
     groups = {}
     for row in rows:
-        accepted, rejected = set(json.loads(row[0])), set(json.loads(row[1]))
-        for hunk in json.loads(row[2])["hunks"]:
+        accepted, rejected = set(json.loads(row[1])), set(json.loads(row[2]))
+        for hunk in json.loads(row[3])["hunks"]:
             reason = hunk["reason"]
-            entry = groups.setdefault(reason, {"text": reason, "accepted": 0, "rejected": 0,
-                "recommendation": "Observed review preference only; not an applicant fact or an automatic rule."})
+            entry = groups.setdefault(reason, {"text": reason, "accepted": 0, "rejected": 0, "proposals": []})
             entry["accepted"] += hunk["id"] in accepted
             entry["rejected"] += hunk["id"] in rejected
+            if row[0] not in entry["proposals"]:
+                entry["proposals"].append(row[0])
     return list(groups.values())[:30]
+
+
+def preferences(conn):
+    return [{"text": group["text"], "accepted": group["accepted"], "rejected": group["rejected"],
+             "recommendation": "Observed review preference only; not an applicant fact or an automatic rule."}
+            for group in review_groups(conn)]
 
 
 def _redact(value, mapping):
@@ -178,9 +187,17 @@ def preview_edit(app, conn, *, doc_id, instruction, job_id=None, company="", rol
         if row is None:
             raise store.WorkshopError("Research not found", 404)
         context["research_not_applicant_evidence"] = json.loads(row[0])["findings"]
+    # Rika's career memory: deterministic and local; what the user forgot there is left out
+    # here too, and it rides in the payload the user previews (and redaction covers it).
+    learnings.refresh(conn, app.config.resume_terms)
+    remembered = learnings.summary_for_prompt(conn, job_id=job_id, vocabulary=app.config.resume_terms)
+    if remembered:
+        context["rika_memory_not_applicant_evidence"] = remembered
+    forgotten = learnings.forgotten_edits(conn)
+    reviews = [item for item in preferences(conn) if learnings.edit_key(item["text"]) not in forgotten]
     mapping = {}
     payload = _redact({"source": doc["source"], "confirmed_applicant_facts": facts,
-                      "instruction": instruction, "context": context, "review_preferences": preferences(conn)}, mapping)
+                      "instruction": instruction, "context": context, "review_preferences": reviews}, mapping)
     messages = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": dump(payload)}]
     try:
         call = llm.prepare(app, conn, settings["model_id"], messages, [])

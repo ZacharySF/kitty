@@ -3,6 +3,8 @@
   import { api, type TaskRecord } from "./api";
   import TaskStatus from "./TaskStatus.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
+  import AskRika from "./rika/AskRika.svelte";
+  import { useFocus } from "./rika/focus.svelte";
   const pane = useWorkspaceContext();
 
   let { demo = false, onresume }: { demo?: boolean; onresume?: () => void } =
@@ -82,6 +84,8 @@
   let section = $state("profile");
   let editor = $state("");
   let yamlDirty = $derived(document !== null && editor !== document.text);
+  useFocus(() => document ? { kind: "profile_section", id: section, title: `Profile configuration: ${section}`,
+    detail: yamlDirty ? "unsaved edits" : undefined } : null);
   let busy = $state(false);
   let error = $state("");
   let notice = $state("");
@@ -409,6 +413,7 @@
     <div>
       <h2 id={`${pane.id}-profile-title`}>My profile</h2>
     </div>
+    <AskRika push />
     <button class="button" onclick={refresh} disabled={busy}
       >Refresh <kbd>r</kbd></button
     >

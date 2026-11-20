@@ -3,6 +3,8 @@
   import { api, dateLabel } from "./api";
   import Loader from "./Loader.svelte";
   import { beginDrag } from "./pointerDrag";
+  import AskRika from "./rika/AskRika.svelte";
+  import { useFocus } from "./rika/focus.svelte";
   let {
     onopenjob,
     onchange,
@@ -40,6 +42,9 @@
   let when = $state("");
   let undo = $state<Undo | null>(null);
   let editing = $state<{ id: number; note: string; date: string; was: string } | null>(null);
+  const editingReminder = $derived(editing ? [...data.due, ...data.upcoming].find((item) => item.id === editing!.id) : undefined);
+  useFocus(() => editingReminder ? { kind: "reminder", id: editingReminder.id, title: editingReminder.label,
+    detail: [editingReminder.kind, `due ${editingReminder.due_at}`, editingReminder.job_id ? `job ${editingReminder.job_id}` : ""].filter(Boolean).join(" · ") } : null);
   let swipe = $state<{ id: number; dx: number } | null>(null);
   function chooseWhen(value: string) {
     when = value;
@@ -168,6 +173,7 @@
     <div>
       <h2>Reminders & follow-ups</h2>
     </div>
+    <AskRika push />
     <button class="button" disabled={loading} onclick={() => load()}>Refresh</button>
   </header>
   <div class="reminders-body">

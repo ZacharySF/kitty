@@ -7,6 +7,7 @@
   import PostingAvailability from "./PostingAvailability.svelte";
   import { useWorkspaceContext } from "./workspaceContext.svelte";
   import Loader from "./Loader.svelte";
+  import { useFocus } from "./rika/focus.svelte";
 
   let {
     id,
@@ -14,16 +15,22 @@
     onchange,
     initialCommand = "",
     demo = false,
+    focus = "job",
   }: {
     id: number;
     onclose: () => void;
     onchange: () => Promise<void>;
     initialCommand?: string;
     demo?: boolean;
+    /** What Rika is told is open: a job (Jobs) or an application (Track). */
+    focus?: "job" | "application";
   } = $props();
   const pane = useWorkspaceContext();
   const fieldId = (name: string) => `${pane.id}-job-${id}-${name}`;
   let job = $state<JobDetail | null>(null);
+  useFocus(() => job ? { kind: focus, id: job.id, title: `${job.title} at ${job.company}`,
+    detail: [job.location || (job.is_remote ? "Remote" : ""), job.tier ? `rank ${job.tier}` : "",
+      job.application?.status || job.status || job.queue_state].filter(Boolean).join(" · ") } : null);
   let resumes = $state<Resume[]>([]);
   let error = $state("");
   let busy = $state(false);

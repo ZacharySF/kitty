@@ -157,7 +157,7 @@
   });
 </script>
 
-<article class="quick-note {variant}" data-tint={tint} class:pinned aria-label={`Quick note: ${noteTitle(body)}`}>
+<article class="quick-note {variant}" data-tint={tint} data-quick-note={current?.id} class:pinned aria-label={`Quick note: ${noteTitle(body)}`}>
   <header>
     <span class="meta">{variant === "window" ? "rika! · quick note" : pinned ? "pinned" : since(current?.updated_at)}</span>
     <div class="tools">

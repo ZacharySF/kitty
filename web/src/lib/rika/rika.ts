@@ -320,3 +320,70 @@ export function mailLine(draft: Pick<RikaDraft, "auto" | "status" | "reply_kind"
   if (!draft.auto) return `Reply · ${draft.reply_kind}`;
   return `${draft.status === "sent" ? "Auto-sent" : "Auto-send"} · ${draft.reply_kind}`;
 }
+
+/**
+ * What the owner has open, shared with Rika on each message (`context` of `/rika/messages`).
+ * A view reports its open item with `useFocus` (focus.svelte.ts); App reports the view.
+ */
+export type RikaFocus = { kind: string; id?: string | number; title: string; detail?: string };
+export type RikaContext = { view: string; item?: RikaFocus };
+/** The backend's caps and rules (kitty.core.rika.focus): longer text is cut with an ellipsis, so a send never fails on it. */
+export const FOCUS_TITLE_MAX = 200;
+export const FOCUS_DETAIL_MAX = 300;
+const FOCUS_ID_MAX = 120;
+const FOCUS_KIND = /^[a-z][a-z_]{0,39}$/;
+const UNPRINTABLE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+/** One line of at most `max` characters (whole code points, as Python counts them). */
+const clip = (text: string, max: number) => {
+  const flat = text.replace(/[\s\u0000-\u001f\u007f-\u009f]+/g, " ").trim();
+  const chars = Array.from(flat);
+  return chars.length > max ? `${chars.slice(0, max - 1).join("")}…` : flat;
+};
+
+/** The cleaned item, or null when it has no valid kind or no title worth sending. */
+export function cleanFocus(item: RikaFocus | null | undefined): RikaFocus | null {
+  if (!item || !FOCUS_KIND.test(String(item.kind))) return null;
+  const title = clip(String(item.title ?? ""), FOCUS_TITLE_MAX);
+  if (!title) return null;
+  const clean: RikaFocus = { kind: item.kind, title };
+  const id = typeof item.id === "string" ? item.id.trim() : item.id;
+  if (typeof id === "number" ? Number.isSafeInteger(id) : id && Array.from(id).length <= FOCUS_ID_MAX && !UNPRINTABLE.test(id)) clean.id = id;
+  const detail = item.detail ? clip(String(item.detail), FOCUS_DETAIL_MAX) : "";
+  if (detail) clean.detail = detail;
+  return clean;
+}
+
+/**
+ * The `context` a message carries: the view, and the open item unless it is skipped. Nothing
+ * on Rika's own page, or on home with nothing open: there the owner is looking at Rika herself.
+ */
+export function focusContext(view: string, item: RikaFocus | null): RikaContext | null {
+  const clean = cleanFocus(item);
+  if (!view || (!clean && (view === "rika" || view === "today"))) return null;
+  return clean ? { view, item: clean } : { view };
+}
+
+/** A few things worth asking about each kind of open item (the side panel's suggestion chips). */
+const SUGGESTIONS: Record<string, readonly string[]> = {
+  resume_version: ["How did this version do?", "Check this resume against the job"],
+  profile_section: ["What's missing from this section?", "Tighten this section"],
+  reminder: ["What's the next step here?", "Move this to tomorrow"],
+  note_page: ["Summarize this page", "Make flashcards from this page", "What should I add here?"],
+  calendar_range: ["What's on this week?", "Find me a free hour", "What's overdue?"],
+  calendar_event: ["What should I prepare for this?", "Move this to tomorrow"],
+  deck: ["Quiz me on this deck", "Which cards do I keep missing?", "Add a few cards to this deck"],
+  study_subject: ["What should I study next?", "Quiz me on this subject", "Plan my study week"],
+  math_topic: ["Explain this topic simply", "Give me a practice problem"],
+  job: ["How well do I match this job?", "What should my cover letter stress?", "Save this job"],
+  application: ["What's the next step here?", "Draft a follow-up note"],
+  resume_document: ["Check this resume against the job", "Tighten the bullet points"],
+  document: ["Summarize this document", "Make flashcards from this document"],
+  opportunity: ["What's the next step here?", "Summarize this opportunity"],
+  map: ["Summarize this map", "What's missing from this map?"],
+  goal: ["How am I doing on this goal?", "Break this goal into steps"],
+  brain_node: ["What's connected to this?", "Summarize this"],
+  quick_note: ["Turn this into a task", "File this note in the right place"],
+};
+export function focusSuggestions(kind: string | null | undefined): readonly string[] {
+  return (kind && SUGGESTIONS[kind]) || [];
+}
