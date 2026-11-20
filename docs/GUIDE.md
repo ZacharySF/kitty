@@ -1372,6 +1372,17 @@ profile and session, not relaunch or replace an owner's running instance.
 
 ### Start here
 
+**Career** keeps its pages on a left rail, each with its live count: **Overview**;
+Find (**New jobs**, **All jobs**, **Queue**, **Saved**); Track (**Applied**, the open
+applications, **Interviews** and **Reminders** due today); You (**Resumes**,
+**Profile**). Quieter links under it open Email updates (with the emails waiting),
+the application list, resume files, job sources, Find companies, Rank jobs, Reports
+and Questions. Each count is the size of the list its link opens. Career opens on
+**Overview** (`#career`): this week's application goal per track, the three newest
+Rank A jobs (press one to open it), what closes or is due in the next seven days, the
+status emails waiting for review, Rika's one suggestion with **Ask Rika**, and what Rika
+remembers. On a narrow window the rail folds to icons.
+
 **Find jobs** has one row on top: the title and count, one segmented control for
 **Map · List · Saved · Applications · Resumes · Sources**, and **Add a job link**.
 Under it, an always-visible **This week** strip lists the next reminders and
@@ -1385,15 +1396,32 @@ PDF are saved. These checks describe saved data, not application readiness.
    review the save, then upload a resume PDF. Blank fields stay blank. Basic-form
    saves preserve other profile settings and reject stale edits; leaving with an
    unsaved profile, configuration or answer draft prompts before discarding it.
-2. **Find jobs:** the list scrolls in 100-row batches; selections persist across
-   batches and **All N** in the selection bar covers the whole filter. Sort by best fit,
-   similarity score, newest, job type (track), company or deadline; **Filters**
+2. **Find jobs:** the list is a table in 100-row batches: **Role & company**,
+   **Location & remote**, **Fit** ("4 of 6 skills": the skills from
+   `config/resume_terms.yaml` the posting asks for, counted as covered when your
+   Resume Workshop resume names them or a fact you confirmed does), **Pay** (what the
+   posting or its source lists; "—" when it lists none) and **Posted & deadline**. Press
+   a heading to sort the batch by it (again to reverse); the ☰ at the right of the
+   headings shows or hides columns, such as **Queue state**, and this browser
+   remembers the choice. A narrow window drops pay, then location, then dates.
+   Selections persist across batches and **All N** in the selection bar covers the
+   whole filter. **Sort jobs** picks which jobs load first: best fit, similarity
+   score, newest, job type (track), company or deadline; **Filters**
    (a popover) holds rank (hover Rank for what A/B/C mean), saved view, source,
    eligibility, status, preparation progress and the checkboxes. Map opens Jobs'
    own schema, filling the page with its 2D/3D, Layout and Fit controls in a
    bottom-left pill; it shows only job-type categories at the root. Open a
    category to see every matching job, without 120-item map pages (**All job
    types** returns). Every job, uncategorized ones included, is in List.
+   A job opens on its decisions: **Queue**, **Skip**, **Save** and **Tailor resume**
+   (the Resume Workshop opens this job's tailored copy, else your master, on Tailor
+   with the job linked); press Queue or Skip again to take it back. Below are three
+   tabs (← → move between them): **Fit** ticks each posting skill and says whether
+   your resume or only a confirmed fact covers it, then today's eligibility reasons;
+   **Posting** has the categories, dates, description, **Read original posting** and
+   the availability check; **Application** holds the resume for this application,
+   preparation, recording a submission or status, your notes and the job settings.
+   The job's keys (e, R, a, t, k, d, n) open the Application tab at their field.
 3. **Select jobs → press Shift+F:** marked jobs (otherwise the opened or focused job) go
    straight to the reviewed autofill plan. Approved preparation opens Firefox and
    fills known fields. Check each form and submit it yourself; rika! never submits.
@@ -2224,8 +2252,13 @@ The website supports:
   status/date filters, favorites and selection across pages.
 - Manual posting entry, optional public-page metadata lookup, track/tier decisions,
   deadline overrides, persistent notes, queue/skip/later and durable ineligibility.
-- Pipeline swimlanes by track (drag or Shift+arrows between stages and tracks),
-  reminders you can edit, snooze a day or delete (hover, or swipe right/left, with
+- Track: a funnel strip (how many applications reached Applied, Assessment, Interview
+  and Offer, the share that moved on between stages, and how many closed as rejected,
+  no response or withdrawn) above a board with one column per stage. Each card shows
+  the company and role, the resume you sent and an Email waiting badge when a status
+  email needs your review. Track chips filter the strip and the board; drag a card to a
+  column to change its stage or onto a track chip to change its track (or Shift+arrows).
+- Reminders you can edit, snooze a day or delete (hover, or swipe right/left, with
   undo), explicit recording of an already-submitted application,
   configured follow-ups, dated evidence and append-only status undo.
 - Resume registration/upload, vocabulary coaching with posting evidence, audited
@@ -3636,6 +3669,11 @@ protection: an edit from another tab never overwrites your draft. **Export PDF a
 register** adds the compiled revision to the resume library without changing any
 track default or application.
 
+Inside the Workshop the Career rail folds to a strip of icons with count dots (a
+number on what asks for you, a plain dot on the rest). Hovering it, tabbing into it or
+pressing its toggle opens the full rail over the studio without moving it; Escape folds
+it again.
+
 Masters are your base resumes; company and role versions copy a master revision,
 optionally linked to an ApplyAI job. The workshop is one studio of three columns:
 the library (**New resume**, each master with its company and role versions under it,
@@ -3654,6 +3692,19 @@ Gutierrez's one-page LaTeX layout from `github.com/jakegut/resume`, MIT, notice 
 sample content replaced by placeholders). Jake's Resume compiles with pdfLaTeX and
 needs the TeX Live packages `preprint` (`fullpage.sty`), `marvosym`, `titlesec`,
 `enumitem` and `fancyhdr`; a missing one is named in the compile error.
+
+**Classic**, **Modern** and **Compact** come in LaTeX and HTML and share one black-and-white
+look: Source Serif headings over Source Sans text, your name centred above a contact line
+split by pipes, small-caps section headings over full-width rules, one column and the
+standard headings (Education, Experience, Projects, Skills). Classic is Jake's layout
+refined; Modern is a single sans column with a bold name and thin rules; both set 10.5 pt
+with 0.6 in side margins on US letter. Compact sets 9.5 pt with tight lists, one line per
+role, for long histories on one page. The LaTeX versions compile with pdfLaTeX and take
+their fonts from the TeX Live packages `sourceserifpro`, `sourcesanspro` and `ly1`
+(`fontaxes` and `mweights` recommended); without them the page falls back to Latin Modern.
+The HTML versions use Source Serif 4 and Source Sans 3 when those fonts are installed
+(otherwise Liberation Serif and Liberation Sans), because HTML compiles never load fonts
+from files.
 
 **The ATS check runs on every successful compile.** The engine reads the PDF's own
 text layer the way a resume parser does and lists what it found (name, email, phone,

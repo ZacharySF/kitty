@@ -7,6 +7,7 @@
   import AskRika from './rika/AskRika.svelte';
   import { useFocus } from './rika/focus.svelte';
   import RikaRemembers from './rika/RikaRemembers.svelte';
+  import { takeTailorJob, type TailorJob } from './workshopHandoff';
   let { onview }: { onview: (view: 'resumes' | 'rika') => void } = $props();
   let index = $state<WorkshopIndex | null>(null), doc = $state<WorkshopDoc | null>(null);
   let source = $state(''), title = $state(''), assets = $state<Record<string,string>>({}), revisions = $state<Revision[]>([]);
@@ -155,8 +156,17 @@
     if (selected) { company = selected.company; role = selected.title; }
     preview = null; research = null;
   }
+  /** Find's "Tailor resume": this job's tailored copy (else the master) on Tailor, with the job linked. */
+  async function tailorFor(job: TailorJob) {
+    const current = (index?.documents || []).filter(d => !d.archived);
+    const target = current.find(d => d.kind === 'tailored' && d.job_id === job.id) || current.find(d => d.kind === 'master');
+    if (!target) { notice = `Create or import a master resume, then tailor it for ${job.title} at ${job.company}.`; return; }
+    await open(target.id);
+    company = job.company; role = job.title; jobId = String(job.id); preview = null; research = null; tab = 'tailor';
+  }
   onMount(() => {
-    void act(async () => { try { await refresh(); await Promise.all([loadAI(), workshop.batches().then(result => { batches = result; })]); } finally { loading = false; } });
+    const handed = takeTailorJob();
+    void act(async () => { try { await refresh(); await Promise.all([loadAI(), workshop.batches().then(result => { batches = result; })]); if (handed) await tailorFor(handed); } finally { loading = false; } });
     const warnUnsaved = (event: BeforeUnloadEvent) => { if (dirty || saving) { event.preventDefault(); event.returnValue = ''; } };
     window.addEventListener('beforeunload', warnUnsaved);
     let refreshingBatches = false;
@@ -545,6 +555,24 @@
   .thumb[data-look=typst-clean] s { background: color-mix(in srgb, var(--c3, #555) 70%, #222); }
   .thumb[data-look=html-clean] { border-left: 6px solid color-mix(in srgb, var(--c5, #666) 70%, #333); }
   .thumb[data-look=html-clean] s { background: color-mix(in srgb, var(--c5, #666) 70%, #333); width: 26%; }
+  /* Classic, Modern and Compact (LaTeX and HTML share a sketch): centred name over a contact line, a small-caps label on a full-width rule. */
+  .thumb:is([data-look$=-classic], [data-look$=-modern], [data-look$=-compact]) :is(b, i) { justify-self: center; }
+  .thumb:is([data-look$=-classic], [data-look$=-modern], [data-look$=-compact]) s { position: relative; width: 100%; height: 1.5px; margin-top: 9%; background: #333; }
+  .thumb:is([data-look$=-classic], [data-look$=-modern], [data-look$=-compact]) s::before { content: ""; position: absolute; left: 0; bottom: 3px; width: 26%; height: 3px; border-radius: 1px; background: #333; }
+  .thumb[data-look$=-classic] b { width: 50%; background: #1e1e1e; }
+  .thumb[data-look$=-classic] u { width: 100%; background: linear-gradient(90deg, #d6d6d1 0 58%, transparent 58% 80%, #d6d6d1 80%); }
+  .thumb[data-look$=-modern] { gap: 6px; }
+  .thumb[data-look$=-modern] b { width: 58%; height: 8.5%; background: #111; }
+  .thumb[data-look$=-modern] i { width: 64%; background: #c6c6c1; }
+  .thumb[data-look$=-modern] s { height: 1px; background: #9a9a96; }
+  .thumb[data-look$=-modern] s::before { width: 24%; height: 2.5px; background: #555; }
+  .thumb[data-look$=-modern] s + u { width: 100%; background: linear-gradient(90deg, #6a6a66 0 30%, transparent 30% 84%, #c6c6c1 84%); }
+  .thumb[data-look$=-compact] { gap: 3px; padding: 11% 9%; }
+  .thumb[data-look$=-compact] b { width: 40%; height: 5%; min-height: 5px; }
+  .thumb[data-look$=-compact] i { width: 78%; height: 2px; margin-bottom: 3%; }
+  .thumb[data-look$=-compact] s { height: 1px; margin-top: 5%; }
+  .thumb[data-look$=-compact] s::before { bottom: 2px; width: 22%; height: 2.5px; }
+  .thumb[data-look$=-compact] u { width: 100%; height: 6px; border-radius: 0; background: linear-gradient(90deg, transparent 0 70%, #fbfbf9 70% 86%, transparent 86%), repeating-linear-gradient(180deg, #d6d6d1 0 2px, transparent 2px 4px); }
   .create { display: flex; align-items: flex-end; gap: 10px; max-width: 560px; }
   .create label { flex: 1; }
   .create .button { height: var(--control-h-lg); padding: 0 18px; }

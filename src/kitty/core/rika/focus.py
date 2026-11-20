@@ -18,7 +18,7 @@ VIEW_LABELS: dict[str, str] = {
     "opportunities": "Opportunities & projects", "herdr": "herdr", "tern": "Tern", "agent-skills": "All agent skills",
     "study": "Study", "math": "Math", "learnharness": "LearnHarness", "flashcards": "Flashcards",
     "notes": "Notes & canvas", "quick-notes": "Quick notes", "documents": "Documents & PDF", "schema": "Mind maps",
-    "ai": "AI settings", "inbox": "New jobs", "queue": "Ready to apply", "jobs": "Find jobs",
+    "ai": "AI settings", "career": "Career overview", "inbox": "New jobs", "queue": "Ready to apply", "jobs": "Find jobs",
     "pipeline": "My applications", "applications": "Application list", "favorites": "Saved jobs",
     "reminders": "Reminders", "sources": "Job sources", "resumes": "My resumes", "workshop": "Resume Workshop",
     "settings": "Settings", "profile": "My profile", "finder": "Find companies", "reports": "Reports & exports",

@@ -4,7 +4,8 @@
   import { externalViewFor, missingPack, navigation, viewEnabled, type AnyView, type View } from "./workspace";
   import { activeModules } from "./modules.svelte";
   import Home from "./Home.svelte";
-  import JobsNav from "./JobsNav.svelte";
+  import Rail from "./career/Rail.svelte";
+  import { RAIL_VIEWS } from "./career/rail";
   import GraphNavigator from "./GraphNavigator.svelte";
   import PackMissing from "./PackMissing.svelte";
 
@@ -108,9 +109,18 @@
       return await jobBrowser?.handleKey(event) ?? false;
     return false;
   }
+  /** Career's pages stand beside its rail, which stays mounted while you move between them. */
+  const careerPage = $derived(viewEnabled(view, activeModules.enabled, activeModules.views)
+    && (RAIL_VIEWS.has(view) || externalViewFor(view, activeModules.views)?.group === "jobs"));
 </script>
 
 {#snippet pending()}<Loader kind="view" label="rika! is waking up…" />{/snippet}
+{#if careerPage}
+  <Rail {view} {revision} compact={view === "workshop"} {onview}>{@render page()}</Rail>
+{:else}
+  {@render page()}
+{/if}
+{#snippet page()}
 {#key `${view}:${epoch}:${initialJobId}`}
   {#if !viewEnabled(view, activeModules.enabled, activeModules.views)}
     <!-- Disabled modules never mount or fetch; App redirects such tabs to the atlas. -->
@@ -196,13 +206,15 @@
     {#await import("./Documents.svelte")}{@render pending()}{:then { default: Documents }}
       <Documents bind:this={documents} />
     {/await}
+  {:else if view === "career"}
+    {#await import("./career/Overview.svelte")}{@render pending()}{:then { default: Overview }}
+      <Overview {revision} {onview} {onopenjob} {onadd} />
+    {/await}
   {:else if view === "inbox" || view === "jobs" || view === "queue" || view === "applications" || view === "favorites"}
-    <JobsNav {view} {onview} />
     {#await import("./JobBrowser.svelte")}{@render pending()}{:then { default: JobBrowser }}
       <JobBrowser bind:this={jobBrowser} {view} {workspace} {revision} {initialJobId} onchange={onchange} {onadd} {onview} {onopenjob} {onguide} />
     {/await}
   {:else if view === "pipeline"}
-    <JobsNav {view} {onview} />
     {#await import("./Pipeline.svelte")}{@render pending()}{:then { default: Pipeline }}
       <Pipeline bind:this={pipeline} {workspace} onchange={onchange} onmail={() => onview("mail")} />
     {/await}
@@ -215,12 +227,10 @@
       <ResumeWorkshop bind:this={workshop} {onview} />
     {/await}
   {:else if view === "resumes"}
-    <JobsNav {view} {onview} />
     {#await import("./Library.svelte")}{@render pending()}{:then { default: Library }}
       <Library demo={workspace?.demo ?? true} {onopenjob} />
     {/await}
   {:else if view === "sources"}
-    <JobsNav {view} {onview} />
     {#await import("./Sources.svelte")}{@render pending()}{:then { default: Sources }}
       <Sources demo={workspace?.demo ?? true} />
     {/await}
@@ -229,14 +239,13 @@
       <Profile bind:this={profile} demo={workspace?.demo ?? true} onresume={() => onview("resumes")} />
     {/await}
   {:else if view === "finder" || view === "reports" || view === "mail" || view === "triage"}
-    <JobsNav {view} {onview} />
     {#await import("./Insights.svelte")}{@render pending()}{:then { default: Insights }}
       <Insights section={view} demo={workspace?.demo ?? true} />
     {/await}
   {:else if view === "questions"}
-    <JobsNav {view} {onview} />
     {#await import("./Questions.svelte")}{@render pending()}{:then { default: Questions }}
       <Questions demo={workspace?.demo ?? true} />
     {/await}
   {/if}
 {/key}
+{/snippet}

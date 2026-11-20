@@ -80,9 +80,10 @@
 
 /* Views are part of the app (design review): a view's own root region, and a Settings page, is the page,
    not a card floating on it. No fill, frame or radius; content keeps main's page margins. Side rails,
-   drawers and widgets inside keep their surfaces. Glass themes keep their panels. */
-:root[data-theme="kitty"] body :is([data-kitty-panel="view"], [data-settings-page]) > :is(.surface, .panel, .br-panel),
-:root[data-theme="kitty"] body [data-kitty-panel="view"] > .content-grid > .panel {
+   drawers and widgets inside keep their surfaces. Glass themes keep their panels. A Career page's root
+   sits beside the Career rail (career/Rail.svelte), one level down. */
+:root[data-theme="kitty"] body :is([data-kitty-panel="view"], [data-settings-page], [data-kitty-panel="view"] > .career-shell > .career-page) > :is(.surface, .panel, .br-panel),
+:root[data-theme="kitty"] body :is([data-kitty-panel="view"], [data-kitty-panel="view"] > .career-shell > .career-page) > .content-grid > .panel {
   --surface-fill: transparent;
   --surface-border: transparent;
   --surface-blur: none;

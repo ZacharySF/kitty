@@ -132,7 +132,8 @@ describe("shell: Rika side panel", () => {
     const margin = await page.locator(".home").evaluate((node) => node.getBoundingClientRect().right - parseFloat(getComputedStyle(node).paddingRight));
     await page.evaluate(() => (location.hash = "calendar"));
     await page.waitForFunction(() => location.hash === "#calendar");
-    const opener = page.getByRole("button", { name: "Today", exact: true });
+    // The calendar opens on the week, whose way back reads "This week".
+    const opener = page.getByRole("button", { name: "This week", exact: true });
     await opener.waitFor();
     await opener.focus();
     await watchReload(page);
@@ -361,14 +362,15 @@ describe("shell: arrow keys", () => {
     await page.keyboard.press("Control+ArrowLeft");
     await page.waitForFunction(() => [...document.querySelectorAll('nav[aria-label="Workspace groups"] button')].find((button) => button.getAttribute("aria-current") === "page")?.textContent?.trim() === "Study");
 
-    // Career's bar opens on Track, its first step; → goes on to Find.
+    // Career opens on its Overview, marked on its rail; the rail is links, not page tabs, so → stays put.
     await groups.getByRole("button", { name: "Career" }).click();
     const career = page.getByRole("navigation", { name: "Career" });
-    await page.waitForFunction(() => location.hash === "#pipeline");
-    assert.equal((await active(career)).trim(), "Track");
+    await page.waitForFunction(() => location.hash === "#career");
+    assert.equal((await active(career)).trim(), "Overview");
     await page.locator("body").click({ position: { x: 5, y: 600 } });
     await page.keyboard.press("ArrowRight");
-    await page.waitForFunction(() => location.hash === "#jobs");
+    await page.waitForTimeout(200);
+    assert.equal(await page.evaluate(() => location.hash), "#career", "→ left the Career overview");
     assert.deepEqual(problems, []);
     await context.close();
   });

@@ -48,7 +48,7 @@ NON_CONTENT_PREFIXES = frozenset({
     "reload", "modules", "account", "ai", "automation", "questions", "resumes", "profile",
     "sources", "finder", "reports", "mail", "triage", "postings", "dashboard", "job-options",
     "pipeline", "backlinks", "atlas", "brain", "desktop", "terminal", "extensions", "tasks",
-    "bootstrap",
+    "bootstrap", "career",
     # The block backend's own routes (history restore, Trash, tag records) are block
     # transactions: op_log is their history. Mirror frames live in memory only.
     "blocks", "tags", "mirror",

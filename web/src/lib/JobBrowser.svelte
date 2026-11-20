@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
-  import { api, dateLabel, safeUrl, type Bootstrap, type Job, type TaskRecord } from "./api";
+  import { api, safeUrl, type Bootstrap, type Job, type TaskRecord } from "./api";
   import Icon from "./Icon.svelte";
   import JobDetail from "./JobDetail.svelte";
   import Automation from "./Automation.svelte";
@@ -15,6 +15,7 @@
   import Popover from "./ui/Popover.svelte";
   import EditDrawer from "./ui/EditDrawer.svelte";
   import AskRika from "./rika/AskRika.svelte";
+  import { COLUMNS, fitLabel, nextSort, readColumns, sortJobs, writeColumns, type ColumnKey, type JobFit, type SortKey, type Sort } from "./jobs/table";
   let {
     view,
     workspace,
@@ -26,7 +27,7 @@
     onguide,
     initialJobId = null,
   }: {
-    view: "today" | "inbox" | "jobs" | "queue" | "applications" | "favorites";
+    view: "inbox" | "jobs" | "queue" | "applications" | "favorites";
     workspace: Bootstrap | null;
     revision?: number;
     onchange: () => Promise<void>;
@@ -66,6 +67,15 @@
   let pendingCommand = $state("");
   let marked = $state<number[]>([]);
   const markedSet = $derived(new Set(marked));
+  /** Skills covered and listed pay per job id, fetched once per loaded batch. */
+  let fits = $state<Record<number, JobFit>>({});
+  /** A heading's sort reorders the loaded batch; null keeps the "Sort jobs" order. */
+  let sort = $state<Sort>({ key: null, descending: false });
+  let columns = $state<ColumnKey[]>(readColumns({ getItem: (key) => localStorage.getItem(key) }));
+  let columnsOpen = $state(false);
+  const shown = $derived(new Set(columns));
+  /** What the table shows, in its order; the cursor and ranges index this. */
+  const rows = $derived(sortJobs(jobs, fits, sort.key, sort.descending));
   let cursor = $state(0);
   let anchor = -1;
   let request = 0;
@@ -81,7 +91,7 @@
     | undefined = $state();
   let preparationOpen = $state(false);
   const preparationIds = $derived(
-    marked.length ? marked : selected !== null ? [selected] : jobs[cursor] ? [jobs[cursor].id] : [],
+    marked.length ? marked : selected !== null ? [selected] : rows[cursor] ? [rows[cursor].id] : [],
   );
   /** The list is where a job is picked; Find jobs can also show them as a map. */
   let presentation = $state<"map" | "list">("list");
@@ -153,7 +163,7 @@
       graphLabel = node.label;
       await filter();
     } else if (node.entity === "job" && typeof node.ref === "number") {
-      const index = jobs.findIndex((job) => job.id === node.ref);
+      const index = rows.findIndex((job) => job.id === node.ref);
       if (index >= 0) cursor = index;
       pendingCommand = "";
       graphLabel = node.label;
@@ -163,8 +173,6 @@
   let searchInput: HTMLInputElement | undefined = $state();
   let bulkAction = $state("state");
   let bulkValue = $state("");
-  /** A rank in plain words (the filter and the detail keep the letter beside it). */
-  const FIT: Record<string, string> = { A: "Top match", B: "Good match", C: "Low match" };
   const RANK_HELP = "A is highest priority, B is worth considering, C is lower priority or filtered out. Read the reason in each job; rank does not guarantee eligibility.";
   const RANKS: Record<string, string> = { A: "Highest priority", B: "Worth considering", C: "Lower priority / filtered out" };
   const choices = (values: string[], none?: string): SelectOption[] => [
@@ -212,20 +220,18 @@
   const limit = 100;
   /** Find and its "Ready to apply" filter (`queue`, once the Apply page) share one title. */
   const heading = $derived(
-    view === "today"
-      ? "Jobs to explore"
-      : view === "inbox"
-        ? "New jobs"
-        : view === "applications"
-          ? "Application list"
-          : view === "favorites"
-            ? "Saved"
-            : "Find jobs",
+    view === "inbox"
+      ? "New jobs"
+      : view === "applications"
+        ? "Application list"
+        : view === "favorites"
+          ? "Saved"
+          : "Find jobs",
   );
 
   function query() {
     const params = new URLSearchParams({
-      view: view === "today" ? "jobs" : view === "queue" ? "apply" : view,
+      view: view === "queue" ? "apply" : view,
       search,
       company: companyOnly ? "1" : "0",
       track,
@@ -239,7 +245,7 @@
       closed: includeClosed ? "1" : "",
       favorites: onlyFavorites ? "1" : "",
       offset: String(offset),
-      limit: String(view === "today" ? 5 : limit),
+      limit: String(limit),
     });
     if (view === "inbox") params.set("age", allDates ? "" : "14");
     return params;
@@ -256,11 +262,39 @@
       jobs = result.jobs;
       total = result.total;
       cursor = Math.min(cursor, Math.max(0, jobs.length - 1));
+      void loadFits(version, jobs.map((job) => job.id));
     } catch (cause) {
       if (version === request) error = (cause as Error).message;
     } finally {
       if (version === request) loading = false;
     }
+  }
+  /** One request per batch: the fit cell and the pay column for every row shown. */
+  async function loadFits(version: number, ids: number[]) {
+    if (!ids.length) return;
+    try {
+      const result = await api<{ jobs: JobFit[] }>(`/jobs/fit?ids=${ids.join(",")}`);
+      if (version !== request) return;
+      fits = { ...fits, ...Object.fromEntries(result.jobs.map((item) => [item.job_id, item])) };
+    } catch {
+      // The table still works without them: the fit and pay cells stay empty.
+    }
+  }
+  function sortBy(key: SortKey) {
+    sort = nextSort(sort, key);
+    cursor = 0;
+    anchor = -1;
+  }
+  function toggleColumn(key: ColumnKey, on: boolean) {
+    columns = COLUMNS.map((column) => column.key).filter((item) => item === "role" || (item === key ? on : columns.includes(item)));
+    writeColumns({ setItem: (name, value) => localStorage.setItem(name, value) }, columns);
+  }
+  /** "Nov 3" this year, "Jan 5, 2027" otherwise: the table's date cells. */
+  function shortDate(value: string) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    const year = date.getFullYear() === new Date().getFullYear() ? undefined : "numeric";
+    return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year });
   }
   async function changeBatch(direction: -1 | 1) {
     offset = Math.max(0, offset + direction * limit);
@@ -350,8 +384,8 @@
     const start = range && anchor >= 0 ? Math.min(anchor, index) : index;
     const end = range && anchor >= 0 ? Math.max(anchor, index) : index;
     for (let i = start; i <= end; i++) {
-      if (checked) next.add(jobs[i].id);
-      else next.delete(jobs[i].id);
+      if (checked) next.add(rows[i].id);
+      else next.delete(rows[i].id);
     }
     marked = [...next];
     anchor = index;
@@ -378,7 +412,7 @@
   async function bulk(
     action: string,
     value: unknown,
-    ids = marked.length ? marked : jobs[cursor] ? [jobs[cursor].id] : [],
+    ids = marked.length ? marked : rows[cursor] ? [rows[cursor].id] : [],
   ) {
     if (!ids.length) {
       message = "Select an opportunity first.";
@@ -404,7 +438,7 @@
     }
   }
   function openAction(command: string) {
-    const job = jobs[cursor];
+    const job = rows[cursor];
     if (!job) return;
     pendingCommand = command;
     selected = job.id;
@@ -460,22 +494,22 @@
       (view === "queue" && event.key === "n")
     ) {
       event.preventDefault();
-      cursor = Math.min(jobs.length - 1, cursor + 1);
-      results?.querySelector<HTMLButtonElement>(`[data-job-id="${jobs[cursor]?.id}"]`)?.focus();
+      cursor = Math.min(rows.length - 1, cursor + 1);
+      results?.querySelector<HTMLButtonElement>(`[data-job-id="${rows[cursor]?.id}"]`)?.focus();
       return true;
     }
     if (event.key === "ArrowUp" || (view === "queue" && event.key === "p")) {
       event.preventDefault();
       cursor = Math.max(0, cursor - 1);
-      results?.querySelector<HTMLButtonElement>(`[data-job-id="${jobs[cursor]?.id}"]`)?.focus();
+      results?.querySelector<HTMLButtonElement>(`[data-job-id="${rows[cursor]?.id}"]`)?.focus();
       return true;
     }
-    if (event.key === " " && jobs[cursor]) {
+    if (event.key === " " && rows[cursor]) {
       event.preventDefault();
-      mark(cursor, !markedSet.has(jobs[cursor].id));
+      mark(cursor, !markedSet.has(rows[cursor].id));
       return true;
     }
-    if (event.key === "Enter" && jobs[cursor]) {
+    if (event.key === "Enter" && rows[cursor]) {
       event.preventDefault();
       openAction("");
       return true;
@@ -526,7 +560,7 @@
     }
     if (event.key === "g") {
       event.preventDefault();
-      if (!marked.length && jobs[cursor]) marked = [jobs[cursor].id];
+      if (!marked.length && rows[cursor]) marked = [rows[cursor].id];
       bulkAction = "add_track";
       bulkOptionsOpen = true;
       await tick();
@@ -552,9 +586,9 @@
       await tick();
       return automation?.handleKey(event) ?? false;
     }
-    if (event.key === "o" && jobs[cursor]) {
+    if (event.key === "o" && rows[cursor]) {
       event.preventDefault();
-      const url = safeUrl(jobs[cursor].url);
+      const url = safeUrl(rows[cursor].url);
       if (url) window.open(url, "_blank", "noopener,noreferrer");
       return true;
     }
@@ -581,45 +615,36 @@
 {#if message}<p class="action-feedback" role="status">{message}<button class="icon-button" aria-label="Dismiss job message" onclick={() => (message = "")}>×</button></p>{/if}
 <div class="content-grid" class:with-detail={selected !== null}>
   <section class="opportunities panel" aria-label={heading}>
-    {#if view === "today"}
-      <div class="panel-heading">
-        <div>
-          <h2>{heading}<span class="count-pill">{total}</span></h2>
-        </div>
-        <button class="text-button" onclick={() => onview("jobs")}>View all <Icon name="arrow" size={16} /></button>
+    <header class="jobs-head">
+      <h1>{heading}</h1>
+      <span class="total" title={`${total.toLocaleString()} matching`}>{total.toLocaleString()}</span>
+      <div class="tools">
+        {#if view === "jobs" && graphFocus}<button type="button" class="text-button all-types" onclick={rootSchema}>All job types</button>{/if}
+        {#if view === "jobs"}
+          <nav class="jobs-views" aria-label="Jobs view">
+            <button type="button" aria-pressed={presentation === "map"} onclick={() => (presentation = "map")}>Map</button>
+            <button type="button" aria-pressed={presentation === "list"} onclick={() => (presentation = "list")}>List</button>
+          </nav>
+        {/if}
+        {#if view === "jobs" || view === "queue"}
+          <button type="button" class="pill ready" aria-pressed={view === "queue"} title="Open, unsubmitted jobs ranked A or B"
+            onclick={() => onview(view === "queue" ? "jobs" : "queue")}>Ready to apply</button>
+        {/if}
+        {#if view === "jobs" || view === "inbox"}
+          <button type="button" class="pill" disabled={scraping} title="Look for new jobs on your job sources now" onclick={scrape}>{scraping ? "Scraping…" : "Scrape"}</button>
+        {/if}
+        {#if view !== "jobs" && view !== "inbox" && !marked.length}
+          <PostingAvailability jobIds={jobs.map(job => job.id)} label="Check they are still open" demo={workspace?.demo ?? true} oncomplete={checkedAvailability} />
+        {/if}
+        <AskRika />
+        <button type="button" class="text-button" title="Prepare another group or check Firefox progress" onclick={() => (preparationOpen = true)}>Progress</button>
+        {#if view === "queue" && !marked.length}
+          <button type="button" class="pill" disabled={busy || loading || (selected === null && !rows[cursor])} onclick={prepareSelected}
+            title="Fills the form and stops before submitting: you send it">Fill in the form <kbd>Shift+F</kbd></button>
+        {/if}
+        <button type="button" class="pill primary page-action" onclick={onadd}><Icon name="plus" size={14} />Add a job link</button>
       </div>
-    {:else}
-      <header class="jobs-head">
-        <h1>{heading}</h1>
-        <span class="total" title={`${total.toLocaleString()} matching`}>{total.toLocaleString()}</span>
-        <div class="tools">
-          {#if view === "jobs" && graphFocus}<button type="button" class="text-button all-types" onclick={rootSchema}>All job types</button>{/if}
-          {#if view === "jobs"}
-            <nav class="jobs-views" aria-label="Jobs view">
-              <button type="button" aria-pressed={presentation === "map"} onclick={() => (presentation = "map")}>Map</button>
-              <button type="button" aria-pressed={presentation === "list"} onclick={() => (presentation = "list")}>List</button>
-            </nav>
-          {/if}
-          {#if view === "jobs" || view === "queue"}
-            <button type="button" class="pill ready" aria-pressed={view === "queue"} title="Open, unsubmitted jobs ranked A or B"
-              onclick={() => onview(view === "queue" ? "jobs" : "queue")}>Ready to apply</button>
-          {/if}
-          {#if view === "jobs" || view === "inbox"}
-            <button type="button" class="pill" disabled={scraping} title="Look for new jobs on your job sources now" onclick={scrape}>{scraping ? "Scraping…" : "Scrape"}</button>
-          {/if}
-          {#if view !== "jobs" && view !== "inbox" && !marked.length}
-            <PostingAvailability jobIds={jobs.map(job => job.id)} label="Check they are still open" demo={workspace?.demo ?? true} oncomplete={checkedAvailability} />
-          {/if}
-          <AskRika />
-          <button type="button" class="text-button" title="Prepare another group or check Firefox progress" onclick={() => (preparationOpen = true)}>Progress</button>
-          {#if view === "queue" && !marked.length}
-            <button type="button" class="pill" disabled={busy || loading || (selected === null && !jobs[cursor])} onclick={prepareSelected}
-              title="Fills the form and stops before submitting: you send it">Fill in the form <kbd>Shift+F</kbd></button>
-          {/if}
-          <button type="button" class="pill primary page-action" onclick={onadd}><Icon name="plus" size={14} />Add a job link</button>
-        </div>
-      </header>
-    {/if}
+    </header>
     {#if view === "jobs"}
       <Dashboard {revision} onopenjob={(id) => onopenjob?.(id)} {onview} {onguide} />
     {/if}
@@ -631,7 +656,6 @@
           ondelete={(node) => { if (node.entity === "job" && typeof node.ref === "number") return bulk("delete", true, [node.ref]); }} listToggle={false} />
       </div>
     {:else}
-    {#if view !== "today"}
       <form
         class="filters"
         onsubmit={(event) => {
@@ -639,22 +663,6 @@
           void filter();
         }}
       >
-        <input
-          type="checkbox"
-          class="select-all"
-          aria-label="Select all shown"
-          title="Select all shown"
-          disabled={busy || loading}
-          checked={jobs.length > 0 && jobs.every((job) => markedSet.has(job.id))}
-          onchange={(event) => {
-            const next = new Set(marked);
-            for (const job of jobs) {
-              if (event.currentTarget.checked) next.add(job.id);
-              else next.delete(job.id);
-            }
-            marked = [...next];
-          }}
-        />
         <label class="search-field"
           ><Icon name="jobs" size={17} /><input
             bind:this={searchInput}
@@ -667,7 +675,10 @@
           /><kbd>Ctrl F</kbd></label
         >
         <Select id={fieldId("track-filter")} label="Filter by job type or track" kind="search" options={trackOptions} bind:value={track} onchange={filter} />
-        <Select id={fieldId("job-order")} label="Sort jobs" kind="list" options={orderOptions} bind:value={order} onchange={filter} />
+        <Select id={fieldId("job-order")} label="Sort jobs" kind="list" options={orderOptions} bind:value={order} onchange={() => {
+          sort = { key: null, descending: false };
+          void filter();
+        }} />
         <Popover label="Filters" bind:open={filtersOpen} placement="bottom-end" class="job-filters">
           {#snippet trigger(props)}
             <button type="button" class="pill" {...props}>Filters{#if activeFilters}<span class="filter-count">{activeFilters}</span>{/if}</button>
@@ -702,8 +713,7 @@
           </div>
         </Popover>
       </form>
-    {/if}
-    {#if marked.length && view !== "today"}
+    {#if marked.length}
       <!-- Shown only while rows are ticked, where the pointer already is: at the bottom, in one piece. -->
       <div class="selection-bar" role="toolbar" aria-label="Selected jobs">
         <span class="count">{marked.length} selected</span>
@@ -746,73 +756,133 @@
         <button type="button" class="icon-button" aria-label="Clear selection" title="Clear selection" onclick={() => (marked = [])}>×</button>
       </div>
     {/if}
-    <div bind:this={results} class="job-list" class:dense={view !== "today"} role="region" aria-label="Job results" aria-busy={loading}>
+    <div bind:this={results} class="job-list" role="region" aria-label="Job results" aria-busy={loading}>
       {#if loading}<Loader label="Loading opportunities…" />{:else if jobs.length === 0}<EmptyState level={3} title="No matches in this view.">
           <p>Change your filters, add a posting, or discover new jobs from Job sources.</p>
           {#snippet actions()}<button class="button" onclick={() => onview("sources")}>Open Job sources</button>{/snippet}
         </EmptyState>{:else}
-        {#each jobs as job, index (job.id)}
-          <div class="selectable-job" class:marked={markedSet.has(job.id)} class:focused={cursor === index}>
-            {#if view !== "today"}<input
-                class="row-check"
-                type="checkbox"
-                aria-label={`Select ${job.company} — ${job.title}`}
-                checked={markedSet.has(job.id)}
-                onfocus={() => (cursor = index)}
-                onclick={(event) =>
-                  mark(index, event.currentTarget.checked, event.shiftKey)}
-              />{/if}
-            <button
-              class="job-row"
-              data-job-id={job.id}
-              class:selected={selected === job.id}
-              aria-pressed={selected === job.id}
-              onfocus={() => (cursor = index)}
-              onclick={() => {
-                cursor = index;
-                pendingCommand = "";
-                if (view === "today" && onopenjob) onopenjob(job.id);
-                else selected = job.id;
-              }}
-              oncontextmenu={(event) => {
-                if (window.getSelection()?.toString()) return;
-                event.preventDefault();
-                if (!busy) void bulk("delete", true, markedSet.has(job.id) ? marked : [job.id]);
-              }}
-            >
-              <span class="company-mark" class:alternate={job.id % 3 === 0}
-                >{job.company.slice(0, 2).toUpperCase()}</span
-              ><span class="job-main"
-                ><span class="job-title">{job.title}</span><span
-                  class="job-company"
-                  >{job.company}<span class="inline-dot">·</span
-                  >{job.location || "Location not provided"}</span
-                ><span class="job-meta"
-                  >{job.tracks.join(" / ")}{#if job.deadline_at}<span
-                      class="inline-dot">·</span
-                    >Due {dateLabel(
-                      job.deadline_at,
-                    )}{/if}{#if job.fill_state && job.fill_state !== "unattempted"}<span
-                      class="inline-dot">·</span
-                    >Preparation: {label(job.fill_state)}{/if}</span
-                ></span
-              ><span class="job-tail"
-                >{#if job.favorite}<span class="saved-star" aria-label="Saved"
-                    ><Icon name="favorites" size={15} /></span
-                  >{/if}<span class="badge" class:tier-a={job.tier === "A"}
-                  >{job.status
-                    ? label(job.status)
-                    : job.tier
-                      ? FIT[job.tier] ?? `Rank ${job.tier}`
-                      : "Not ranked"}</span
-                ><Icon name="arrow" size={17} /></span
+        <table class="job-table">
+          <thead>
+            <tr>
+              <th class="check" scope="col"><input
+                  type="checkbox"
+                  aria-label="Select all shown"
+                  title="Select all shown"
+                  disabled={busy || loading}
+                  checked={jobs.every((job) => markedSet.has(job.id))}
+                  onchange={(event) => {
+                    const next = new Set(marked);
+                    for (const job of jobs) {
+                      if (event.currentTarget.checked) next.add(job.id);
+                      else next.delete(job.id);
+                    }
+                    marked = [...next];
+                  }}
+                /></th>
+              {#each COLUMNS.filter((column) => shown.has(column.key)) as column (column.key)}
+                {@const active = column.sorts.find((option) => option.key === sort.key)}
+                <th class={`col-${column.key}`} scope="col" aria-sort={active ? (sort.descending ? "descending" : "ascending") : "none"}>
+                  {#each column.sorts as option, index (option.key)}{#if index}<span class="sort-joint" aria-hidden="true">&amp;</span>{/if}<button
+                      type="button"
+                      class="sort"
+                      class:active={sort.key === option.key}
+                      title={`Sort this page by ${option.label.toLowerCase()}`}
+                      onclick={() => sortBy(option.key)}
+                      >{option.label}<span class="arrow" aria-hidden="true">{sort.key === option.key ? (sort.descending ? "↓" : "↑") : "↕"}</span></button
+                    >{/each}
+                </th>
+              {/each}
+              <th class="menu" scope="col">
+                <Popover label="Columns" bind:open={columnsOpen} placement="bottom-end" class="job-columns">
+                  {#snippet trigger(props)}
+                    <button type="button" class="icon-button" aria-label="Choose columns" title="Choose columns" {...props}><Icon name="menu" size={15} /></button>
+                  {/snippet}
+                  <fieldset class="column-choices">
+                    <legend>Columns</legend>
+                    {#each COLUMNS as column (column.key)}
+                      <label class="inline-check"><input
+                          type="checkbox"
+                          checked={shown.has(column.key)}
+                          disabled={column.key === "role"}
+                          onchange={(event) => toggleColumn(column.key, event.currentTarget.checked)}
+                        />{column.label}</label>
+                    {/each}
+                  </fieldset>
+                </Popover>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each rows as job, index (job.id)}
+              {@const jobFit = fits[job.id]}
+              <!-- The whole row opens the job for a pointer; the keyboard has the role's button. -->
+              <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
+              <tr
+                class:marked={markedSet.has(job.id)}
+                class:focused={cursor === index}
+                class:selected={selected === job.id}
+                onclick={(event) => {
+                  if ((event.target as HTMLElement).closest("input, button, a")) return;
+                  cursor = index;
+                  pendingCommand = "";
+                  selected = job.id;
+                }}
+                oncontextmenu={(event) => {
+                  if (window.getSelection()?.toString() || (event.target as HTMLElement).closest("input")) return;
+                  event.preventDefault();
+                  if (!busy) void bulk("delete", true, markedSet.has(job.id) ? marked : [job.id]);
+                }}
               >
-            </button>
-          </div>
-        {/each}
+                <td class="check"><input
+                    class="row-check"
+                    type="checkbox"
+                    aria-label={`Select ${job.company} — ${job.title}`}
+                    checked={markedSet.has(job.id)}
+                    onfocus={() => (cursor = index)}
+                    onclick={(event) => mark(index, event.currentTarget.checked, event.shiftKey)}
+                  /></td>
+                <td class="col-role">
+                  <span class="role-line"><button
+                      type="button"
+                      class="job-open"
+                      data-job-id={job.id}
+                      aria-pressed={selected === job.id}
+                      onfocus={() => (cursor = index)}
+                      onclick={() => {
+                        cursor = index;
+                        pendingCommand = "";
+                        selected = job.id;
+                      }}
+                    >{job.title}</button>{#if job.favorite}<span class="saved-star" role="img" aria-label="Saved"><Icon name="favorites" size={13} /></span>{/if}</span>
+                  <span class="sub">{job.company}</span>
+                </td>
+                {#if shown.has("place")}<td class="col-place">
+                    <span class:quiet={!job.location}>{job.location || "Not provided"}</span>
+                    {#if job.is_remote}<span class="sub remote">Remote</span>{/if}
+                  </td>{/if}
+                {#if shown.has("fit")}<td class="col-fit" title={jobFit?.skills.map((skill) => `${skill.covered ? "✓" : "○"} ${skill.term}`).join("\n") || jobFit?.error}>
+                    {#if jobFit?.total}<span class="fit-count"><strong>{jobFit.covered}</strong> of {jobFit.total} skill{jobFit.total === 1 ? "" : "s"}</span>
+                    {:else if jobFit}<span class="quiet">{fitLabel(jobFit)}</span>{/if}
+                  </td>{/if}
+                {#if shown.has("pay")}<td class="col-pay">
+                    {#if jobFit?.pay}{jobFit.pay.text}{:else if jobFit}<span class="quiet" title="The posting lists no pay">—</span>{/if}
+                  </td>{/if}
+                {#if shown.has("dates")}<td class="col-dates">
+                    <span class:quiet={!job.posted_at}>{job.posted_at ? shortDate(job.posted_at) : "—"}</span>
+                    <span class="sub">{job.deadline_at ? `Due ${shortDate(job.deadline_at)}` : "No deadline"}</span>
+                  </td>{/if}
+                {#if shown.has("queue")}<td class="col-queue">
+                    {label(job.status || job.queue_state)}
+                    {#if job.fill_state && job.fill_state !== "unattempted"}<span class="sub">{label(job.fill_state)}</span>{/if}
+                  </td>{/if}
+                <td class="menu"></td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
       {/if}
     </div>
-    {#if view !== "today" && total > 0}<div class="pagination">
+    {#if total > 0}<div class="pagination">
         <span role="status"
           >{offset + 1}–{offset + jobs.length} of {total.toLocaleString()} matching · {marked.length} selected across batches</span
         >
@@ -835,6 +905,7 @@
         id={selected}
         initialCommand={pendingCommand}
         demo={workspace?.demo ?? true}
+        {onview}
         onclose={() => {
           const id = selected;
           selected = null;
@@ -846,7 +917,7 @@
         }}
         onchange={refresh}
       />{/key}{/if}
-  {#if preparationOpen && view !== "today"}
+  {#if preparationOpen}
     <EditDrawer title="Prepare applications" onclose={() => (preparationOpen = false)}>
       <!-- Escape in the plan review closes only that dialog, not the drawer. -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -962,29 +1033,200 @@
     background: transparent;
     box-shadow: none;
   }
-  .job-list.dense {
+  /* Q7 C: the jobs are a dense table. Its heading row stays while the batch scrolls. */
+  .job-list {
+    container: job-list / inline-size;
     max-height: min(68vh, 880px);
     overflow-y: auto;
     overscroll-behavior: contain;
     scrollbar-gutter: stable;
+    border-top: 1px solid var(--hairline);
   }
-  .dense .job-row {
-    padding: 10px 16px;
-    gap: 12px;
+  .job-table {
+    width: 100%;
+    table-layout: fixed;
+    border-collapse: collapse;
+    font-size: 12.5px;
+    font-variant-numeric: tabular-nums;
   }
-  .dense .company-mark {
-    width: 32px;
-    height: 32px;
-    flex-basis: 32px;
+  .job-table th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    height: 34px;
+    padding: 0 8px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    font-weight: 400;
+    text-align: left;
+    white-space: nowrap;
+  }
+  .job-table td {
+    height: 44px;
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--border);
+    color: var(--muted);
+    line-height: 1.35;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .job-table tbody tr:last-child td {
+    border-bottom: 0;
+  }
+  .check {
+    width: 36px;
+    padding-left: 14px !important;
+  }
+  .menu {
+    width: 40px;
+    text-align: right !important;
+  }
+  .col-place {
+    width: 140px;
+  }
+  .col-fit {
+    width: 104px;
+  }
+  .col-pay {
+    width: 112px;
+  }
+  .col-dates {
+    width: 150px;
+  }
+  .col-queue {
+    width: 112px;
+  }
+  :global(:root body) .job-table .sort {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: auto;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--muted);
+    font: 600 11px/1 var(--font-ui);
+  }
+  :global(:root body) .job-table .sort:is(:hover, .active) {
+    color: var(--ink);
+  }
+  .arrow {
+    color: var(--subtle);
     font-size: 10px;
   }
-  .selectable-job.focused {
+  .sort.active .arrow {
+    color: var(--accent);
+  }
+  .sort-joint {
+    margin: 0 5px;
+    color: var(--subtle);
+    font-size: 11px;
+  }
+  .col-role {
+    color: var(--ink);
+  }
+  .role-line {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+  :global(:root body) .job-table .job-open {
+    min-width: 0;
+    height: auto;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    border: 0;
+    background: none;
+    color: var(--ink);
+    font: 550 13px/1.35 var(--font-ui);
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .job-open:focus-visible {
+    outline: none;
+  }
+  .sub {
+    display: block;
+    overflow: hidden;
+    color: var(--subtle);
+    font-size: 11px;
+    text-overflow: ellipsis;
+  }
+  .sub.remote {
+    color: var(--success);
+  }
+  .quiet {
+    color: var(--subtle);
+  }
+  .fit-count strong {
+    color: var(--ink);
+    font-weight: 650;
+  }
+  .col-pay {
+    color: var(--ink);
+  }
+  .job-table tbody tr {
+    cursor: pointer;
+  }
+  .job-table tbody tr:is(:hover, .selected) {
+    background: var(--surface-raised);
+  }
+  .job-table tbody tr.focused td:first-child {
     box-shadow: inset 3px 0 var(--accent);
   }
   /* Keyboard focus only: a click on a row or its checkbox draws no box around it. */
-  .selectable-job:has(:focus-visible) {
+  .job-table tbody tr:has(:focus-visible) {
     outline: 1px solid color-mix(in srgb, var(--ink) 45%, transparent);
     outline-offset: -1px;
+  }
+  /* A narrow list (a small window, or the detail beside it) drops columns, least needed first. */
+  @container job-list (max-width: 910px) {
+    .col-queue {
+      display: none;
+    }
+  }
+  @container job-list (max-width: 790px) {
+    .col-pay {
+      display: none;
+    }
+  }
+  @container job-list (max-width: 680px) {
+    .col-place {
+      display: none;
+    }
+  }
+  @container job-list (max-width: 540px) {
+    .col-dates {
+      display: none;
+    }
+  }
+  @container job-list (max-width: 400px) {
+    .col-fit {
+      display: none;
+    }
+  }
+  :global(.kitty-popover.job-columns) {
+    width: min(240px, calc(100vw - 16px));
+  }
+  .column-choices {
+    display: grid;
+    gap: 8px;
+    margin: 0;
+    padding: 8px;
+    border: 0;
+  }
+  .column-choices legend {
+    margin-bottom: 4px;
+    padding: 0;
+    color: var(--muted);
+    font: 600 var(--fs-label) / 1.3 var(--font-ui);
   }
   .action-feedback {
     padding: 12px 16px;
@@ -1041,11 +1283,6 @@
     gap: 8px;
     font-size: 11px;
   }
-  .filters .select-all {
-    flex: none;
-    align-self: center;
-    margin: 0 6px 0 3px;
-  }
   /* What can be done with the ticked rows, in one piece at the bottom of the window. */
   .selection-bar {
     position: fixed;
@@ -1088,22 +1325,6 @@
   .bulk-row :global(.select-trigger) {
     flex: 1;
   }
-  .selectable-job {
-    display: flex;
-    align-items: center;
-    border-bottom: 1px solid var(--border);
-  }
-  .selectable-job:last-child {
-    border-bottom: 0;
-  }
-  .selectable-job .job-row {
-    border: 0;
-    min-width: 0;
-  }
-  /* A ticked row is marked by its checkbox alone: no band behind it. */
-  .row-check {
-    margin: 0 0 0 16px;
-  }
   @media (max-width: 600px) {
     .jobs-head {
       padding: 10px 12px;
@@ -1112,14 +1333,8 @@
       bottom: 12px;
       overflow-x: auto;
     }
-    .row-check {
-      margin-left: 10px;
-    }
     .filter-grid {
       grid-template-columns: 1fr;
-    }
-    .selectable-job .job-row {
-      padding-left: 10px;
     }
   }
 </style>

@@ -3127,47 +3127,119 @@ describe("one mind-map editor", () => {
   });
 });
 
-describe("pipeline swimlanes", () => {
-  test("rows are tracks and columns open stages; dragging or Shift+arrows moves a card, and Undo puts it back", async () => {
+describe("Track: funnel strip over a kanban board", () => {
+  const authed = (path) => fetch(path, { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } }).then((response) => response.json());
+  /** The funnel route's per-track counts added up for `tracks` (null: every track). */
+  const expected = (entries, tracks) => {
+    const mine = entries.filter((entry) => !tracks || tracks.includes(entry.track));
+    const sum = (pick) => mine.reduce((total, entry) => total + pick(entry), 0);
+    return {
+      reached: [0, 1, 2, 3].map((index) => sum((entry) => entry.stages[index].reached)),
+      now: [0, 1, 2, 3].map((index) => sum((entry) => entry.stages[index].now)),
+      closed: ["rejected", "ghosted", "withdrawn"].map((key) => sum((entry) => entry.closed[key])),
+    };
+  };
+  const LABELS = ["Applied", "Assessment", "Interview", "Offer"];
+  /** What the strip shows: each stage's count and "N here now", the rates, and the closed split. */
+  const strip = async (page) => {
+    const funnel = page.getByRole("region", { name: "Search funnel" });
+    const step = (label) => funnel.getByRole("group", { name: label, exact: true });
+    return {
+      reached: await Promise.all(LABELS.map(async (label) => Number(await step(label).locator("strong").textContent()))),
+      now: await Promise.all(LABELS.map(async (label) => Number((await step(label).locator("small").textContent()).match(/\d+/)[0]))),
+      closed: (await step("Closed").locator("small").textContent()).match(/\d+/g).map(Number),
+      rates: await funnel.getByRole("note").evaluateAll((nodes) => nodes.map((node) => node.getAttribute("aria-label"))),
+    };
+  };
+
+  test("the strip counts how far applications got, per track; cards show role, resume sent and a waiting-email badge", async () => {
     const { page, problems, context } = await open("pipeline");
-    const board = page.getByRole("grid", { name: "Applications by track and stage" });
-    await board.waitFor();
-    const heads = await board.getByRole("columnheader").allTextContents();
-    assert.deepEqual(heads.map((text) => text.trim()).filter(Boolean), ["Applied", "Assessment", "Interview", "Offer", "Closed"]);
-    const lanes = await board.getByRole("rowheader").allTextContents();
-    assert.ok(lanes.some((text) => text.includes("Quant")) && lanes.some((text) => text.includes("Gpu")), `lanes: ${lanes}`);
-    const cell = (lane, stage) => board.getByRole("gridcell", { name: `${lane} · ${stage}` });
+    const kanban = page.getByRole("group", { name: "Applications by stage" });
+    await kanban.waitFor();
+    const { tracks } = await page.evaluate(authed, "/api/pipeline/funnel");
+    const board = Object.values((await page.evaluate(authed, "/api/pipeline")).columns).flat();
+    // Columns per open stage plus Closed; no track lanes.
+    assert.deepEqual(await kanban.locator(":scope > [role=group]").evaluateAll((nodes) => nodes.map((node) => node.getAttribute("aria-label"))),
+      [...LABELS, "Closed"]);
+    // Every track: the strip matches the route, with the share that moved on between stages.
+    const all = expected(tracks, null);
+    assert.ok(all.reached[0] > all.reached[1] && all.reached[1] > 0, `demo funnel: ${JSON.stringify(all)}`);
+    const shown = await strip(page);
+    assert.deepEqual({ reached: shown.reached, now: shown.now, closed: shown.closed }, all);
+    assert.deepEqual(shown.rates, LABELS.slice(1).map((label, index) => all.reached[index]
+      ? `${Math.round((all.reached[index + 1] / all.reached[index]) * 100)}% of ${LABELS[index]} moved on to ${label}`
+      : `${label}: nothing to move on yet`));
+    // The Quant filter narrows both the strip and the board.
+    const filters = page.getByRole("group", { name: "Show track" });
+    await filters.getByRole("button", { name: /^Quant\b/ }).click();
+    assert.equal(await filters.getByRole("button", { name: /^Quant\b/ }).getAttribute("aria-pressed"), "true");
+    const quant = expected(tracks, ["quant"]);
+    const narrowed = await strip(page);
+    assert.deepEqual({ reached: narrowed.reached, now: narrowed.now, closed: narrowed.closed }, quant);
+    assert.equal(await kanban.locator("[data-job]").count(), board.filter((card) => card.track === "quant").length);
+    await filters.getByRole("button", { name: /^All tracks\b/ }).click();
+    assert.equal(await kanban.locator("[data-job]").count(), board.length);
+    // Q11's card: company and role, the resume sent, the waiting-email badge; no ages or next steps.
+    const tidewater = board.find((card) => card.company_name.startsWith("Tidewater"));
+    assert.ok(tidewater.has_proposals && tidewater.resume_label, "the demo's Tidewater card has a mail proposal and a resume");
+    const card = kanban.getByRole("group", { name: "Applied", exact: true }).getByRole("button", { name: /^Tidewater Markets \(demo\)/ });
+    assert.match(await card.getAttribute("aria-label"), /status email is waiting for review/);
+    assert.deepEqual((await card.innerText()).split("\n").map((line) => line.trim()).filter(Boolean),
+      ["Tidewater Markets (demo)", tidewater.title, tidewater.resume_label, "Email waiting"]);
+    assert.equal(await kanban.getByText("Email waiting").count(), board.filter((item) => item.has_proposals && !["rejected", "ghosted"].includes(item.status)).length);
+    const plain = board.find((item) => !item.has_proposals && item.status === "interview");
+    assert.doesNotMatch(await kanban.locator(`[data-job="${plain.job_id}"]`).innerText(), /Email waiting|\btoday\b|\b\d+d\b|→/);
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("dragging to a column or a track chip, or Shift+arrows, moves a card, and Undo puts it back", async () => {
+    // Tall enough that the track chips and the card's column are both on screen for a drag.
+    const { page, problems, context } = await open("pipeline", { viewport: { width: 1280, height: 1150 } });
+    const kanban = page.getByRole("group", { name: "Applications by stage" });
+    await kanban.waitFor();
+    const column = (stage) => kanban.getByRole("group", { name: stage, exact: true });
     const card = page.getByRole("button", { name: /^Tidewater Markets \(demo\)/ });
-    assert.equal(await cell("Quant", "Applied").getByRole("button", { name: /^Tidewater/ }).count(), 1);
-    // Drag into another track's Assessment cell: stage and track change together.
-    const from = await card.boundingBox();
-    const to = await cell("Gpu", "Assessment").boundingBox();
-    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
-    await page.mouse.down();
-    await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 8 });
-    await page.mouse.up();
-    await cell("Gpu", "Assessment").getByRole("button", { name: /^Tidewater/ }).waitFor();
-    const pill = page.getByRole("status").filter({ hasText: "Tidewater Markets (demo) moved to Assessment · Gpu" });
-    await pill.waitFor();
-    await pill.getByRole("button", { name: "Undo" }).click();
-    await cell("Quant", "Applied").getByRole("button", { name: /^Tidewater/ }).waitFor();
-    // Keyboard: Shift+→ advances the stage, Shift+↓ moves to the next track's lane.
-    await cell("Quant", "Applied").getByRole("button", { name: /^Tidewater/ }).focus();
+    const dragTo = async (target) => {
+      // Focusing the moved card can scroll the page; start each drag from the top.
+      await page.evaluate(() => document.scrollingElement.scrollTo(0, 0));
+      const from = await card.boundingBox();
+      const to = await target.boundingBox();
+      await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 8 });
+      await page.mouse.up();
+    };
+    const undo = (text) => page.getByRole("status").filter({ hasText: text }).getByRole("button", { name: "Undo" }).click();
+    assert.equal(await column("Applied").getByRole("button", { name: /^Tidewater/ }).count(), 1);
+    assert.match(await card.getAttribute("aria-label"), /, Quant\./);
+    // Drag into the Assessment column: the stage changes and the track stays.
+    await dragTo(column("Assessment"));
+    await column("Assessment").getByRole("button", { name: /^Tidewater/ }).waitFor();
+    await undo("Tidewater Markets (demo) moved to Assessment");
+    await column("Applied").getByRole("button", { name: /^Tidewater/ }).waitFor();
+    // Drag onto the Gpu track chip: the track changes and the stage stays.
+    await dragTo(page.getByRole("group", { name: "Show track" }).getByRole("button", { name: /^Gpu\b/ }));
+    await page.getByRole("status").filter({ hasText: "Tidewater Markets (demo) moved to Gpu" }).waitFor();
+    await page.waitForFunction(() => /, Gpu\./.test(document.querySelector('[aria-label^="Tidewater"]')?.getAttribute("aria-label") ?? ""));
+    assert.equal(await column("Applied").getByRole("button", { name: /^Tidewater/ }).count(), 1);
+    await undo("Tidewater Markets (demo) moved to Gpu");
+    await page.waitForFunction(() => /, Quant\./.test(document.querySelector('[aria-label^="Tidewater"]')?.getAttribute("aria-label") ?? ""));
+    // Keyboard: Shift+→ advances the stage, Shift+↓ moves it to the next track.
+    await column("Applied").getByRole("button", { name: /^Tidewater/ }).focus();
     await page.keyboard.press("Shift+ArrowRight");
-    await cell("Quant", "Assessment").getByRole("button", { name: /^Tidewater/ }).waitFor();
+    await column("Assessment").getByRole("button", { name: /^Tidewater/ }).waitFor();
     await page.keyboard.press("Shift+ArrowDown");
-    await cell("Gpu", "Assessment").getByRole("button", { name: /^Tidewater/ }).waitFor();
     // The board reloads once the queued saves land and then refocuses the card.
-    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label")?.startsWith("Tidewater"), null, { timeout: 5_000 })
+    await page.waitForFunction(() => /^Tidewater.*, Gpu\./.test(document.activeElement?.getAttribute("aria-label") ?? ""), null, { timeout: 5_000 })
       .catch(() => assert.fail("focus did not follow the card"));
-    await page.getByRole("status").filter({ hasText: "Tidewater Markets (demo) moved to Gpu" }).getByRole("button", { name: "Undo" }).click();
-    await cell("Quant", "Assessment").getByRole("button", { name: /^Tidewater/ }).waitFor();
+    await undo("Tidewater Markets (demo) moved to Gpu");
+    await page.waitForFunction(() => /, Quant\./.test(document.querySelector('[aria-label^="Tidewater"]')?.getAttribute("aria-label") ?? ""));
+    await column("Assessment").getByRole("button", { name: /^Tidewater/ }).waitFor();
     // The status history is append-only: the move and its undo are both recorded.
-    const jobId = await page.evaluate(async () => {
-      const board = await (await fetch("/api/pipeline", { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json();
-      return Object.values(board.columns).flat().find((card) => card.company_name.startsWith("Tidewater")).job_id;
-    });
-    const history = await page.evaluate(async (id) => (await (await fetch(`/api/jobs/${id}`, { headers: { "X-Kitty-Secret": window.__KITTY_UI_SECRET__ } })).json()).application.history, jobId);
+    const jobId = Object.values((await page.evaluate(authed, "/api/pipeline")).columns).flat()
+      .find((item) => item.company_name.startsWith("Tidewater")).job_id;
+    const history = (await page.evaluate(authed, `/api/jobs/${jobId}`)).application.history;
     assert.ok(history.some((event) => event.undoes_event_id), "undo did not append a reverting event");
     assert.deepEqual(problems, []);
     await context.close();

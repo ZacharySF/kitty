@@ -129,7 +129,7 @@ def _pdf_available(settings: Settings, resume: Resume) -> bool:
 #: belongs to the always-on core.
 ROUTE_MODULES: tuple[tuple[str, str], ...] = tuple(sorted((
     *((prefix, "applyai") for prefix in (
-        "/api/dashboard", "/api/job-options", "/api/jobs", "/api/pipeline", "/api/reminders",
+        "/api/career", "/api/dashboard", "/api/job-options", "/api/jobs", "/api/pipeline", "/api/reminders",
         "/api/job-tools", "/api/automation", "/api/questions", "/api/resumes", "/api/profile",
         "/api/sources", "/api/finder", "/api/reports", "/api/mail", "/api/triage",
         "/api/workshop", "/api/workshop-ai", "/api/workshop-batches",
@@ -155,7 +155,7 @@ ROUTE_PACKS: tuple[tuple[str, str], ...] = (
 #: The live channel starts first and the build second: other extensions read both.
 EXTENSIONS: tuple[tuple[str | None, str], ...] = (
     (None, "web_live"), (None, "web_build"),
-    ("applyai", "web_jobs"), ("applyai", "web_automation"), ("applyai", "web_resumes"),
+    ("applyai", "web_jobs"), ("applyai", "web_career"), ("applyai", "web_automation"), ("applyai", "web_resumes"),
     ("applyai", "web_workshop"), ("applyai", "web_workshop_ai"), ("applyai", "web_workshop_batches"),
     ("applyai", "web_profile"), ("applyai", "web_insights"), ("applyai", "web_apply_accounts"),
     ("workspace", "web_calendar"), ("workspace", "web_opportunities"), ("workspace", "web_study"),

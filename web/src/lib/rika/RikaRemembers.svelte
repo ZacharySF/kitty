@@ -1,18 +1,22 @@
 <script lang="ts">
+  import type { Snippet } from "svelte";
   import { onMount } from "svelte";
   import { api } from "../api";
   import { skillLine, topSkills, type Learning, type LearningsState } from "./learnings";
   import { requestMemory } from "./memoryRequest.svelte";
 
   /**
-   * The Workshop's "Rika remembers" strip: the five skills the postings the user acts on
-   * ask for most, each marked when a confirmed fact backs it, and a way into Rika's Memory
-   * where every learning can be pinned or forgotten. Nothing shows until there is one.
+   * The "Rika remembers" strip (the Workshop's, Career's Overview): the five skills the
+   * postings the user acts on ask for most, each marked when a confirmed fact backs it, and a
+   * way into Rika's Memory where every learning can be pinned or forgotten. Nothing shows
+   * until there is one; `empty`, when given, shows once the answer holds none.
    */
-  let { onopen }: { onopen: () => void } = $props();
+  let { onopen, empty }: { onopen: () => void; empty?: Snippet } = $props();
   let skills = $state<Learning[]>([]);
+  let loaded = $state(false);
   onMount(() => {
-    void api<LearningsState>("/rika/learnings").then((state) => (skills = topSkills(state.learnings))).catch(() => (skills = []));
+    void api<LearningsState>("/rika/learnings").then((state) => (skills = topSkills(state.learnings))).catch(() => (skills = []))
+      .finally(() => (loaded = true));
   });
 </script>
 
@@ -26,6 +30,8 @@
     </ul>
     <button class="text-button" onclick={() => { requestMemory(); onopen(); }}>Memory</button>
   </div>
+{:else if loaded && empty}
+  {@render empty()}
 {/if}
 
 <style>
