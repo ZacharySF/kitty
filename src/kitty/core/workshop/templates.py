@@ -1,4 +1,5 @@
 """Small, readable local templates; blank fields are not applicant claims."""
+from .families import TEMPLATES as _FAMILIES
 from .store import WorkshopError
 
 _HTML = """<!doctype html>
@@ -234,6 +235,7 @@ _TEMPLATES = [
     {"id": "latex-clean", "label": "Clean LaTeX", "format": "latex", "description": "Article layout; offline Tectonic bundle required.", "source": _LATEX},
     {"id": "latex-jake", "label": "Jake's Resume (LaTeX)", "format": "latex", "engine": "pdflatex",
      "description": "Jake Gutierrez's one-page software resume (MIT); compiles with pdfLaTeX.", "source": _JAKE},
+    *_FAMILIES,
 ]
 
 

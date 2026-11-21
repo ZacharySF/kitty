@@ -8,11 +8,15 @@
   import { useWorkspaceContext } from "./workspaceContext.svelte";
   import Loader from "./Loader.svelte";
   import { useFocus } from "./rika/focus.svelte";
+  import { fitLabel, type JobFit } from "./jobs/table";
+  import { tailorForJob } from "./workshopHandoff";
+  import type { View } from "./workspace";
 
   let {
     id,
     onclose,
     onchange,
+    onview,
     initialCommand = "",
     demo = false,
     focus = "job",
@@ -20,11 +24,22 @@
     id: number;
     onclose: () => void;
     onchange: () => Promise<void>;
+    /** Opens another page; with it, Tailor resume opens the Resume Workshop for this job. */
+    onview?: (view: View) => void;
     initialCommand?: string;
     demo?: boolean;
     /** What Rika is told is open: a job (Jobs) or an application (Track). */
     focus?: "job" | "application";
   } = $props();
+  type Tab = "fit" | "posting" | "application";
+  const TABS: [Tab, string][] = [["fit", "Fit"], ["posting", "Posting"], ["application", "Application"]];
+  /** Keys whose control or preparation lives on the Application tab. */
+  const APPLICATION_KEYS = ["t", "k", "s", "n", "d", "R", "e", "a", "F", "w", "q"];
+  /** An application (Track) opens on its own tab; a job opens on whether it fits. */
+  const openingTab = (): Tab => (focus === "application" || APPLICATION_KEYS.includes(initialCommand) ? "application" : "fit");
+  let tab = $state<Tab>(openingTab());
+  let fit = $state<JobFit | null>(null);
+  let fitError = $state("");
   const pane = useWorkspaceContext();
   const fieldId = (name: string) => `${pane.id}-job-${id}-${name}`;
   let job = $state<JobDetail | null>(null);
@@ -81,6 +96,32 @@
     revision += 1;
     await onchange();
   }
+  async function loadFit() {
+    try {
+      fit = (await api<{ jobs: JobFit[] }>(`/jobs/fit?ids=${id}`)).jobs[0] ?? null;
+      if (!fit) fitError = "This job no longer exists.";
+    } catch (cause) {
+      fitError = (cause as Error).message;
+    }
+  }
+  function tailor() {
+    if (!job || !onview) return;
+    tailorForJob({ id: job.id, company: job.company, title: job.title });
+    onview("workshop");
+  }
+  /** Arrow keys, Home and End move between the tabs (the ARIA tabs pattern). */
+  async function tabKey(event: KeyboardEvent) {
+    const keys = ["ArrowLeft", "ArrowRight", "Home", "End"];
+    if (!keys.includes(event.key)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const at = TABS.findIndex(([key]) => key === tab);
+    const next = event.key === "Home" ? 0 : event.key === "End" ? TABS.length - 1
+      : (at + (event.key === "ArrowRight" ? 1 : -1) + TABS.length) % TABS.length;
+    tab = TABS[next][0];
+    await tick();
+    document.getElementById(fieldId(`tab-${tab}`))?.focus();
+  }
 
   export async function handleKey(event: KeyboardEvent): Promise<boolean> {
     if (!pane.active || event.ctrlKey || event.metaKey || event.altKey || busy) return false;
@@ -89,8 +130,12 @@
       message = "Posting unavailable. Recheck availability before preparing it.";
       return true;
     }
-    if (["F", "w", "q"].includes(event.key))
+    if (["F", "w", "q"].includes(event.key)) {
+      // The preparation panel (and the plan it opens) lives on the Application tab.
+      tab = "application";
+      await tick();
       return automation?.handleKey(event) ?? false;
+    }
     if (event.key === "r") {
       event.preventDefault();
       await changed();
@@ -124,6 +169,9 @@
     };
     if (control[event.key]) {
       event.preventDefault();
+      // Every control a key reaches sits on the Application tab.
+      tab = "application";
+      await tick();
       const target = document.getElementById(fieldId(control[event.key]));
       let disclosure = target?.closest("details");
       while (disclosure) {
@@ -138,6 +186,7 @@
   }
 
   onMount(() => {
+    void loadFit();
     void (async () => {
       try {
         const [detail, library] = await Promise.all([
@@ -179,10 +228,13 @@
           : {}),
       });
       await changed();
-      message =
-        action === "applied"
-          ? "Submission recorded. No application was sent."
-          : "Saved to your workspace.";
+      const done: Record<string, string> = {
+        applied: "Submission recorded. No application was sent.",
+        queue: "Added to your preparation queue.",
+        skip: "Skipped this job.",
+        restore: "Back to not reviewed.",
+      };
+      message = done[action] ?? "Saved to your workspace.";
       confirmation = false;
     } catch (cause) {
       error = (cause as Error).message;
@@ -203,22 +255,106 @@
   {#if error}<p class="error-banner" role="alert">{error}</p>{/if}
   {#if !job && !error}<Loader kind="view" label="Opening opportunity…" />{/if}
   {#if job}
-    <div class="detail-body">
-      <div class="detail-company">
-        <span class="company-mark">{job.company.slice(0, 2).toUpperCase()}</span
-        ><span>{job.company}</span>
+    {@const queued = job.queue_state === "queued"}
+    {@const skipped = job.queue_state === "skipped"}
+    <!-- Q8 B: what the job is and the decisions on it first, then Fit / Posting / Application. -->
+    <header class="hero">
+      <div class="who">
+        <span class="company-mark">{job.company.slice(0, 2).toUpperCase()}</span><span>{job.company}</span>
+        {#if fit?.total}<span class="fit-chip">{fitLabel(fit)}</span>{/if}
       </div>
       <h2 bind:this={heading} tabindex="-1">{job.title}</h2>
-      <p class="muted location">
-        <Icon name="location" size={16} />{job.location ||
-          "Location not provided"}
+      <p class="meta-line">
+        <span><Icon name="location" size={14} />{job.location || "Location not provided"}{job.is_remote ? " · Remote" : ""}</span>
+        {#if fit?.pay}<span class="pay">{fit.pay.text}</span>{/if}
+        <span><Icon name="calendar" size={14} />{job.deadline_at ? `Due ${dateLabel(job.deadline_at)}` : "No deadline"}</span>
       </p>
       <div class="tag-row">
-        <span class="badge" title={job.tier ? `Rank ${job.tier}` : undefined}>{job.tier ? ({ A: "Top match", B: "Good match", C: "Low match" }[job.tier] ?? `Rank ${job.tier}`) : "Not ranked"}</span
-        ><span class="badge">{label(job.eligibility)}</span><span class="badge"
-          >{label(job.status || job.queue_state)}</span
-        >
+        <span class="badge">{label(job.status || job.queue_state)}</span>
+        {#if !job.is_active}<span class="badge">Posting unavailable</span>{/if}
       </div>
+      <div class="decide" role="group" aria-label="Decide on this job">
+        {#if !job.application}
+          <button class="button primary" disabled={busy} aria-pressed={queued} title={queued ? "Take it out of your preparation queue" : "Add it to your preparation queue"}
+            onclick={() => mutate(queued ? "restore" : "queue")}><Icon name="queue" size={15} />{queued ? "Queued" : "Queue"}</button>
+          <button class="button" disabled={busy} aria-pressed={skipped} title={skipped ? "Bring it back as not reviewed" : "Skip this job"}
+            onclick={() => mutate(skipped ? "restore" : "skip")}>{skipped ? "Skipped" : "Skip"}</button>
+        {/if}
+        <button class="button" disabled={busy} aria-pressed={job.favorite} onclick={() => mutate("favorite", !job?.favorite)}
+          ><Icon name="favorites" size={15} />{job.favorite ? "Saved" : "Save"}</button>
+        {#if onview}<button class="button" title="Open the Resume Workshop with this job linked" onclick={tailor}
+            ><Icon name="resumes" size={15} />Tailor resume</button>{/if}
+      </div>
+      {#if message}<p class="success-message" role="status">{message}</p>{/if}
+    </header>
+    <div class="tabs" role="tablist" aria-label="Job details" tabindex="-1" onkeydown={tabKey}>
+      {#each TABS as [key, name] (key)}
+        <button
+          type="button"
+          role="tab"
+          id={fieldId(`tab-${key}`)}
+          aria-selected={tab === key}
+          aria-controls={fieldId(`panel-${key}`)}
+          tabindex={tab === key ? 0 : -1}
+          onclick={() => (tab = key)}>{name}</button>
+      {/each}
+    </div>
+    <!-- Every panel stays mounted (hidden when not chosen), so a key's control and the
+         preparation in progress are there whichever tab is showing. -->
+    <div class="tab-body" role="tabpanel" id={fieldId("panel-fit")} aria-labelledby={fieldId("tab-fit")} hidden={tab !== "fit"}>
+      {#if fitError}<p class="muted">{fitError}</p>
+      {:else if !fit}<Loader label="Comparing with your resume…" />
+      {:else if fit.error}<p class="muted">{fit.error}</p>
+      {:else if !fit.total}<p class="muted">This posting names none of the skills rika! compares (config/resume_terms.yaml).</p>
+      {:else}
+        <p class="tally"><strong>{fit.covered} of {fit.total}</strong> skills this posting asks for are covered</p>
+        <ul class="checklist" aria-label="Posting skills">
+          {#each fit.skills as skill (skill.term)}
+            <li class:on={skill.covered}>
+              <span class="tick" aria-hidden="true">{#if skill.covered}<Icon name="check" size={13} />{/if}</span>
+              <span class="name">{skill.term}</span>
+              {#if skill.covered === "resume"}<span class="src">On your resume</span>
+              {:else if skill.covered === "fact"}<span class="src fact"><b class="diamond" aria-hidden="true"></b>Confirmed fact</span>
+              {:else}<span class="src gap">Not covered</span>{/if}
+            </li>
+          {/each}
+        </ul>
+        <p class="legend">
+          {fit.document
+            ? `Compared with “${fit.document.title}” (its ${fit.compared_with}).`
+            : "No Resume Workshop resume yet, so only your confirmed facts count."}
+          {#if fit.skills.some((skill) => skill.covered === "fact")} A confirmed fact is something you told rika! that this resume does not say yet.{/if}
+        </p>
+      {/if}
+      <h3>Requirements today</h3>
+      <p><span class="badge">{label(job.eligibility)}</span></p>
+      <p>
+        {job.eligibility_reason ||
+          job.tier_reason ||
+          "No fit assessment recorded. Review the posting requirements before applying."}
+      </p>
+      {#if job.tier_reason && job.eligibility_reason}<p class="muted">{job.tier ? `Rank ${job.tier}: ` : ""}{job.tier_reason}</p>{/if}
+    </div>
+    <div class="tab-body" role="tabpanel" id={fieldId("panel-posting")} aria-labelledby={fieldId("tab-posting")} hidden={tab !== "posting"}>
+      <dl class="facts">
+        <div>
+          <dt>Categories</dt>
+          <dd>{job.tracks.join(" · ") || "Unassigned"}</dd>
+        </div>
+        <div>
+          <dt>Posted</dt>
+          <dd>{dateLabel(job.posted_at)}</dd>
+        </div>
+        <div>
+          <dt>Deadline</dt>
+          <dd>{dateLabel(job.deadline_at)}</dd>
+        </div>
+      </dl>
+      <h3>Description</h3>
+      <p class="description">
+        {job.description ||
+          "No description saved. Open the original posting for details."}
+      </p>
       <div class="detail-actions">
         {#if safeUrl(job.url) && job.is_active}<a
             class="button"
@@ -227,74 +363,14 @@
             rel="noopener noreferrer"
             >Read original posting <Icon name="external" size={16} /></a
           >{:else if !job.is_active}<span class="badge">Posting unavailable</span>{/if}
-        <button
-          class="button"
-          disabled={busy}
-          aria-pressed={job.favorite}
-          onclick={() => mutate("favorite", !job?.favorite)}
-          ><Icon name="favorites" size={16} />{job.favorite
-            ? "Saved"
-            : "Save"}</button
-        >
         <PostingAvailability jobIds={[id]} {demo} oncomplete={() => changed()} />
       </div>
       <p class="muted" title={job.verification_reason || undefined}>
         {job.verification_checked_at ? `Last checked ${dateLabel(job.verification_checked_at)}` : "Availability not yet checked"}
       </p>
-      {#if !job.application}<details class="job-organizing">
-          <summary>Organize this job</summary>
-          <div class="detail-actions">
-            {#if job.queue_state !== "queued"}<button
-                class="button"
-                disabled={busy}
-                onclick={() => mutate("queue")}>Add to preparation queue</button
-              >{/if}
-            {#if job.queue_state !== "skipped"}<button
-                class="button"
-                disabled={busy}
-                onclick={() => mutate("skip")}>Skip this job</button
-              >
-            {:else}<button
-                class="button"
-                disabled={busy}
-                onclick={() => mutate("restore")}>Restore this job</button
-              >{/if}
-          </div>
-        </details>{/if}
-      {#if message}<p class="success-message" role="status">{message}</p>{/if}
-      <div class="detail-section">
-        <h3>Is this job right for you?</h3>
-        <p>
-          {job.tier_reason ||
-            job.eligibility_reason ||
-            "No fit assessment recorded. Review the posting requirements before applying."}
-        </p>
-        {#if job.tier_reason && job.eligibility_reason}<p class="muted">
-            {job.eligibility_reason}
-          </p>{/if}
-        <dl class="facts">
-          <div>
-            <dt>Categories</dt>
-            <dd>{job.tracks.join(" · ") || "Unassigned"}</dd>
-          </div>
-          <div>
-            <dt>Posted</dt>
-            <dd>{dateLabel(job.posted_at)}</dd>
-          </div>
-          <div>
-            <dt>Deadline</dt>
-            <dd>{dateLabel(job.deadline_at)}</dd>
-          </div>
-        </dl>
-      </div>
-      <details class="detail-section">
-        <summary>Full job description</summary>
-        <p class="description">
-          {job.description ||
-            "No description saved. Open the original posting for details."}
-        </p>
-      </details>
-      <div class="detail-section">
+    </div>
+    <div class="tab-body" role="tabpanel" id={fieldId("panel-application")} aria-labelledby={fieldId("tab-application")} hidden={tab !== "application"}>
+      <section class="detail-section">
         <h3>Resume for this application</h3>
         <p class="muted">{job.resume?.label || "No resume selected"}</p>
         {#if !job.application}
@@ -342,7 +418,7 @@
         {#if job.fill_blocker}<p class="error-banner">
             {job.fill_blocker}
           </p>{/if}
-      </div>
+      </section>
       <Automation
         bind:this={automation}
         jobIds={[id]}
@@ -350,8 +426,8 @@
         {demo}
         onchanged={changed}
       />
-      <details class="detail-section">
-        <summary>Record a submission or update application status</summary>
+      <section class="detail-section">
+        <h3>{job.application ? "Update the application status" : "Record a submission"}</h3>
         {#if job.application}
           <p class="muted">
             Current status: <strong>{label(job.application.status)}</strong>
@@ -440,9 +516,9 @@
             ><Icon name="check" size={16} />Record submission</button
           >
         {/if}
-      </details>
-      <details class="detail-section">
-        <summary>Your notes</summary>
+      </section>
+      <section class="detail-section">
+        <h3>Your notes</h3>
         <form
           class="notes-form"
           onsubmit={(event) => {
@@ -459,7 +535,7 @@
           ></textarea>
           <button class="button" disabled={busy}>Save notes</button>
         </form>
-      </details>
+      </section>
       <JobTools
         bind:this={tools}
         {id}
@@ -472,11 +548,185 @@
 </aside>
 
 <style>
-  .job-organizing {
-    margin-top: 14px;
+  .hero {
+    padding: 20px 24px 16px;
   }
-  .job-organizing .detail-actions {
-    margin-top: 10px;
+  .who {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .who .company-mark {
+    width: 34px;
+    height: 34px;
+    font-size: 11px;
+  }
+  .fit-chip {
+    margin-left: auto;
+    padding: 3px 9px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: var(--ink);
+    font: 600 11px/1.3 var(--font-ui);
+    white-space: nowrap;
+  }
+  .meta-line {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 16px;
+    margin: 0 0 10px;
+    color: var(--muted);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+  .meta-line span {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .meta-line .pay {
+    color: var(--ink);
+    font-weight: 550;
+  }
+  .decide {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 16px;
+  }
+  .tabs {
+    display: flex;
+    gap: 4px;
+    padding: 0 18px;
+    border-block: 1px solid var(--border);
+  }
+  :global(:root body) .tabs [role="tab"] {
+    position: relative;
+    height: 40px;
+    min-height: 0;
+    margin: 0;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: var(--muted);
+    font: 500 13px/1 var(--font-ui);
+  }
+  :global(:root body) .tabs [role="tab"]:hover {
+    color: var(--ink);
+  }
+  :global(:root body) .tabs [role="tab"][aria-selected="true"] {
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .tabs [role="tab"][aria-selected="true"]::after {
+    content: "";
+    position: absolute;
+    left: 10px;
+    right: 10px;
+    bottom: -1px;
+    height: 2px;
+    border-radius: 2px;
+    background: var(--accent);
+  }
+  .tabs [role="tab"]:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+  .tab-body {
+    padding: 20px 24px 26px;
+  }
+  .tab-body[hidden] {
+    display: none;
+  }
+  .tab-body > h3 {
+    margin: 22px 0 8px;
+    font-size: 13px;
+  }
+  .tab-body > p {
+    font-size: 13px;
+    line-height: 1.65;
+  }
+  .tab-body > .detail-section:first-child {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: 0;
+  }
+  .tally {
+    margin: 0 0 10px;
+    color: var(--muted);
+  }
+  .tally strong {
+    color: var(--ink);
+  }
+  .checklist {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: var(--r-item, 8px);
+    list-style: none;
+  }
+  .checklist li {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .checklist li:last-child {
+    border-bottom: 0;
+  }
+  .checklist li.on {
+    color: var(--ink);
+  }
+  .tick {
+    flex: none;
+    display: inline-grid;
+    place-items: center;
+    width: 18px;
+    height: 18px;
+    box-sizing: border-box;
+    border: 1.5px dashed var(--subtle);
+    border-radius: 50%;
+  }
+  li.on .tick {
+    border: 0;
+    background: color-mix(in srgb, var(--success) 22%, var(--surface));
+    color: var(--success);
+  }
+  .name {
+    flex: 1;
+    min-width: 0;
+  }
+  .src {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--subtle);
+    font-size: 11px;
+  }
+  .src.fact {
+    color: var(--violet, var(--accent));
+  }
+  .src.gap {
+    font-style: italic;
+  }
+  .diamond {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    background: currentColor;
+    transform: rotate(45deg);
+  }
+  .legend {
+    margin: 10px 0 0;
+    color: var(--subtle);
+    font-size: 12px !important;
   }
   .notes-form {
     margin-top: 14px;
@@ -497,32 +747,17 @@
     max-height: calc(100vh - var(--workbench-top, 0px) - 32px);
     overflow-y: auto;
   }
-  .detail-body {
-    padding: 24px;
-  }
-  .detail-company {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    color: var(--muted);
-    font-size: 13px;
-  }
   h2 {
-    font-size: 24px;
-    line-height: 1.3;
-    margin: 20px 0 10px;
+    font-size: 23px;
+    line-height: 1.25;
+    margin: 14px 0 8px;
     letter-spacing: -0.025em;
-  }
-  .location {
-    display: flex;
-    align-items: center;
-    gap: 6px;
   }
   .detail-actions {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
-    margin-top: 24px;
+    margin-top: 20px;
   }
   .detail-section {
     border-top: 1px solid var(--border);
@@ -578,12 +813,8 @@
     resize: vertical;
     margin-bottom: 10px;
   }
-  summary {
-    cursor: pointer;
-    font-size: 14px;
-    padding: 4px 0;
-  }
   .description {
+    margin-top: 0;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }

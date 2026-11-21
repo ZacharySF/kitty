@@ -137,6 +137,29 @@ def test_pipeline_track_moves_leave_status_history_alone(app, workspace):
     assert applications.get_application_for_job(workspace.conn, job.id).track is None
 
 
+def test_pipeline_funnel_counts_stages_reached_and_closed_per_track(app, workspace):
+    first, second = workspace.config.track_names[:2]
+    moves = (("interview", first), ("rejected", first), ("applied", second), ("oa", None))
+    for number, (status, track) in enumerate(moves, start=1):
+        job = posting(workspace, number)
+        endpoint = f"/api/jobs/{job.id}"
+        app.mutate(workspace.conn, endpoint, {"action": "applied", "value": True})
+        app.mutate(workspace.conn, endpoint, {"action": "track", "value": track})
+        if status != "applied":
+            app.mutate(workspace.conn, endpoint, {"action": "status", "value": status})
+    tracks = {entry["track"]: entry for entry in app.get_json(workspace.conn, "/api/pipeline/funnel", {})["tracks"]}
+    assert set(tracks) == {first, second, None}
+    assert [(stage["label"], stage["reached"], stage["now"]) for stage in tracks[first]["stages"]] == [
+        ("Applied", 2, 0), ("Assessment", 1, 0), ("Interview", 1, 1), ("Offer", 0, 0),
+    ]
+    assert tracks[first]["closed"] == {"rejected": 1, "ghosted": 0, "withdrawn": 0}
+    assert [stage["reached"] for stage in tracks[second]["stages"]] == [1, 0, 0, 0]
+    assert [stage["now"] for stage in tracks[None]["stages"]] == [0, 1, 0, 0]
+    with pytest.raises(APIError) as refused:
+        app.get_json(workspace.conn, "/api/pipeline/funnel", {"track": first})
+    assert refused.value.status == 400
+
+
 def test_applied_job_bulk_state_failure_preserves_every_selected_job(app, workspace):
     first, second = posting(workspace, 1), posting(workspace, 2)
     app.mutate(workspace.conn, f"/api/jobs/{second.id}", {"action": "applied", "value": True})

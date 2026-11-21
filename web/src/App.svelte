@@ -568,7 +568,7 @@
       if (stepBar(bar, event.key === "ArrowRight" ? 1 : -1)) { event.preventDefault(); return; }
     }
     const control = target?.closest('button,a,summary,input[type="checkbox"],input[type="radio"],input[type="button"],input[type="submit"]');
-    if (control && !control.matches(".job-row,[data-pipeline]") && ["Enter", " "].includes(event.key)) return;
+    if (control && !control.matches("[data-job-id],[data-pipeline]") && ["Enter", " "].includes(event.key)) return;
     if (fills && event.key === "/") { event.preventDefault(); activeTab.pane?.focusSearch(); return; }
     await activeTab.pane?.handleKey(event);
   }

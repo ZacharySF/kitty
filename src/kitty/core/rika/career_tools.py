@@ -33,7 +33,7 @@ from kitty.core.rika.tools import (
     obj,
     string,
 )
-from kitty.core.workshop import ai, ats, render, store
+from kitty.core.workshop import ai, ats, store
 from kitty.dates import now, now_iso, parse_user_date, to_iso
 from kitty.db.connection import transaction
 from kitty.models import PIPELINE_STATUSES
@@ -288,19 +288,8 @@ def _document(ctx: Context, args: dict, job_id: int) -> dict | None:
             return store.get_doc(ctx.conn, args["doc_id"])
         except store.WorkshopError:
             raise ToolError(f"No Resume Workshop document has id {args['doc_id']!r}") from None
-    docs = [doc for doc in store.list_docs(ctx.conn) if not doc["archived"]]
-    chosen = next((doc for doc in docs if doc["job_id"] == job_id), None) or next(
-        (doc for doc in docs if doc["kind"] == "master"), None)
+    chosen = ats.default_document(store.list_docs(ctx.conn), job_id)
     return store.get_doc(ctx.conn, chosen["id"]) if chosen else None
-
-
-def _resume_text(ctx: Context, doc: dict) -> tuple[str, str]:
-    """The compiled PDF's extracted text when this revision was compiled, else the saved source."""
-    try:
-        extracted = render.compiled_checks(ctx.app.settings, doc).get("extracted_text")
-    except store.WorkshopError:
-        extracted = None
-    return (extracted, "compiled PDF text") if extracted else (doc["source"], "document source")
 
 
 def _match(ctx: Context, args: dict) -> Result:
@@ -319,18 +308,12 @@ def _match(ctx: Context, args: dict) -> Result:
             "note": "Enable hosted resume editing in Resume Workshop → Rika to compare these with your resume "
                     "and confirmed facts; until then resume content stays out of chat."})
     doc = _document(ctx, args, job.id)
-    text, compared = _resume_text(ctx, doc) if doc else ("", None)
+    text, compared = ats.resume_text(ctx.app.settings, doc) if doc else ("", None)
     report = ats.job_terms(ctx.conn, vocabulary, {"job_id": job.id}, text)
     if report.get("error"):
         raise ToolError(report["error"])
-    matchers = {matcher.term: matcher for matcher in resume_coach.compile_vocabulary(vocabulary)}
-    facts = [fact for fact in ai.list_facts(ctx.conn) if fact["confirmed"]]
-    backed = []
-    for term in report["missing"]:
-        ids = [fact["id"] for fact in facts
-               if matchers[term].find(normal := resume_coach.normalize_text(fact["text"]), normal.lower())]
-        if ids:
-            backed.append({"term": term, "fact_ids": ids})
+    backed = [{"term": term, "fact_ids": ids} for term, ids in ats.fact_backing(
+        resume_coach.compile_vocabulary(vocabulary), ai.list_facts(ctx.conn), report["missing"]).items()]
     found = report["found"]
     asked = len(found) + len(report["missing"])
     return Result(f"{job.title} asks for {_plural(asked, 'term')}; your resume has {len(found)}", {

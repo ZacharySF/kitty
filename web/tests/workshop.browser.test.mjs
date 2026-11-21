@@ -32,3 +32,20 @@ test('create, autosave, reopen, export and preserve a conflicting draft', async 
   await page.waitForTimeout(1500); assert.equal(await editor.inputValue(), draft);
   assert.deepEqual(errors, []); await context.close();
 });
+test('the gallery offers Classic, Modern and Compact, each sketched with a centred name over full-width heading rules', async () => {
+  const context = await browser.newContext(); await kitty.authorize(context); await routeBuild(context);
+  await context.route('**/api/account', route => route.request().method() === 'GET' ? route.fulfill({ json: { configured: false, identity: null, onboarding: { welcome_completed: true, tutorial_completed: true } } }) : route.continue());
+  const page = await context.newPage(); const errors = []; page.on('pageerror', error => errors.push(error.message));
+  await page.goto(`${base}#workshop`);
+  for (const label of ['Classic', 'Modern', 'Compact']) {
+    await page.getByRole('radio', { name: new RegExp(`^${label}`) }).first().waitFor();
+    assert.equal(await page.getByRole('radio', { name: new RegExp(`^${label}`) }).count(), 2, `${label} in LaTeX and HTML`);
+  }
+  for (const id of ['latex-classic', 'latex-modern', 'latex-compact', 'html-classic', 'html-modern', 'html-compact']) {
+    const thumb = page.locator(`.thumb[data-look="${id}"]`);
+    const [paper, name, rule] = [await thumb.boundingBox(), await thumb.locator('b').boundingBox(), await thumb.locator('s').first().boundingBox()];
+    assert.ok(Math.abs(name.x + name.width / 2 - (paper.x + paper.width / 2)) < 2, `${id}: the name is centred`);
+    assert.ok(rule.width > paper.width * 0.7, `${id}: headings sit on a full-width rule`);
+  }
+  assert.deepEqual(errors, []); await context.close();
+});

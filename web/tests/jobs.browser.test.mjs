@@ -85,8 +85,8 @@ after(async () => {
   backend?.kill();
 });
 
-/** Opens a fresh returning-user profile on `hash`. */
-async function open(hash, { viewport = VIEWPORT } = {}) {
+/** Opens a fresh returning-user profile on `hash`; `setup` routes the context before the page loads. */
+async function open(hash, { viewport = VIEWPORT, setup } = {}) {
   const context = await browser.newContext({ viewport });
   await authorize(context, secret);
   await context.route("**/api/account", (route) =>
@@ -95,6 +95,7 @@ async function open(hash, { viewport = VIEWPORT } = {}) {
       : route.continue(),
   );
   await routeBuild(context);
+  await setup?.(context);
   const page = await context.newPage();
   const problems = [];
   page.on("pageerror", (error) => problems.push(error.message));
@@ -111,16 +112,26 @@ const BORDER_PROBE = `(style, side) => {
 }`;
 
 describe("Career", () => {
-  test("Career is three steps with More at the far right; Find opens on the list, with the map one press away", async () => {
+  /** The rail's place labels, top to bottom (the quieter links are not places). */
+  const placeLabels = (rail) => rail.locator("a[data-place].place .label").allInnerTexts();
+  const place = (rail, label) => rail.locator("a.place", { has: rail.page().locator(".label", { hasText: new RegExp(`^${label}$`) }) });
+  const summaryAnswer = (page) => page.waitForResponse((response) => new URL(response.url()).pathname === "/api/career/summary").then((response) => response.json());
+  const jobsTotal = (page, view) => page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return url.pathname === "/api/jobs" && url.searchParams.get("view") === view;
+  }).then((response) => response.json()).then((body) => body.total);
+
+  test("Career is a left rail with live counts; Find opens on the list, with the map one press away", async () => {
     const { page, problems, context } = await open("jobs");
-    const steps = page.getByRole("navigation", { name: "Career" });
-    await steps.waitFor();
-    assert.deepEqual(await steps.getByRole("button").allInnerTexts(), ["Track", "Find", "Saved", "More"]);
-    assert.equal(await steps.getByRole("button", { name: "Find", exact: true }).getAttribute("aria-current"), "page");
-    // More is the bar's last item and sits at its far right, level with the page's right edge.
-    const more = steps.getByRole("button", { name: "More", exact: true });
-    const [moreBox, pageBox] = [await more.boundingBox(), await page.locator("section.opportunities").boundingBox()];
-    assert.ok(Math.abs(moreBox.x + moreBox.width - (pageBox.x + pageBox.width)) <= 2, `More is not at the far right (${moreBox.x + moreBox.width} vs ${pageBox.x + pageBox.width})`);
+    const rail = page.getByRole("navigation", { name: "Career" });
+    await rail.waitFor();
+    assert.deepEqual(await placeLabels(rail), ["Overview", "New jobs", "All jobs", "Queue", "Saved", "Applied", "Interviews", "Reminders", "Resumes", "Profile"]);
+    assert.equal(await place(rail, "All jobs").getAttribute("aria-current"), "page");
+    assert.equal(await rail.locator('[aria-current="page"]').count(), 1, "more than one place is current");
+    // The rail sits left of the page, full width (labels showing) on a wide window.
+    const [railBox, pageBox] = [await rail.boundingBox(), await page.locator("section.opportunities").boundingBox()];
+    assert.ok(railBox.x + railBox.width <= pageBox.x, `the rail overlaps the page (${railBox.x + railBox.width} > ${pageBox.x})`);
+    assert.ok(railBox.width >= 180, `the rail is folded on a wide window (${railBox.width}px)`);
 
     // Find jobs lists the jobs first: something to pick is on screen without a press.
     const views = page.getByRole("navigation", { name: "Jobs view" });
@@ -157,47 +168,80 @@ describe("Career", () => {
     await page.waitForFunction(() => location.hash === "#queue");
     await page.getByRole("button", { name: /^Fill in the form/ }).waitFor();
     assert.equal(await page.getByRole("button", { name: "Ready to apply", exact: true }).getAttribute("aria-pressed"), "true");
-    assert.equal(await steps.getByRole("button", { name: "Find", exact: true }).getAttribute("aria-current"), "page");
+    assert.equal(await place(rail, "Queue").getAttribute("aria-current"), "page");
     await page.getByRole("button", { name: "Ready to apply", exact: true }).click();
     await page.waitForFunction(() => location.hash === "#jobs");
 
-    // The same steps lead through the whole section, and name where you are.
-    for (const [step, hash, heading] of [["Saved", "#favorites", /^Saved/], ["Track", "#pipeline", /^Track/], ["Find", "#jobs", /^Find jobs/]]) {
-      await steps.getByRole("button", { name: step, exact: true }).click();
+    // Each count is the size of the list its link opens, and the rail shows it.
+    for (const [label, hash, view, key] of [["New jobs", "#inbox", "inbox", "new"], ["Queue", "#queue", "apply", "queued"], ["Saved", "#favorites", "favorites", "saved"]]) {
+      const [summary, total] = [summaryAnswer(page), jobsTotal(page, view)];
+      await place(rail, label).click();
       await page.waitForFunction((wanted) => location.hash === wanted, hash);
-      await page.getByRole("heading", { name: heading }).first().waitFor();
-      assert.equal(await steps.getByRole("button", { name: step, exact: true }).getAttribute("aria-current"), "page", step);
+      const [counts, listed] = [(await summary).counts, await total];
+      assert.equal(counts[key], listed, `${label}: the rail counts ${counts[key]}, the list holds ${listed}`);
+      assert.equal(await place(rail, label).getAttribute("aria-current"), "page", label);
+      const shown = place(rail, label).locator(".count");
+      if (listed) await page.waitForFunction(([name, value]) => [...document.querySelectorAll('nav[aria-label="Career"] a.place')]
+        .find((link) => link.querySelector(".label")?.textContent === name)?.querySelector(".count")?.textContent === value, [label, listed.toLocaleString("en-US")]);
+      else assert.equal(await shown.count(), 0, `${label} shows a zero count`);
     }
-    // Everything else is one menu away, and the menu's button says which of them is open.
-    await steps.getByRole("button", { name: "More", exact: true }).click();
-    await page.getByRole("button", { name: "Resumes", exact: true }).click();
+    // Track is Applied; Interviews opens the same board on its Interview column.
+    for (const label of ["Applied", "Interviews"]) {
+      await place(rail, label).click();
+      await page.waitForFunction(() => location.hash === "#pipeline");
+      await page.getByRole("region", { name: "Application pipeline" }).waitFor();
+      assert.equal(await place(rail, "Applied").getAttribute("aria-current"), "page", label);
+    }
+    await place(rail, "All jobs").click();
+    await page.waitForFunction(() => location.hash === "#jobs");
+    await page.getByRole("heading", { level: 1, name: /Find jobs/ }).waitFor();
+    // The rest of Career is a quieter link away, and the open one is marked.
+    const more = rail.getByRole("group", { name: "More Career pages" });
+    await more.getByRole("link", { name: "Resume files" }).click();
     await page.waitForFunction(() => location.hash === "#resumes");
-    await page.waitForFunction(() => document.querySelector('nav[aria-label="Career"] button.more')?.textContent === "Resumes");
-    assert.equal(await steps.locator("button.more").getAttribute("aria-current"), "page");
+    assert.equal(await more.getByRole("link", { name: "Resume files" }).getAttribute("aria-current"), "page");
+    assert.equal(await rail.locator('[aria-current="page"]').count(), 1);
     assert.deepEqual(problems, []);
     await context.close();
   });
 
-  test("legacy Apply and Find links open the merged Find tab", async () => {
-    for (const [hash, pressed] of [["queue", "true"], ["apply", "true"], ["jobs", "false"], ["find", "false"]]) {
+  test("legacy Apply and Find links open the merged Find page, marked on the rail", async () => {
+    for (const [hash, pressed, current] of [["queue", "true", "Queue"], ["apply", "true", "Queue"], ["jobs", "false", "All jobs"], ["find", "false", "All jobs"]]) {
       const { page, problems, context } = await open(hash);
-      const steps = page.getByRole("navigation", { name: "Career" });
-      await steps.waitFor();
-      assert.equal(await steps.getByRole("button", { name: "Find", exact: true }).getAttribute("aria-current"), "page", hash);
-      assert.equal(await steps.getByRole("button", { name: "Apply", exact: true }).count(), 0, "Apply is still a step");
+      const rail = page.getByRole("navigation", { name: "Career" });
+      await rail.waitFor();
+      assert.equal(await place(rail, current).getAttribute("aria-current"), "page", hash);
       assert.equal(await page.getByRole("button", { name: "Ready to apply", exact: true }).getAttribute("aria-pressed"), pressed, hash);
       assert.deepEqual(problems, []);
       await context.close();
     }
   });
 
-  test("the Career group opens on Track, with Rika at its right at 1568x942 and below it when narrow", async () => {
+  test("the Career group opens on its Overview: the week, strong matches, deadlines, waiting emails and Rika", async () => {
     const { page, problems, context } = await open("calendar", { viewport: { width: 1568, height: 942 } });
     const groups = page.getByRole("navigation", { name: "Workspace groups" });
     await groups.getByRole("button", { name: "Career", exact: true }).click();
+    await page.waitForFunction(() => location.hash === "#career");
+    const rail = page.getByRole("navigation", { name: "Career" });
+    assert.equal(await place(rail, "Overview").getAttribute("aria-current"), "page");
+    await page.getByRole("heading", { level: 1, name: "This week" }).waitFor();
+    for (const name of ["This week's goal", "New strong matches", "Deadlines this week", "Status emails waiting"])
+      await page.getByRole("heading", { level: 2, name: new RegExp(`^${name}`) }).waitFor();
+    const suggestion = page.getByRole("region", { name: "Rika suggests" });
+    assert.equal(await suggestion.getByRole("button", { name: "Ask Rika" }).count(), 1);
+    // A strong match opens its job in Find.
+    const match = page.locator("button.match").first();
+    if (await match.count()) {
+      await match.click();
+      await page.waitForFunction(() => location.hash === "#jobs");
+      await place(rail, "Overview").click();
+      await page.waitForFunction(() => location.hash === "#career");
+    }
+
+    // Track sits beside the rail with Rika at its right at 1568x942, below it when narrow.
+    await place(rail, "Applied").click();
     await page.waitForFunction(() => location.hash === "#pipeline");
-    const steps = page.getByRole("navigation", { name: "Career" });
-    assert.equal(await steps.getByRole("button", { name: "Track", exact: true }).getAttribute("aria-current"), "page");
+    await page.getByRole("heading", { level: 1, name: "This week" }).waitFor({ state: "detached" });
     const board = page.getByRole("region", { name: "Application pipeline" });
     const rika = page.getByRole("region", { name: "Rika", exact: true });
     await board.waitFor();
@@ -206,8 +250,8 @@ describe("Career", () => {
     assert.ok(rikaBox.x >= boardBox.x + boardBox.width, `Rika is not to the right of the board (${rikaBox.x} < ${boardBox.x + boardBox.width})`);
     assert.ok(rikaBox.x + rikaBox.width <= 1568, "Rika runs off the screen");
     assert.ok(rikaBox.y < 942 && boardBox.y < 942, "the board or Rika starts below the fold");
-    // The board stays readable: its lanes fit without sideways scrolling.
-    assert.equal(await page.locator(".pipeline .lanes").evaluate((node) => node.scrollWidth <= node.clientWidth + 1), true, "the board scrolls sideways at 1568px");
+    // The board stays readable: the funnel and its columns fit without sideways scrolling.
+    assert.equal(await page.locator(".pipeline .board").evaluate((node) => node.scrollWidth <= node.clientWidth + 1), true, "the board scrolls sideways at 1568px");
 
     // Narrow, Rika moves below the board instead of squeezing it.
     await page.setViewportSize({ width: 900, height: 942 });
@@ -236,6 +280,85 @@ describe("Career", () => {
     assert.ok(Math.max(...heights) - Math.min(...heights) <= 1, `the controls differ in height: ${heights}`);
     const middles = boxes.map((box) => box.y + box.height / 2);
     assert.ok(Math.max(...middles) - Math.min(...middles) <= 1, `the controls are not on one line: ${middles}`);
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  /** Synthetic rail counts, the same on every read. */
+  const COUNTS = { new: 12, queued: 3, saved: 0, active: 9, interviews: 1, reminders: 0, emails: 2 };
+  const routeCounts = (context) => context.route("**/api/career/summary", (route) => route.fulfill({ json: { counts: COUNTS } }));
+
+  test("inside the Resume Workshop the rail folds to icons with count dots; hover, the toggle or Tab opens it over the page", async () => {
+    const { page, problems, context } = await open("workshop", { setup: routeCounts });
+    const rail = page.getByRole("navigation", { name: "Career" });
+    await rail.waitFor();
+    const workshop = page.locator("section.workshop");
+    await workshop.waitFor();
+    const folded = await rail.boundingBox();
+    assert.ok(folded.width <= 60, `the rail is not folded in the Workshop (${folded.width}px)`);
+    const before = (await workshop.boundingBox()).x;
+    assert.ok(before >= folded.x + folded.width, "the Workshop starts under the strip");
+    // Icons with count dots: a number for what asks for you, a plain dot for the rest, none at zero.
+    await page.waitForFunction(() => document.querySelector('nav[aria-label="Career"] a[data-place="new"] .dot')?.textContent === "12");
+    const dot = (key) => rail.locator(`a[data-place="${key}"] .dot`);
+    assert.equal(await dot("new").getAttribute("data-kind"), "number");
+    assert.equal(await dot("interviews").textContent(), "1");
+    assert.equal(await dot("queue").getAttribute("data-kind"), "dot");
+    assert.equal(await dot("saved").count(), 0);
+    assert.equal(await dot("reminders").count(), 0);
+    assert.equal(await rail.locator(".label").first().evaluate((node) => node.getBoundingClientRect().width <= 1), true, "labels show on the strip");
+    // The links keep their names; Resumes is the current place.
+    assert.equal(await rail.getByRole("link", { name: /^Resumes/ }).getAttribute("aria-current"), "page");
+
+    // Hover opens the full rail over the page without moving it.
+    await rail.hover();
+    await page.waitForFunction(() => document.querySelector('nav[aria-label="Career"]').getBoundingClientRect().width >= 220);
+    assert.equal((await workshop.boundingBox()).x, before, "opening the rail pushed the Workshop");
+    await page.waitForFunction(() => [...document.querySelectorAll('nav[aria-label="Career"] a.place .label')].every((node) => node.getBoundingClientRect().width > 1));
+    await page.mouse.move(1200, 700);
+    await page.waitForFunction(() => document.querySelector('nav[aria-label="Career"]').getBoundingClientRect().width <= 60);
+
+    // The toggle opens it and says so; Escape folds it again.
+    const toggle = rail.getByRole("button", { name: "Open the Career menu" });
+    await toggle.click();
+    await page.mouse.move(1200, 700);
+    assert.equal(await rail.getByRole("button", { name: "Close the Career menu" }).getAttribute("aria-expanded"), "true");
+    assert.ok((await rail.boundingBox()).width >= 220);
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => document.querySelector('nav[aria-label="Career"]').getBoundingClientRect().width <= 60);
+
+    // Keyboard: tabbing into the strip opens it; Enter follows a link.
+    await rail.getByRole("button", { name: "Open the Career menu" }).focus();
+    await page.keyboard.press("Tab");
+    await page.waitForFunction(() => document.activeElement?.closest('nav[aria-label="Career"]') && document.querySelector('nav[aria-label="Career"]').getBoundingClientRect().width >= 220);
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("data-place")), "overview");
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => location.hash === "#career");
+    await page.getByRole("heading", { level: 1, name: "This week" }).waitFor();
+    assert.ok((await rail.boundingBox()).width >= 180, "the rail stays folded outside the Workshop");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("each Overview part says plainly when it has nothing", async () => {
+    const { page, problems, context } = await open("career", {
+      setup: async (context) => {
+        await routeCounts(context);
+        await context.route("**/api/dashboard", (route) => route.fulfill({ json: { day: "2026-11-20", weekly: [], reminders: [], deadlines: [], proposals: 0 } }));
+        await context.route((url) => url.pathname === "/api/jobs" && url.searchParams.get("tier") === "A", (route) => route.fulfill({ json: { jobs: [], total: 0 } }));
+        await context.route("**/api/mail", (route) => route.fulfill({ json: { proposals: [] } }));
+        await context.route("**/api/rika/learnings", (route) => route.fulfill({ json: { learnings: [], jobs: {}, refreshed_at: null, forgotten: 0 } }));
+      },
+    });
+    await page.getByRole("heading", { level: 1, name: "This week" }).waitFor();
+    for (const text of ["No weekly goal yet.", "No new Rank A jobs right now.", "Nothing closes or is due in the next seven days.",
+      "No status emails waiting.", "Nothing yet. Rika learns"])
+      await page.getByText(text).first().waitFor();
+    // With nothing waiting, Rika points at the new jobs.
+    const suggestion = page.getByRole("region", { name: "Rika suggests" });
+    await suggestion.getByText("You're on track this week").waitFor();
+    await page.getByRole("button", { name: /^All 12 new jobs/ }).click();
+    await page.waitForFunction(() => location.hash === "#inbox");
     assert.deepEqual(problems, []);
     await context.close();
   });
@@ -319,7 +442,7 @@ describe("Find jobs", () => {
     await page.getByRole("navigation", { name: "Jobs view" }).getByRole("button", { name: "List", exact: true }).click();
     const results = page.getByRole("region", { name: "Job results" });
     await results.locator("[data-job-id]").first().waitFor();
-    await results.getByRole("checkbox").first().check();
+    await results.locator("tbody").getByRole("checkbox").first().check();
     await results.locator("[data-job-id]").first().focus();
     await page.keyboard.press("t");
     const bulk = page.getByRole("dialog", { name: "Change selected jobs" });
@@ -345,6 +468,152 @@ describe("Find jobs", () => {
     await drawer.waitFor({ state: "detached" });
     await page.getByRole("button", { name: "Progress" }).click();
     await drawer.waitFor();
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  /** The covered count in each shown fit cell, null where the posting lists none. */
+  const fitCounts = (page) => page.locator(".job-table tbody .col-fit").evaluateAll((cells) =>
+    cells.map((cell) => { const found = /^(\d+) of (\d+) skills?$/.exec(cell.textContent.trim()); return found ? Number(found[1]) : null; }));
+
+  test("the job list is a dense table: default columns, one fit request per batch, sortable headings, a column menu that persists", async () => {
+    const { page, problems, context } = await open("jobs");
+    const results = page.getByRole("region", { name: "Job results" });
+    await results.locator("[data-job-id]").first().waitFor();
+
+    // Role & company, Location & remote, Fit, Pay, Posted & deadline; the queue state is hidden.
+    const headings = () => page.locator(".job-table thead th[scope=col]").evaluateAll((cells) => cells.map((cell) => cell.className.match(/col-(\w+)/)?.[1]).filter(Boolean));
+    assert.deepEqual(await headings(), ["role", "place", "fit", "pay", "dates"]);
+    assert.deepEqual(await page.locator(".job-table thead .col-role button").allTextContents(), ["Role↕", "Company↕"]);
+
+    // One request answers the whole batch's fit cells (and pay), not one per row.
+    const fitRequests = [];
+    page.on("request", (request) => { if (request.url().includes("/api/jobs/fit?")) fitRequests.push(request.url()); });
+    const answered = page.waitForResponse((response) => response.url().includes("/api/jobs/fit?"));
+    await page.reload();
+    await results.locator("[data-job-id]").first().waitFor();
+    assert.equal((await answered).status(), 200);
+    await page.waitForFunction(() => [...document.querySelectorAll(".job-table tbody .col-fit")].some((cell) => cell.textContent.trim()));
+    const rows = await results.locator("[data-job-id]").count();
+    assert.equal(fitRequests.length, 1, "the table asked for fit more than once");
+    assert.equal(new URL(fitRequests[0]).searchParams.get("ids").split(",").length, rows);
+    for (const text of await page.locator(".job-table tbody .col-fit").allInnerTexts())
+      assert.match(text.trim(), /^(\d+ of \d+ skills?|No skills listed)$/);
+
+    // Fit sorts by skills covered, most first, then flips; jobs naming no skills stay last.
+    const fitHeading = page.locator(".job-table thead th.col-fit");
+    await fitHeading.getByRole("button", { name: /Fit/ }).click();
+    assert.equal(await fitHeading.getAttribute("aria-sort"), "descending");
+    const down = await fitCounts(page);
+    const known = down.filter((value) => value !== null);
+    assert.deepEqual(known, [...known].sort((a, b) => b - a));
+    assert.deepEqual(down.slice(0, known.length), known, "a job without skills sorted above one with them");
+    await fitHeading.getByRole("button", { name: /Fit/ }).click();
+    assert.equal(await fitHeading.getAttribute("aria-sort"), "ascending");
+    const up = (await fitCounts(page)).filter((value) => value !== null);
+    assert.deepEqual(up, [...up].sort((a, b) => a - b));
+
+    // Role sorts A to Z; arrows still walk the rows in the order shown.
+    await page.locator(".job-table thead .col-role").getByRole("button", { name: /^Role/ }).click();
+    assert.equal(await page.locator(".job-table thead th.col-fit").getAttribute("aria-sort"), "none");
+    const titles = await results.locator("[data-job-id]").allInnerTexts();
+    assert.deepEqual(titles, [...titles].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase())));
+    await results.locator("[data-job-id]").first().focus();
+    await page.keyboard.press("ArrowDown");
+    assert.equal(await page.evaluate(() => document.activeElement?.textContent), titles[1]);
+    assert.equal(await results.locator("tbody tr").nth(1).evaluate((row) => row.classList.contains("focused")), true);
+    // Space ticks the focused row for the batch actions; the checkbox shows it.
+    await page.keyboard.press(" ");
+    assert.equal(await results.locator("tbody tr").nth(1).getByRole("checkbox").isChecked(), true);
+    await page.getByRole("button", { name: "Clear selection" }).click();
+
+    // The column menu shows the queue state; the choice survives a reload in this browser.
+    await page.getByRole("button", { name: "Choose columns" }).click();
+    const menu = page.getByRole("dialog", { name: "Columns" });
+    assert.equal(await menu.getByRole("checkbox", { name: "Role & company" }).isDisabled(), true);
+    await menu.getByRole("checkbox", { name: "Queue state" }).check();
+    await page.locator(".job-table thead th.col-queue").waitFor();
+    await page.keyboard.press("Escape");
+    await page.reload();
+    await results.locator("[data-job-id]").first().waitFor();
+    assert.deepEqual(await headings(), ["role", "place", "fit", "pay", "dates", "queue"]);
+    await page.getByRole("button", { name: "Choose columns" }).click();
+    await page.getByRole("dialog", { name: "Columns" }).getByRole("checkbox", { name: "Queue state" }).uncheck();
+    await page.locator(".job-table thead th.col-queue").waitFor({ state: "detached" });
+    await page.keyboard.press("Escape");
+
+    // A narrow window drops the least needed columns first; role and fit stay.
+    await page.setViewportSize({ width: 760, height: 850 });
+    await page.waitForFunction(() => getComputedStyle(document.querySelector(".job-table thead th.col-pay")).display === "none");
+    assert.equal(await page.locator(".job-table thead th.col-role").isVisible(), true);
+    assert.equal(await page.locator(".job-table thead th.col-fit").isVisible(), true);
+    assert.equal(await results.evaluate((node) => node.scrollWidth <= node.clientWidth + 1), true, "the table scrolls sideways when narrow");
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+
+  test("a job opens on Queue, Skip, Save and Tailor resume, then Fit, Posting and Application tabs", async () => {
+    const { page, problems, context } = await open("jobs");
+    const results = page.getByRole("region", { name: "Job results" });
+    await results.locator("[data-job-id]").first().click();
+    const detail = page.getByRole("complementary", { name: "Opportunity details" });
+    const decide = detail.getByRole("group", { name: "Decide on this job" });
+    await decide.waitFor();
+    // A job already in the queue says so on the same button.
+    assert.deepEqual((await decide.getByRole("button").allInnerTexts()).map((text) => text.trim().replace(/^Queued$/, "Queue")), ["Queue", "Skip", "Save", "Tailor resume"]);
+
+    const tabs = detail.getByRole("tablist", { name: "Job details" });
+    assert.deepEqual(await tabs.getByRole("tab").allInnerTexts(), ["Fit", "Posting", "Application"]);
+    assert.equal(await tabs.getByRole("tab", { name: "Fit" }).getAttribute("aria-selected"), "true");
+    const fit = detail.getByRole("tabpanel", { name: "Fit" });
+    await fit.getByText("Requirements today").waitFor();
+    // The checklist (or why there is none) replaces the old rank chip.
+    await page.waitForFunction(() => /skills this posting asks for are covered|names none of the skills|no saved description/i
+      .test(document.querySelector('[role="tabpanel"]:not([hidden])')?.textContent ?? ""));
+    assert.equal(await detail.getByText(/Top match|Good match|Low match|Is this job right for you/).count(), 0);
+    const checklist = fit.getByRole("list", { name: "Posting skills" });
+    if (await checklist.count()) {
+      const tally = await fit.locator(".tally").innerText();
+      const [, covered, total] = /(\d+) of (\d+)/.exec(tally).map(Number);
+      assert.equal(await checklist.getByRole("listitem").count(), total);
+      assert.equal(await checklist.locator("li.on").count(), covered);
+    }
+
+    // Posting: the description and the original posting; arrows move along the tabs.
+    await tabs.getByRole("tab", { name: "Posting" }).click();
+    const posting = detail.getByRole("tabpanel", { name: "Posting" });
+    await posting.getByText("Description", { exact: true }).waitFor();
+    assert.equal(await fit.isHidden(), true);
+    assert.ok(await posting.getByRole("link", { name: /Read original posting/ }).count() + await posting.getByText("Posting unavailable").count() > 0);
+    await page.keyboard.press("ArrowRight");
+    assert.equal(await tabs.getByRole("tab", { name: "Application" }).getAttribute("aria-selected"), "true");
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("role")), "tab");
+    const application = detail.getByRole("tabpanel", { name: "Application" });
+    for (const heading of ["Resume for this application", "Record a submission", "Your notes"])
+      await application.getByRole("heading", { name: heading }).waitFor();
+
+    // A key reaches its control on the Application tab from any tab (e: the notes).
+    await tabs.getByRole("tab", { name: "Fit" }).click();
+    await detail.locator("h2").focus();
+    await page.keyboard.press("e");
+    await page.waitForFunction(() => document.activeElement?.tagName === "TEXTAREA");
+    assert.equal(await tabs.getByRole("tab", { name: "Application" }).getAttribute("aria-selected"), "true");
+
+    // Queue is a decision you can take back from the same button.
+    const queue = decide.getByRole("button", { name: /^Queued?$/ });
+    const was = await queue.getAttribute("aria-pressed");
+    const flipped = was === "true" ? "false" : "true";
+    await queue.click();
+    await page.waitForFunction((wanted) => document.querySelector('[aria-label="Decide on this job"] button')?.getAttribute("aria-pressed") === wanted, flipped);
+    assert.equal((await queue.innerText()).trim(), flipped === "true" ? "Queued" : "Queue");
+    await queue.click();
+    await page.waitForFunction((wanted) => document.querySelector('[aria-label="Decide on this job"] button')?.getAttribute("aria-pressed") === wanted, was);
+
+    // Tailor resume opens the Resume Workshop for this job.
+    await decide.getByRole("button", { name: "Tailor resume" }).click();
+    await page.waitForFunction(() => location.hash === "#workshop");
+    await page.waitForFunction(() => /tailor it for/.test(document.body.innerText)
+      || document.querySelector('[role="tab"][aria-selected="true"]')?.textContent?.startsWith("Tailor"));
     assert.deepEqual(problems, []);
     await context.close();
   });

@@ -252,7 +252,8 @@ describe("Page edit mode", () => {
       return { x: Math.round(b.x - a.x), y: Math.round(b.y - a.y), width: Math.round(b.width) };
     }, [PANEL, CLOCK]);
     await trigger.click();
-    const at = { x: 680, y: 340 };
+    // Left of the open Widgets menu (it stands above the bar, near the middle) and right of the Career rail, so the widget lands on the page whatever its height.
+    const at = { x: 480, y: 340 };
     await menu.getByRole("menuitem", { name: "Clock" }).dragTo(page.locator(PANEL), { targetPosition: at });
     await clock.waitFor();
     await menu.waitFor({ state: "detached" });

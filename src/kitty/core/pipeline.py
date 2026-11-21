@@ -131,6 +131,75 @@ def funnel(conn: sqlite3.Connection, *, track: str | None = None) -> Funnel:
     )
 
 
+#: The board's open stages in order, with the words the website shows.
+OPEN_STAGES: tuple[tuple[Status, str], ...] = (
+    ("applied", "Applied"), ("oa", "Assessment"), ("interview", "Interview"), ("offer", "Offer"),
+)
+CLOSED_STATUSES: tuple[Status, ...] = ("rejected", "ghosted", "withdrawn")
+
+
+@dataclass(frozen=True)
+class StageReach:
+    """One open stage: applications that got this far or further, and those sitting here now."""
+
+    id: Status
+    label: str
+    reached: int
+    now: int
+
+
+@dataclass(frozen=True)
+class Reach:
+    """How far one track's applications got (the Track funnel) and how the closed ones ended."""
+
+    track: str | None
+    stages: list[StageReach]
+    closed: dict[str, int]
+
+
+def stage_reach(conn: sqlite3.Connection) -> list[Reach]:
+    """Per track, each open stage's count of applications that ever reached it or a later one.
+
+    Unlike `funnel`, this reads the history: an application that went applied -> OA ->
+    rejected counts as having reached Assessment. Only confirmed moves count; a move that
+    was undone, or a mail proposal still waiting, never happened. Skipping a stage passes
+    it. Withdrawn applications count too (the board leaves them out). One entry per track
+    that has applications (None: no track), so a page can add up any set of tracks.
+    """
+    rank = {status: index for index, (status, _label) in enumerate(OPEN_STAGES)}
+    furthest: dict[int, int] = {}
+    current: dict[int, tuple[str | None, str]] = {}
+    for row in conn.execute("""
+        SELECT a.id AS id, a.track AS track, a.status AS status, se.to_status AS reached
+          FROM applications a
+          LEFT JOIN status_events se
+            ON se.application_id = a.id AND se.state = 'confirmed'
+           AND se.id NOT IN (SELECT undoes_event_id FROM status_events
+                              WHERE state = 'confirmed' AND undoes_event_id IS NOT NULL)
+    """):
+        current[row["id"]] = (row["track"], row["status"])
+        best = max(rank.get(row["status"], 0), rank.get(row["reached"], 0))
+        furthest[row["id"]] = max(furthest.get(row["id"], 0), best)
+    tracks = sorted({track for track, _status in current.values()}, key=lambda name: (name is None, name or ""))
+    result = []
+    for track in tracks:
+        mine = [app for app, (owner, _status) in current.items() if owner == track]
+        status_of = [current[app][1] for app in mine]
+        result.append(Reach(
+            track=track,
+            stages=[
+                StageReach(
+                    id=status, label=label,
+                    reached=sum(1 for app in mine if furthest[app] >= index),
+                    now=status_of.count(status),
+                )
+                for index, (status, label) in enumerate(OPEN_STAGES)
+            ],
+            closed={status: status_of.count(status) for status in CLOSED_STATUSES},
+        ))
+    return result
+
+
 def stale_applications(
     conn: sqlite3.Connection, *, days: int = 21
 ) -> list[PipelineCard]:

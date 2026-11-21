@@ -48,7 +48,8 @@ test('hidden choices for a disabled module neither resurrect nor break the atlas
   // Turning the module back on keeps the earlier choice instead of resurrecting it.
   const both = build(['workspace', 'applyai'], hidden);
   assert.ok(!ids(both).includes('view:jobs') && !ids(both).includes('view:pipeline'));
-  assert.ok(ids(both).includes('view:reminders'));
+  // Reminders is a Career page now (the rail's): the atlas shows Career by its hub alone.
+  assert.ok(ids(both).includes('view:notes') && !ids(both).includes('view:reminders'));
   // Every module off: the core sections remain (Goals under Plan, Rika) and nothing throws.
   assert.deepEqual(ids(build([], hidden)), ['group:Plan', 'group:Rika', 'view:ai', 'view:goals', 'view:rika', 'view:settings']);
 });

@@ -700,27 +700,6 @@ h1 {
 .job-list {
   min-height: 100px;
 }
-.job-row {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  text-align: left;
-  padding: 22px;
-  border-bottom: 1px solid var(--border);
-  background: transparent;
-  color: var(--ink);
-}
-.job-row:last-child {
-  border-bottom: 0;
-}
-.job-row:hover,
-.job-row.selected {
-  background: var(--surface-raised);
-}
-.job-row.selected {
-  box-shadow: inset 2px 0 var(--accent);
-}
 .company-mark {
   width: 38px;
   height: 42px;
@@ -738,38 +717,6 @@ h1 {
   color: var(--violet);
   background: color-mix(in srgb, var(--violet) 10%, var(--surface));
   border-color: color-mix(in srgb, var(--violet) 35%, var(--border));
-}
-.job-main {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  gap: 6px;
-  overflow-wrap: anywhere;
-}
-.job-title {
-  font-weight: 500;
-  font-size: 14px;
-  line-height: 1.5;
-}
-.job-company {
-  font-size: 12px;
-  color: var(--muted);
-  line-height: 1.5;
-}
-.job-meta {
-  font-size: 11px;
-  color: var(--subtle);
-  line-height: 1.5;
-}
-.inline-dot {
-  margin: 0 6px;
-}
-.job-tail {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-left: auto;
-  color: var(--subtle);
 }
 .saved-star {
   color: var(--accent);
@@ -1052,13 +999,6 @@ main .notes-workspace {
   main {
     padding: 24px 18px 0;
   }
-  .job-row {
-    padding: 20px 16px;
-    gap: 11px;
-  }
-  .job-tail > svg {
-    display: none;
-  }
   .panel-heading {
     padding: 20px 18px;
   }
@@ -1101,31 +1041,6 @@ main .notes-workspace {
   }
   .page-heading h1 {
     font-size: 26px;
-  }
-  .job-tail {
-    gap: 5px;
-    flex-wrap: wrap;
-    justify-content: end;
-    max-width: 85px;
-  }
-  .job-row {
-    padding: 18px 12px;
-    align-items: start;
-    gap: 10px;
-  }
-  .job-title {
-    font-size: 13px;
-  }
-  .job-company {
-    font-size: 12px;
-  }
-  .job-meta {
-    font-size: 11px;
-  }
-  .job-tail .badge {
-    font-size: 10px;
-    padding: 3px 5px;
-    white-space: normal;
   }
   .company-mark {
     width: 30px;

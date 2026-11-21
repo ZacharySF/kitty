@@ -108,3 +108,33 @@ def test_board_and_funnel_reflect_current_status(workspace):
     }
     funnel = pipeline_core.funnel(workspace.conn)
     assert funnel.total == 3 and funnel.advance_rate == 2 / 3
+
+
+def test_stage_reach_counts_how_far_each_application_got(workspace):
+    def apply(index, *moves, track="embedded"):
+        job = _job(workspace, company=f"Reach Co {index}", url=f"https://example.invalid/reach/{index}")
+        application = applications_core.record_application(workspace.conn, job.id, track=track)
+        for move in moves:
+            applications_core.set_status(workspace.conn, application.id, move)
+        return application
+
+    apply(1)
+    apply(2, "oa")
+    apply(3, "oa", "interview", "rejected")      # closed after an interview still reached it
+    apply(4, "interview", "offer")               # a skipped stage counts as passed
+    apply(5, "ghosted")
+    apply(6, "withdrawn", track="parttime")
+    undone = apply(7, "oa")
+    applications_core.undo_last_status(workspace.conn, undone.id)  # an undone move never happened
+    proposed = apply(8)
+    applications_core.set_status(workspace.conn, proposed.id, "interview", state="proposed")
+
+    reach = {entry.track: entry for entry in pipeline_core.stage_reach(workspace.conn)}
+    assert list(reach) == ["embedded", "parttime"]
+    embedded, parttime = reach["embedded"], reach["parttime"]
+    assert [(stage.id, stage.reached, stage.now) for stage in embedded.stages] == [
+        ("applied", 7, 3), ("oa", 3, 1), ("interview", 2, 0), ("offer", 1, 1),
+    ]
+    assert embedded.closed == {"rejected": 1, "ghosted": 1, "withdrawn": 0}
+    assert [stage.reached for stage in parttime.stages] == [1, 0, 0, 0]
+    assert parttime.closed == {"rejected": 0, "ghosted": 0, "withdrawn": 1}

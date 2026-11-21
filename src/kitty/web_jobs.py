@@ -6,6 +6,11 @@ actions, the tool panel, the options, the pipeline and the reminders itself
 
 - ``GET /api/dashboard``: it refreshes the screening questions' answered flags against the
   answers file (``questions.refresh_if_changed``) before counting them.
+- ``GET /api/pipeline/funnel``: how far applications got (``pipeline.stage_reach``), the
+  strip above Track's board.
+- ``GET /api/jobs/fit?ids=1,2,…``: for up to one page of jobs, the posting skills and what
+  covers each (``workshop.ats.fit``: the resume or a confirmed Workshop fact) and the pay the
+  posting lists (``core.pay``); Find's table asks once per page, the job detail for one job.
 - ``POST /api/jobs/metadata``: a public page fetched in the task runner.
 - ``POST /api/jobs/add``: a posting through ``jobs.upsert_job``, the dedupe and evidence write
   path discovery shares.
@@ -19,7 +24,7 @@ from __future__ import annotations
 import dataclasses
 from urllib.parse import urlsplit
 
-from kitty.core import applications, jobs, pipeline, today
+from kitty.core import applications, jobs, pay, pipeline, today
 from kitty.dates import parse_user_date
 from kitty.db.connection import transaction
 
@@ -65,6 +70,11 @@ def get(app, conn, path, query):
         app._no_query(query)
         browser = app.automation.snapshot()
         return {'running': browser['running'], 'job_ids': list(browser['job_ids'])}
+    if path == '/api/pipeline/funnel':
+        app._no_query(query)
+        return {'tracks': [dataclasses.asdict(reach) for reach in pipeline.stage_reach(conn)]}
+    if path == '/api/jobs/fit':
+        return _fit(app, conn, query)
     if path == '/api/dashboard':
         from kitty.core import questions, stats
         from kitty.core.triage.run import pending_batches
@@ -88,6 +98,24 @@ def get(app, conn, path, query):
             'tiers': stats.counts_by_tier(conn), 'states': stats.counts_by_queue_state(conn),
         }
     return None
+
+
+#: One page of Find's table (its batch size).
+FIT_IDS = 100
+
+
+def _fit(app, conn, query):
+    from kitty.core.workshop import ats
+    from kitty.web_server import APIError
+    raw = query.get('ids', '') if set(query) <= {'ids'} else ''
+    parts = raw.split(',') if raw else []
+    if not parts or len(parts) > FIT_IDS or not all(
+            part.isascii() and part.isdigit() and part[0] != '0' and len(part) <= 18 for part in parts):
+        raise APIError(400, f'ids must be 1 to {FIT_IDS} job ids separated by commas')
+    ids = list(dict.fromkeys(int(part) for part in parts))
+    listed = pay.listed(conn, ids)
+    return {'jobs': [{**report, 'pay': listed.get(report['job_id'])}
+                     for report in ats.fit(conn, app.settings, app.config.resume_terms, ids)]}
 
 
 def post(app, conn, path, body):
