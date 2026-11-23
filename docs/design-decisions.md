@@ -80,3 +80,6 @@
 ## Calendar time zone and the way back (19 Nov 2026)
 - The Personal calendar's zone decides Rika's times and "today". Migration 010 seeded it as UTC, so on a computer in Matamoros "6 pm" was saved as 18:00 UTC and drawn at noon. Opening a workspace (`open_workspace`) gives a still-UTC Personal calendar the computer's zone (`kitty.core.calendar.device_zone`: TZ, every link from /etc/localtime, /etc/timezone); a zone other than UTC is the user's choice and stays. Events already saved keep their instant.
 - The range bar's way back names the view's unit: Today (day, agenda, plan), This week, This month, This year.
+
+## Top bar order (23 Nov 2026)
+- Rika and Study swap places: the top bar reads Brain, Plan, Rika, Career, Study. Ctrl + ← / → steps through them in that order.
