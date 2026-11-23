@@ -58,7 +58,7 @@ test('each group key maps to its header group and built-ins keep their order',()
 
 test('an add-on view opens its group even when every built-in module is off',()=>{
   const external=[view()];
-  assert.deepEqual(visibleGroups([],external).map(group=>group.label),['Plan','Study','Rika','Settings']);
+  assert.deepEqual(visibleGroups([],external).map(group=>group.label),['Plan','Rika','Study','Settings']);
   assert.deepEqual(groupViews([],external,'Study'),['m/demo-mod/demo']);
   assert.equal(viewEnabled('m/demo-mod/demo',[],external),true);
   assert.equal(viewEnabled('m/demo-mod/demo',ALL,[]),false);
