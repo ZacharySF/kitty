@@ -134,6 +134,16 @@ module leaves its tables.
 Only the standard library and what rika! itself bundles can be imported (the desktop app
 is a frozen Python 3.12); vendor pure-Python dependencies inside the package.
 
+**Model calls**: a module may ask a model on this computer's brain the way Rika does.
+`kitty.core.rika.brain.catalog(app, conn)` lists the models that brain can use, each
+`{"id", "label", "thinking"}` (`thinking` starts with `"off"`, then the levels of
+`brain.THINKING` the model accepts); `brain.load(app.settings)` is the user's choice
+(`model`, `""` for Auto, and `thinking`). `kitty.core.rika.llm.prepare(app, conn, model_id,
+messages, tools, thinking=None)` builds a bounded request (`thinking=None` is the brain's
+saved level), then `llm.reserve`, `llm.stream` and `llm.settle` run it under the daily
+budget. Older rika! builds lack `catalog` and the `thinking=` keyword; check with
+`hasattr` / `inspect.signature` before using them.
+
 ### Element views
 
 An `element` view's script is served same-origin at

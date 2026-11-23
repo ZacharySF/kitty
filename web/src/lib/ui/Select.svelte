@@ -2,6 +2,8 @@
   export type SelectOption = {
     value: string;
     label: string;
+    /** What the closed trigger shows instead of the label (a model's "Opus 5.5"). */
+    short?: string;
     /** A short muted note after the label ("Doesn't reschedule", an offset). */
     hint?: string;
     /** A CSS colour for the option's dot (a subject, deck or calendar colour). */
@@ -200,7 +202,7 @@
     {#snippet trigger(props)}
       <button bind:this={triggerElement} type="button" {id} class="select-trigger" role="combobox" aria-label={label} {disabled}
         {...props} aria-haspopup="listbox" aria-controls={open ? listId : undefined} onkeydown={triggerKey}
-        >{#if current?.color}<span class="dot" style:background={current.color}></span>{/if}<span class="value" class:placeholder={!current}>{current?.label ?? placeholder}</span>{#if current?.count != null}<span class="count">{current.count}</span>{/if}<span class="chev" aria-hidden="true"></span></button
+        >{#if current?.color}<span class="dot" style:background={current.color}></span>{/if}<span class="value" class:placeholder={!current}>{current?.short ?? current?.label ?? placeholder}</span>{#if current?.count != null}<span class="count">{current.count}</span>{/if}<span class="chev" aria-hidden="true"></span></button
       >
     {/snippet}
     {#if mode === "search"}

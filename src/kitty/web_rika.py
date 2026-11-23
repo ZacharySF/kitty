@@ -32,13 +32,18 @@ POST /api/rika/voice/model {}  ->  {started}; downloads the chosen model now
 GET  /api/rika/speech/<message id>  ->  {text, audio}
     A short summary of a reply to a spoken request and, with a local engine, its
     speech as a data: URL (audio is null without one, and always in the demo).
-GET  /api/rika/brain  ->  {provider: openrouter|omp, models: {fast, standard, deep}, thinking, thinking_levels,
+GET  /api/rika/brain  ->  {provider: openrouter|omp, models: {fast, standard, deep}, model, thinking, thinking_levels,
                            defaults, omp_installed}
-POST /api/rika/brain {provider, models?, thinking?}  ->  the same
+POST /api/rika/brain {provider, models?, model?, thinking?}  ->  the same
     What Rika thinks with on this computer (kitty.core.rika.brain, Settings → AI):
     OpenRouter, or omp's own sign-in. ``models`` are omp's tier models ('' is the
     default in ``defaults``); OpenRouter's tier models stay in POST /api/ai/settings.
-    ``thinking`` (off|low|medium|high|max, kept when left out) is how hard omp thinks.
+    ``model`` pins Rika's chat to one model of GET /api/rika/models on every tier ('' is
+    Auto, the tier models; kept while the provider is, when left out). ``thinking``
+    (off|low|medium|high|max, kept when left out) is how hard Rika thinks.
+GET  /api/rika/models  ->  {provider, models: [{id, label, thinking: [off, ...]}], auto: [levels]}
+    The models this computer's brain can use (brain.catalog) with the thinking levels
+    each accepts, and the levels Auto's tier models share.
 GET  /api/rika/stream  (WebSocket upgrade)
     Server-to-page JSON text messages: token, message, action, approval, plan, tier,
     navigate, agents and voice.model events. Like every upgrade it is guarded by the
@@ -106,7 +111,7 @@ def _voice(app, conn) -> dict:
 
 
 def _brain(chosen: brain.Brain) -> dict:
-    return {"provider": chosen.provider, "models": chosen.models, "thinking": chosen.thinking,
+    return {"provider": chosen.provider, "models": chosen.models, "model": chosen.model, "thinking": chosen.thinking,
             "thinking_levels": list(brain.THINKING), "defaults": dict(brain.OMP_DEFAULTS),
             "omp_installed": omp.program() is not None}
 
@@ -123,6 +128,11 @@ def get(app, conn, path, query):
     if path == PREFIX + "/brain":
         app._no_query(query)
         return _brain(brain.load(app.settings))
+    if path == PREFIX + "/models":
+        app._no_query(query)
+        found = brain.catalog(app, conn)
+        return {"provider": brain.load(app.settings).provider, "models": found,
+                "auto": brain.auto_thinking(app, conn, found)}
     match = re.fullmatch(PREFIX + "/speech/" + _ID, path)
     if match:
         app._no_query(query)
@@ -155,9 +165,12 @@ def post(app, conn, path, body):
             raise _error(400, str(exc)) from None
         return _voice(app, conn)
     if path == PREFIX + "/brain":
-        _keys(body, {"provider", "models", "thinking"}, {"provider"})
+        _keys(body, {"provider", "models", "model", "thinking"}, {"provider"})
+        if "model" in body and not isinstance(body["model"], str):
+            raise _error(400, "Rika's model is Auto or one of the models listed for her brain")
         try:
-            return _brain(brain.save(app.settings, body["provider"], body.get("models", {}), thinking=body.get("thinking")))
+            return _brain(brain.save(app.settings, body["provider"], body.get("models", {}), thinking=body.get("thinking"),
+                                     model=body.get("model"), conn=conn))
         except ValueError as exc:
             raise _error(400, str(exc)) from None
     if path == PREFIX + "/voice/model":

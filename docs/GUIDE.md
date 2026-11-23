@@ -1986,10 +1986,24 @@ its panel on home or its drawer (Ctrl+J), and it does the work through the app's
   sign-in bills it. Each tier has an omp model, Claude Haiku, Sonnet and Opus by
   default; any omp `--model` selector works there. The reply arrives whole, not word
   by word. If omp is not on `PATH`, Rika says so and sends nothing. The morning
-  brief's model check and drafted email replies use the same brain. While the brain
-  is omp, the **Thinking** chip at the end of Rika's field sets how hard it thinks
-  (Off, Low, Medium, High, Max; saved in the same file). Each request sends it as
-  `reasoning_effort`, with up to 16,000 output tokens so the answer still fits.
+  brief's model check and drafted email replies use the same brain, on their tier's
+  model and the Thinking level below.
+- **Model and Thinking.** Two quiet chips at the end of Rika's field (on a line of
+  their own when the field is narrow) choose, for either brain, the model she
+  answers with and how hard she thinks; both are saved in the same file.
+  - **Model**: Auto (the tiers below pick a model for each request) or one model
+    from the brain's list, which is then used on every tier, retries included. With
+    omp the list is `omp models --json` (what omp can reach here, searchable); with
+    OpenRouter it is the refreshed catalog of **Settings → AI**. Switching brain sets
+    it back to Auto.
+  - **Thinking**: Off, Low, Medium, High or Max, as far as the chosen model accepts
+    them (on Auto, the levels every tier model accepts). Choosing a model that lacks
+    the current level moves it to the nearest one it has. With omp the level is sent
+    as `reasoning_effort`; with OpenRouter as `reasoning: {effort}`, only to models
+    the catalog lists as accepting `reasoning`. Refresh the OpenRouter model list in
+    **Settings → AI** once after upgrading to populate that capability. Thinking raises
+    the request's output limit to at least 16,000 tokens so the answer still fits; on OpenRouter the reservation
+    and the context check count those tokens at the model's highest output price.
 - **Tiers.** Each request goes to the smallest tier that can do it:
   - **fast** for talk, simple edits, and everything you say aloud;
   - **standard** for planning ("plan my week") and a brain dump's plan;

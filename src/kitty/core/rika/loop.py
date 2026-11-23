@@ -8,7 +8,9 @@ A turn creates the reply message, routes it to a tier and then, in order of cost
 3. otherwise the tool-calling loop runs on the tier's model, on OpenRouter or omp as this
    computer's brain says (:mod:`~kitty.core.rika.brain`; the tier the
    routing memory remembers for this kind of request, else the router's), escalating one
-   tier when a tool call fails validation or the reply comes back incomplete. Its system
+   tier when a tool call fails validation or the reply comes back incomplete. A model
+   pinned beside Rika's field (the brain's ``model``) replaces the tier's model on every
+   tier, escalation included. Its system
    prompt's stable part (instructions and preferences) is cacheable; what the local
    memory index finds for the request rides in a separate message.
 
@@ -701,7 +703,7 @@ class Rika:
                   on_token: Any) -> llm.Reply | None:
         """One model request on `tier` under the budget; None (with the reason said) when it did not run or failed."""
         conn = turn.conn
-        model = llm.model_for(self.app, conn, tier)
+        model = llm.chat_model(self.app, conn, tier)
         self._tier(turn, tier, model)
         try:
             call = llm.prepare(self.app, conn, model, messages, specs)

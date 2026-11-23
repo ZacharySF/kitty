@@ -6,7 +6,7 @@
    * Settings → AI → Rika's brain (kitty.core.rika.brain): what Rika thinks with on this
    * computer. omp uses the omp coding agent's own sign-in (a Claude subscription, for
    * example), so no OpenRouter key is needed; OpenRouter uses the key and models below.
-   * The thinking level is chosen beside Rika's field.
+   * The model and thinking level are chosen beside Rika's field.
    */
   const TIERS: [Tier, string][] = [["fast", "Fast tier"], ["standard", "Standard tier"], ["deep", "Deep tier"]];
   const brain = $derived(store.current);

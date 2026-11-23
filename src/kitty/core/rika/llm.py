@@ -19,13 +19,20 @@ Anthropic and Gemini models need an explicit breakpoint, so the stable part carr
 providers cache repeated prefixes on their own and get the parts joined as one string.
 The reply reports prompt, cached and completion tokens from OpenRouter's ``usage``.
 
+Thinking (:data:`brain.THINKING`, the brain's saved level unless the caller passes
+``thinking=``): a level other than ``off`` is sent as ``reasoning: {effort}`` to a model
+Settings → AI lists as accepting ``reasoning`` (others get none), and raises the output
+limit to :data:`brain.THINKING_MAX_TOKENS`; the reservation and the context check use
+that limit, since reasoning tokens are output tokens.
+
 omp. The same Chat Completions request, without OpenRouter's ``provider`` and ``usage``
 fields, goes through ``omp auth-gateway stdio`` (:mod:`kitty.core.rika.omp`) on the tier's
 omp model, billed by whatever omp is signed in with (a Claude subscription, for
 example). No OpenRouter key, catalog or price is involved, so the request reserves
 nothing and is outside the daily budget; it is still recorded in ``ai_reviews`` before
 it is sent (``provider: "omp"`` in its plan), and its tokens are reported. The gateway
-answers whole, so the text arrives as one token. The demo never gets here either.
+answers whole, so the text arrives as one token. Thinking rides as ``reasoning_effort``
+with the same output limit. The demo never gets here either.
 """
 from __future__ import annotations
 
@@ -39,7 +46,7 @@ from decimal import Decimal, InvalidOperation
 
 import httpx
 
-from kitty.core.rika import brain, omp, router
+from kitty.core.rika import brain, omp
 from kitty.db.connection import transaction
 
 BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -92,20 +99,30 @@ def _web_ai():
 
 def model_for(app, conn: sqlite3.Connection, tier: str) -> str:
     """The model `tier` runs on with this computer's brain."""
-    chosen = brain.load(app.settings)
-    return brain.models(chosen)[tier] if chosen.provider == "omp" else router.models(conn)[tier]
+    return brain.tier_models(app, conn)[tier]
 
 
-def prepare(app, conn: sqlite3.Connection, model_id: str, messages: list[dict], tools: list[dict]) -> Call:
-    """A bounded request for `model_id`, or ModelUnavailable before anything is sent."""
+def chat_model(app, conn: sqlite3.Connection, tier: str) -> str:
+    """The model Rika's chat runs on at `tier`: the pinned one on every tier, else the tier's."""
+    return brain.load(app.settings).model or model_for(app, conn, tier)
+
+
+def prepare(app, conn: sqlite3.Connection, model_id: str, messages: list[dict], tools: list[dict], *,
+            thinking: str | None = None) -> Call:
+    """A bounded request for `model_id`, or ModelUnavailable before anything is sent.
+    `thinking` is a level of :data:`brain.THINKING` (ValueError otherwise); None is the
+    brain's saved level."""
     from kitty.web_server import APIError
 
+    if thinking is not None and (not isinstance(thinking, str) or thinking not in brain.THINKING):
+        raise ValueError("Thinking is off, low, medium, high or max")
     web_ai = _web_ai()
     if app.settings.demo:
         raise ModelUnavailable("The demo never calls a model")
     chosen = brain.load(app.settings)
+    level = chosen.thinking if thinking is None else thinking
     if chosen.provider == "omp":
-        return _prepare_omp(conn, model_id, messages, tools, chosen.thinking)
+        return _prepare_omp(conn, model_id, messages, tools, level)
     try:
         key = web_ai._key(app)
     except APIError as exc:
@@ -120,8 +137,12 @@ def prepare(app, conn: sqlite3.Connection, model_id: str, messages: list[dict], 
     if web_ai._now() - datetime.fromisoformat(model["fetched_at"]) > timedelta(hours=24):
         raise ModelUnavailable("Model prices expired; refresh the model list in Settings → AI")
     prompt, completion = Decimal(model["prompt_price"]), Decimal(model["completion_price"])
+    # Only a model that accepts ``reasoning`` gets it: require_parameters would refuse every provider otherwise.
+    if level != "off" and conn.execute("SELECT 1 FROM ai_model_reasoning WHERE id=?", (model_id,)).fetchone() is None:
+        level = "off"
+    output = settings["max_output_tokens"] if level == "off" else max(settings["max_output_tokens"], brain.THINKING_MAX_TOKENS)
     body = {
-        "model": model_id, "messages": _cacheable(model_id, messages), "max_tokens": settings["max_output_tokens"],
+        "model": model_id, "messages": _cacheable(model_id, messages), "max_tokens": output,
         "stream": True,
         "provider": {"sort": settings["routing"], "data_collection": "deny", "require_parameters": True,
                      "allow_fallbacks": False,
@@ -130,12 +151,16 @@ def prepare(app, conn: sqlite3.Connection, model_id: str, messages: list[dict], 
                                    "request": 0}},
         "usage": {"include": True},
     }
+    if level != "off":
+        # OpenRouter's efforts include every level of THINKING; ``max`` is its highest.
+        body["reasoning"] = {"effort": level}
     if tools:
         body.update(tools=tools, tool_choice="auto")
     input_bound = len(json.dumps(body, ensure_ascii=False).encode("utf-8")) + FRAMING
-    if input_bound + settings["max_output_tokens"] > model["context_length"]:
+    if input_bound + output > model["context_length"]:
         raise ModelUnavailable("This conversation is too long for the tier's model; start a new one or choose a larger model")
-    cost = Decimal(input_bound) * prompt + Decimal(settings["max_output_tokens"]) * completion
+    # Reasoning tokens are output tokens, priced at the completion ceiling (web_ai._ceilings).
+    cost = Decimal(input_bound) * prompt + Decimal(output) * completion
     return Call(model_id, body, key, cost, web_ai._fingerprint(app, settings))
 
 
