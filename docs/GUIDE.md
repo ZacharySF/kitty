@@ -2323,15 +2323,16 @@ workspace tab using the same unsaved-edit confirmation as its close button; the
 last tab returns to a fresh home tab. Ctrl/⌘T opens a new tab. Native browser
 print and reload shortcuts are not intercepted.
 
-**Panel fullscreen:** press F outside text editing to fill the rika! window with
-the focused view or graph. Click a graph to focus its panel first. F or Esc
-restores the layout; changing workspace tabs or navigating also exits panel
-fullscreen. The window's own fullscreen state never changes. Inputs, textareas,
-selects and contenteditable editors retain their keys; dialogs own Escape first.
-Terminal views reserve bare f for the shell and use Ctrl+Shift+F to toggle panel
-fullscreen (Esc exits). Terminal integrations mark their root with
-`data-kitty-terminal`, including around their hidden input, and mark the
-focusable panel with `data-kitty-panel`.
+**Panel fullscreen:** press **Ctrl+F** anywhere, even while typing, or F outside
+text editing, to fill the rika! window with the focused view or graph. Click a
+graph to focus its panel first. The same key or Esc restores the layout; changing
+workspace tabs or navigating also exits panel fullscreen. The window's own
+fullscreen state never changes. Bare F and Esc never steal typing; dialogs keep
+their own keys (Ctrl+F included) and own Escape first. Terminal views reserve bare
+f and Ctrl+F (forward-char) for the shell and use Ctrl+Shift+F to toggle panel
+fullscreen (Esc exits); Ctrl+Shift+F also works everywhere else. Terminal
+integrations mark their root with `data-kitty-terminal`, including around their
+hidden input, and mark the focusable panel with `data-kitty-panel`.
 
 **Preparation is not submission:** Firefox fills supported fields with your
 verified profile/answers and attaches the approved resume. Review every answer

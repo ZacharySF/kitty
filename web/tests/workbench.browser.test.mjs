@@ -2693,13 +2693,13 @@ describe("documents side-by-side", () => {
 });
 
 describe("editor full screen", () => {
-  /** One visible click fills the window; the same button exits, as does Escape. Ctrl+Shift+F works while typing. */
+  /** One visible click fills the window; the same button exits, as does Escape. Ctrl+F works while typing. */
   async function fullScreenRoundTrip(page, editor, what) {
     const view = page.locator('[data-kitty-panel="view"]:not([hidden])');
     const before = await rect(view);
     const enter = page.getByRole("button", { name: "Full screen", exact: true });
     assert.equal(await enter.isVisible(), true, `${what}: no visible Full screen button`);
-    assert.match(await enter.getAttribute("title"), /Ctrl\+Shift\+F/, `${what}: the tooltip does not name the shortcut`);
+    assert.match(await enter.getAttribute("title"), /Ctrl\+F\b/, `${what}: the tooltip does not name the shortcut`);
     await enter.click();
     const exit = page.getByRole("button", { name: "Exit full screen", exact: true });
     await exit.waitFor();
@@ -2712,7 +2712,7 @@ describe("editor full screen", () => {
     assert.deepEqual(await rect(view), before, `${what}: Escape did not restore the layout`);
 
     await editor.click();
-    await page.keyboard.press("Control+Shift+F");
+    await page.keyboard.press("Control+F");
     await exit.waitFor();
     assert.equal(await editor.evaluate((node) => node === document.activeElement), true, `${what}: the shortcut took focus from the editor`);
     // While typing, Escape first leaves the field (the app's rule), then exits.

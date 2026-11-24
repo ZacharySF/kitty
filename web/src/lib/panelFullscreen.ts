@@ -3,7 +3,8 @@ export const PANEL_ATTRIBUTE = "data-kitty-panel";
 /**
  * Terminal views must put data-kitty-terminal on their root, including around
  * their hidden input/textarea. Bare letter shortcuts then belong to the shell.
- * Ctrl+Shift+F toggles panel fullscreen everywhere, typing included; Escape
+ * Ctrl+F toggles panel fullscreen everywhere, typing included, except in a
+ * terminal (the shell's forward-char); Ctrl+Shift+F works there too. Escape
  * exits it while active. Views offer the same toggle as a visible button.
  */
 export const TERMINAL_ATTRIBUTE = "data-kitty-terminal";
@@ -80,8 +81,9 @@ export function createPanelFullscreen(env: PanelEnvironment): PanelFullscreen {
     const context = focusContext(event.target);
     const f = event.key.toLowerCase() === "f";
     const chord = event.ctrlKey && event.shiftKey;
-    // Bare F never steals typing; the chord works everywhere, editors included.
-    const switching = f && (chord || (context === "other" && !event.ctrlKey && !event.shiftKey));
+    // Bare F never steals typing; Ctrl+F works everywhere but a terminal, the chord everywhere.
+    const ctrlF = event.ctrlKey && !event.shiftKey && context !== "terminal";
+    const switching = f && (chord || ctrlF || (context === "other" && !event.ctrlKey && !event.shiftKey));
     // While typing, the app's Escape leaves the field first; the next Escape exits.
     const escape = event.key === "Escape" && !event.ctrlKey && !event.shiftKey && current !== null && context !== "text";
     if (!switching && !escape) return;
