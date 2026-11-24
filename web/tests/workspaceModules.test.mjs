@@ -17,14 +17,14 @@ test('each module alone exposes only its own views',()=>{
   const workspaceOnly=ids(visibleNavigation(['workspace']));
   assert.ok(workspaceOnly.includes('notes')&&workspaceOnly.includes('calendar'));
   assert.ok(!workspaceOnly.includes('jobs')&&!workspaceOnly.includes('reminders')&&!workspaceOnly.includes('profile'));
-  assert.deepEqual(labels(visibleGroups(['workspace'])),['Plan','Study','Rika','Settings']);
+  assert.deepEqual(labels(visibleGroups(['workspace'])),['Plan','Rika','Study','Settings']);
   const applyaiOnly=ids(visibleNavigation(['applyai']));
   assert.ok(applyaiOnly.includes('jobs')&&applyaiOnly.includes('profile')&&applyaiOnly.includes('reminders'));
   assert.ok(!applyaiOnly.includes('notes')&&!applyaiOnly.includes('calendar'));
-  assert.deepEqual(labels(visibleGroups(['applyai'])),['Plan','Career','Rika','Settings']);
+  assert.deepEqual(labels(visibleGroups(['applyai'])),['Plan','Rika','Career','Settings']);
   // Career opens on its Overview; Reminders and My profile are Career pages (its rail's).
-  assert.equal(visibleGroups(['applyai'])[1].views[0],'career');
-  assert.ok(visibleGroups(['applyai'])[1].views.includes('reminders')&&visibleGroups(['applyai'])[1].views.includes('profile'));
+  assert.equal(visibleGroups(['applyai'])[2].views[0],'career');
+  assert.ok(visibleGroups(['applyai'])[2].views.includes('reminders')&&visibleGroups(['applyai'])[2].views.includes('profile'));
   assert.deepEqual(visibleGroups(['applyai'])[0].views,['today','goals']);
   assert.deepEqual(visibleGroups(['applyai']).at(-1).views,['settings','ai']);
   assert.equal(viewEnabled('study',['applyai']),false);

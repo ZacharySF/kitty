@@ -128,7 +128,7 @@ export const navigationGroups: { label: string; shortcut: string; tone: string; 
     tone: "var(--c1)",
     views: ["today", "goals", "brain", "calendar", "opportunities", "herdr", "tern", "agent-skills"],
   },
-  { label: "Study", shortcut: "", tone: "var(--c3)", views: ["study", "math", "learnharness", "flashcards", "notes", "quick-notes", "schema", "documents"] },
+  { label: "Rika", shortcut: "", tone: "var(--c5)", views: ["rika"] },
   {
     // Career opens on its Overview (its first view); its pages are the left rail's places
     // (career/rail.ts), in its order. Find (`jobs`) stays its hub on the atlas.
@@ -155,7 +155,7 @@ export const navigationGroups: { label: string; shortcut: string; tone: string; 
       "questions",
     ],
   },
-  { label: "Rika", shortcut: "", tone: "var(--c5)", views: ["rika"] },
+  { label: "Study", shortcut: "", tone: "var(--c3)", views: ["study", "math", "learnharness", "flashcards", "notes", "quick-notes", "schema", "documents"] },
   { label: "Settings", shortcut: "", tone: "var(--c6)", views: ["settings", "ai"] },
 ];
 /** The header group a view belongs to; an add-on view's `group` names it. */
@@ -246,7 +246,7 @@ const shortcutGroups: ShortcutGroup[] = [
       ["Ctrl + O", "Every open tab as a card: arrows or 1–9 to pick, Enter to open, Esc to stay"],
       ["Ctrl + T / Ctrl + W", "New tab / close tab"],
       ["Ctrl + Y", "Slide through your themes live: Ctrl + Y again for the next, Enter keeps, Esc undoes (redo while typing)"],
-      ["Ctrl + ← / →", "Previous / next group in the top bar (Brain, Plan, Study, Career, Rika)"],
+      ["Ctrl + ← / →", "Previous / next group in the top bar (Brain, Plan, Rika, Career, Study)"],
       ["← / →", "Previous / next tab of the page you are on (outside text, lists, the canvas and Track's cards)"],
       ["Settings, Theme, Notifications", "Search, or the tab switcher's menu"],
       [
