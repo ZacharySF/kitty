@@ -422,6 +422,16 @@ def test_refresh_stores_price_ceilings_for_reasoning_caching_and_long_prompts(ai
     assert (models['synthetic/tiered']['prompt_price'], models['synthetic/tiered']['completion_price']) == ('0.000002', '0.000003')
 
 
+def test_refresh_remembers_which_models_accept_reasoning(ai, workspace, monkeypatch):
+    """Rika's thinking chip offers effort only for models whose parameters include ``reasoning``."""
+    thinker = {**catalog_model('synthetic/thinker'), 'supported_parameters': ['tools', 'reasoning', 'include_reasoning']}
+    plain = {**catalog_model('synthetic/plain'), 'supported_parameters': ['tools']}
+    workspace.conn.execute("INSERT INTO ai_model_reasoning(id) VALUES('synthetic/gone')")
+    workspace.conn.commit()
+    refreshed(ai, workspace, monkeypatch, thinker, plain, catalog_model('synthetic/unknown'))
+    assert [row[0] for row in workspace.conn.execute('SELECT id FROM ai_model_reasoning')] == ['synthetic/thinker']
+
+
 def test_requests_do_not_cap_image_price_for_text_only_messages(ai, workspace, provider):
     """max_price filters providers; an image cap of 0 would refuse image-capable providers
     even though these requests carry only text. The per-request cap stays at 0."""

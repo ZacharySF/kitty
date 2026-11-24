@@ -161,7 +161,7 @@ def _refresh_models(app):
             response = client.get(BASE_URL + '/models')
             response.raise_for_status()
             data = response.json().get('data', [])
-        models = []
+        models, reasoning = [], []
         for item in data:
             modality = item.get('architecture', {}).get('output_modalities', ['text'])
             if 'text' not in modality or not isinstance(item.get('id'), str):
@@ -177,11 +177,17 @@ def _refresh_models(app):
             if type(context) is not int or context < 4096:
                 continue
             models.append((item['id'], str(item.get('name', item['id']))[:300], str(prompt), str(completion), context, _now().isoformat()))
+            # Rika's thinking chip offers effort only where OpenRouter accepts ``reasoning``.
+            parameters = item.get('supported_parameters')
+            if isinstance(parameters, list) and 'reasoning' in parameters:
+                reasoning.append((item['id'],))
         if not models:
             raise _error(502, 'No compatible text models were returned')
         with closing(connect(app.settings.db_path)) as conn, transaction(conn):
             conn.execute('DELETE FROM ai_models')
+            conn.execute('DELETE FROM ai_model_reasoning')
             conn.executemany('INSERT INTO ai_models VALUES(?,?,?,?,?,?)', models)
+            conn.executemany('INSERT INTO ai_model_reasoning(id) VALUES(?)', reasoning)
         return {'models_refreshed': len(models)}
     except httpx.HTTPError:
         raise _error(502, 'OpenRouter model discovery failed; nothing was sent for inference') from None

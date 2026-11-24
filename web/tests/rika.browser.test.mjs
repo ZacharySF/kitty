@@ -8,6 +8,7 @@
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
+import { mkdir } from "node:fs/promises";
 import { createServer } from "vite";
 import { chromium } from "playwright-core";
 
@@ -66,9 +67,10 @@ const LINKS = { i1: ["[[CS 220 · Final project idea]]"], i2: ["[Orgo midterm (F
 /**
  * A scripted Rika backend for one browser context: a fake for this test harness only.
  * "add a task …" applies a reversible action; "start an agent" waits for an approval.
- * `hold` keeps a turn streaming (or its approval back) until `release()`.
+ * `hold` keeps a turn streaming (or its approval back) until `release()`. With `brain`
+ * (and `catalog`) it answers /api/rika/brain and /api/rika/models as kitty.web_rika does.
  */
-async function fakeRika(context, { agents = AGENTS, history = [] } = {}) {
+async function fakeRika(context, { agents = AGENTS, history = [], brain = null, catalog = null } = {}) {
   const posts = [];
   const gets = [];
   let plan = null;
@@ -161,6 +163,11 @@ async function fakeRika(context, { agents = AGENTS, history = [] } = {}) {
     else gets.push(path);
     if (request.method() === "GET" && path === "/api/rika/history") return route.fulfill({ json: { items: history, has_more: false, next_before: null } });
     if (request.method() === "GET" && path === "/api/rika/agents") return route.fulfill({ json: { agents } });
+    if (brain && path === "/api/rika/brain") {
+      if (request.method() === "POST") Object.assign(brain, body, { model: body.model ?? (body.provider === brain.provider ? brain.model : "") });
+      return route.fulfill({ json: brain });
+    }
+    if (catalog && path === "/api/rika/models") return route.fulfill({ json: catalog });
     if (path === "/api/rika/messages") {
       const userId = ++ids;
       await route.fulfill({ json: { conversation_id: 1, message_id: userId } });
@@ -511,6 +518,84 @@ test("on screen, the home panel holds the conversation: replies land in it, neve
   await page.keyboard.press("Control+j");
   await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Ask Rika");
   assert.equal(await drawer(page).count(), 0);
+  assert.deepEqual(problems, []);
+  await context.close();
+});
+
+// The model and thinking chips beside the field (kitty.core.rika.brain) ------------------
+
+const LEVELS = ["off", "low", "medium", "high", "max"];
+const TIER_MODELS = { fast: "", standard: "", deep: "" };
+const brainOf = (provider, extra = {}) => ({ provider, models: { ...TIER_MODELS }, model: "", thinking: "medium", thinking_levels: LEVELS,
+  defaults: { fast: "anthropic/claude-haiku-5-5", standard: "anthropic/claude-sonnet-5-5", deep: "anthropic/claude-opus-5-5" }, omp_installed: true, ...extra });
+const OMP_CATALOG = { provider: "omp", auto: ["off", "low", "high"], models: [
+  { id: "anthropic/claude-opus-5-5", label: "Claude Opus 5.5", thinking: LEVELS },
+  { id: "anthropic/claude-sonnet-5-5", label: "Claude Sonnet 5.5", thinking: ["off", "low", "medium", "high"] },
+  { id: "anthropic/claude-haiku-5-5", label: "Claude Haiku 5.5", thinking: ["off", "low", "high"] },
+  { id: "openai-codex/gpt-5-codex", label: "GPT-5 Codex", thinking: ["off", "low", "medium", "high"] },
+] };
+const chip = (page, name) => page.getByRole("combobox", { name });
+const menuOptions = async (page, name) => (await page.getByRole("listbox", { name }).getByRole("option").allInnerTexts()).map((text) => text.replace(/\s+/g, " ").trim());
+/** Waits for the menus' open and close transitions. */
+const settled = (page) => page.evaluate(() => Promise.all(document.getAnimations().filter((animation) => animation.effect?.getTiming().iterations !== Infinity).map((animation) => animation.finished)));
+const brainPosts = (rika) => rika.posts.filter((post) => post.path === "/api/rika/brain").map((post) => post.body);
+
+test("with omp, the Model chip lists Auto and omp's models; a model that lacks the effort takes the nearest it has", async () => {
+  const { page, rika, problems, context } = await harness({ panel: true, brain: brainOf("omp"), catalog: OMP_CATALOG });
+  await chip(page, "Model").waitFor();
+  // Show the saved effort honestly even when Auto's catalog has since changed.
+  assert.equal((await chip(page, "Model").innerText()).trim(), "Auto");
+  assert.equal((await chip(page, "Thinking").innerText()).trim(), "Medium");
+  // In the narrow home panel the chips take a line of their own: the words keep the field's width.
+  const [box, input] = await Promise.all([page.locator(".rika-field").boundingBox(), field(page).boundingBox()]);
+  assert.ok(input.width > box.width * 0.8, `the chips squeeze the field's words (${input.width} of ${box.width})`);
+  await chip(page, "Model").click();
+  assert.deepEqual(await menuOptions(page, "Model"), ["Auto by request ✓", "Claude Opus 5.5 anthropic/claude-opus-5-5",
+    "Claude Sonnet 5.5 anthropic/claude-sonnet-5-5", "Claude Haiku 5.5 anthropic/claude-haiku-5-5", "GPT-5 Codex openai-codex/gpt-5-codex"]);
+  await mkdir("/tmp/rika-model-effort", { recursive: true });
+  await settled(page);
+  await page.screenshot({ path: "/tmp/rika-model-effort/model-menu.png" });
+  await page.getByRole("option", { name: /Claude Opus 5\.5/ }).click();
+  await until(() => brainPosts(rika).length === 1, "the model choice");
+  assert.deepEqual(brainPosts(rika)[0], { provider: "omp", models: TIER_MODELS, model: "anthropic/claude-opus-5-5", thinking: "medium" });
+  await page.waitForFunction(() => document.querySelector('[aria-label="Model"]')?.textContent.trim() === "Opus 5.5");
+  await page.waitForFunction(() => document.querySelector('[aria-label="Thinking"]')?.textContent.trim() === "Medium");
+  await chip(page, "Thinking").click();
+  assert.deepEqual(await menuOptions(page, "Thinking"), ["Off", "Low", "Medium ✓", "High", "Max"]);
+  await page.getByRole("option", { name: "Max" }).click();
+  await until(() => brainPosts(rika).length === 2, "the thinking choice");
+  assert.equal(brainPosts(rika)[1].thinking, "max");
+  assert.equal(brainPosts(rika)[1].model, "anthropic/claude-opus-5-5");
+  // Haiku has no max: the nearest it has, high, is saved with it.
+  await chip(page, "Model").click();
+  await page.getByRole("option", { name: /Claude Haiku 5\.5/ }).click();
+  await until(() => brainPosts(rika).length === 3, "the second model choice");
+  assert.deepEqual(brainPosts(rika)[2], { provider: "omp", models: TIER_MODELS, model: "anthropic/claude-haiku-5-5", thinking: "high" });
+  await page.waitForFunction(() => document.querySelector('[aria-label="Thinking"]')?.textContent.trim() === "High");
+  await chip(page, "Thinking").click();
+  assert.deepEqual(await menuOptions(page, "Thinking"), ["Off", "Low", "High ✓"]);
+  await page.keyboard.press("Escape");
+  await settled(page);
+  await page.screenshot({ path: "/tmp/rika-model-effort/chips.png" });
+  assert.deepEqual(problems, []);
+  await context.close();
+});
+
+test("with OpenRouter both chips show too; a long catalog is searchable", async () => {
+  const models = Array.from({ length: 12 }, (_, index) => ({ id: `vendor/model-${index}`, label: `Vendor: Model ${index}`, thinking: index % 2 ? ["off"] : ["off", "low", "medium", "high"] }));
+  const { page, rika, problems, context } = await harness({ panel: true, brain: brainOf("openrouter", { thinking: "off" }),
+    catalog: { provider: "openrouter", auto: LEVELS, models } });
+  await chip(page, "Model").waitFor();
+  assert.equal((await chip(page, "Thinking").innerText()).trim(), "Off");
+  await chip(page, "Model").click();
+  await page.getByRole("searchbox", { name: "Search Model" }).fill("model 10");
+  assert.deepEqual(await menuOptions(page, "Model"), ["Vendor: Model 10 vendor/model-10"]);
+  await page.keyboard.press("Enter");
+  await until(() => brainPosts(rika).length === 1, "the model choice");
+  assert.deepEqual(brainPosts(rika)[0], { provider: "openrouter", models: TIER_MODELS, model: "vendor/model-10", thinking: "off" });
+  await page.waitForFunction(() => document.querySelector('[aria-label="Model"]')?.textContent.trim() === "Model 10");
+  await chip(page, "Thinking").click();
+  assert.deepEqual(await menuOptions(page, "Thinking"), ["Off ✓", "Low", "Medium", "High"]);
   assert.deepEqual(problems, []);
   await context.close();
 });

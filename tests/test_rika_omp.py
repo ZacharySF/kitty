@@ -250,7 +250,7 @@ def test_the_brain_is_read_and_chosen_over_http(tmp_path, fake_omp):
     with site(make_root(tmp_path, ("workspace",))) as running:
         status, answer = running.request("/api/rika/brain")
         assert status == 200 and answer == {"provider": "openrouter", "models": {"fast": "", "standard": "", "deep": ""},
-                                            "thinking": "off", "thinking_levels": list(brain.THINKING),
+                                            "model": "", "thinking": "off", "thinking_levels": list(brain.THINKING),
                                             "defaults": brain.OMP_DEFAULTS, "omp_installed": True}
         status, answer = running.request("/api/rika/brain", {"provider": "omp", "models": {"deep": "anthropic/claude-opus-5"}})
         assert status == 200 and answer["provider"] == "omp" and answer["models"]["deep"] == "anthropic/claude-opus-5"
