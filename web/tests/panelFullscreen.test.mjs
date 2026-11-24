@@ -120,7 +120,7 @@ test('terminal marker protects its inner textarea; Ctrl+Shift+F toggles and Esc 
 
 test('composition, repeat, unrelated modifiers, consumed events and dialogs retain their keys', () => {
   const { panels, press, state } = setup();
-  for (const flag of ['isComposing', 'repeat', 'altKey', 'metaKey', 'ctrlKey', 'shiftKey', 'defaultPrevented']) {
+  for (const flag of ['isComposing', 'repeat', 'altKey', 'metaKey', 'shiftKey', 'defaultPrevented']) {
     assert.equal(press('f', undefined, { [flag]: true }).stopped, false, flag);
     assert.equal(panels.active(), null, flag);
   }
@@ -132,4 +132,23 @@ test('composition, repeat, unrelated modifiers, consumed events and dialogs reta
   state.blocked = true;
   press('Escape');
   assert.notEqual(panels.active(), null, 'a dialog owns Escape until it closes');
+});
+
+test('Ctrl+F toggles the panel from anywhere, editors included; a terminal keeps it for the shell', () => {
+  const { view, terminalInput, panels, press, state } = setup();
+  const ctrl = { ctrlKey: true };
+  const field = element('input', { parent: view, type: 'search' });
+  const editor = element('div', { parent: view, editable: true });
+  for (const target of [view, field, editor]) {
+    const enter = press('f', target, ctrl);
+    assert.equal(enter.defaultPrevented, true, `${target.tagName}: no find-in-page or page action`);
+    assert.equal(panels.active(), view, target.tagName);
+    press('F', target, ctrl);
+    assert.equal(panels.active(), null, `${target.tagName}: Ctrl+F exits too`);
+  }
+  assert.equal(press('f', terminalInput, ctrl).defaultPrevented, false, 'Ctrl+F is forward-char in the shell');
+  assert.equal(panels.active(), null);
+  state.blocked = true;
+  assert.equal(press('f', view, ctrl).defaultPrevented, false, 'an open dialog keeps its own Ctrl+F');
+  assert.equal(panels.active(), null);
 });

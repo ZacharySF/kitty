@@ -259,7 +259,7 @@ const shortcutGroups: ShortcutGroup[] = [
       ["Ctrl + R", "Rika beside the page you are on; Ctrl + R again or Escape closes her"],
       ["Enter in Rika's field", "Ask Rika; away from home the reply lands as a toast"],
       ["F / Esc", "Toggle focused panel fullscreen / exit (outside text editing)"],
-      ["Ctrl + Shift + F", "Toggle panel fullscreen anywhere, while typing or in a terminal"],
+      ["Ctrl + F", "Toggle panel fullscreen anywhere, even while typing (in a terminal: Ctrl + Shift + F)"],
       ["Escape", "Close dialog or details; leave a text field"],
     ],
   },

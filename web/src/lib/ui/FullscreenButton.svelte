@@ -16,5 +16,5 @@
 
 <button bind:this={button} type="button" class={className}
   aria-label={active ? "Exit full screen" : "Full screen"}
-  title={active ? "Exit full screen · Esc" : "Full screen · Ctrl+Shift+F"}
+  title={active ? "Exit full screen · Esc" : "Full screen · Ctrl+F"}
   onclick={() => button && togglePanelFullscreen(button)}><Icon name={active ? "collapse" : "expand"} {size} /></button>
